@@ -1,0 +1,142 @@
+import { useEffect, useMemo } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import CodeBlock from './CodeBlock';
+import NavigationButton from './NavigationButton';
+import SidebarNav from './SidebarNav';
+import Layout from './Layout';
+import { navData } from '../data';
+import { BookOpen } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+
+export default function CourseViewer() {
+  const navigate = useNavigate();
+  const { sectionId: paramSectionId, categoryId: paramCategoryId } = useParams();
+  
+  // Find the valid state or default
+  const activeSection = navData.find(s => s.id === paramSectionId) || navData[0];
+  const activeCategory = activeSection.categories.find(c => c.id === paramCategoryId) || activeSection.categories[0];
+  
+  const activeSectionId = activeSection.id;
+  const activeCategoryId = activeCategory.id;
+
+  // Scroll to top only on initial mount (IndexPage -> CourseViewer)
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
+  const allCategories = useMemo(() => 
+    navData.flatMap(section => 
+      section.categories.map(category => ({
+        sectionId: section.id,
+        sectionTitle: section.title,
+        category
+      }))
+    ), 
+  []);
+
+  const currentCategoryIndex = allCategories.findIndex(c => c.category.id === activeCategoryId);
+  const prevCategoryInfo = currentCategoryIndex > 0 ? allCategories[currentCategoryIndex - 1] : null;
+  const nextCategoryInfo = currentCategoryIndex < allCategories.length - 1 ? allCategories[currentCategoryIndex + 1] : null;
+
+  return (
+    <Layout activeSectionId={activeSectionId} activeCategoryId={activeCategoryId}>
+      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-sm bg-white dark:bg-[#090b10] transition-colors duration-200">
+        
+        {/* Desktop Left Sidebar Navigation */}
+        <aside className="hidden lg:block w-72 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-950/50 min-h-[calc(100vh-4rem)] transition-colors duration-200">
+          <div className="sticky top-16 pt-8 px-6 pb-12 max-h-[calc(100vh-4rem)] overflow-y-auto custom-scrollbar">
+            <div className="flex items-center gap-2 mb-6 px-1 text-slate-800 dark:text-slate-200 font-semibold text-sm uppercase tracking-wider">
+              <BookOpen size={16} />
+              <span>Curriculum</span>
+            </div>
+            <SidebarNav activeSectionId={activeSectionId} activeCategoryId={activeCategoryId} />
+          </div>
+        </aside>
+
+        {/* Main Learning Content Area */}
+        <main className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
+          <AnimatePresence 
+            mode="wait"
+            onExitComplete={() => window.scrollTo(0, 0)}
+          >
+            <motion.div 
+              key={activeCategory.id}
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ duration: 0.1, ease: 'easeOut' }}
+              className="max-w-3xl mx-auto"
+            >
+              <div className="mb-10 block">
+                <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-xs font-semibold uppercase tracking-widest mb-4 border border-slate-200 dark:border-slate-700/50 shadow-sm">
+                  {activeSection.title}
+                </span>
+                <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-50 tracking-tight leading-tight">
+                  {activeCategory.title}
+                </h2>
+              </div>
+
+              <div className="space-y-10">
+                {activeCategory.items.map((item, idx) => (
+                  <article 
+                    key={item.id}
+                    id={item.id}
+                    className="group relative rounded-2xl pt-2 pb-6 sm:pb-8 border-b border-dashed border-slate-200 dark:border-slate-800 last:border-0"
+                  >
+                    <div className="flex gap-4 sm:gap-6">
+                      <div className="flex-shrink-0 mt-1 hidden sm:block">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500 font-bold text-sm shadow-sm border border-slate-200 dark:border-slate-700/50">
+                          {idx + 1}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-3 mb-2 sm:mb-3">
+                          <span className="sm:hidden flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 font-bold text-xs shrink-0 shadow-sm border border-slate-200 dark:border-slate-700/50">
+                            {idx + 1}
+                          </span>
+                          <h3 className="text-lg flex items-center gap-2 sm:text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                            {item.title}
+                          </h3>
+                        </div>
+                        <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 mb-5 leading-relaxed">
+                          {item.description}
+                        </p>
+                        {item.code && (
+                          <CodeBlock code={item.code} language={item.language} />
+                        )}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+              
+              {/* Page Navigation */}
+              <div className="mt-16 pt-8 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+                {prevCategoryInfo ? (
+                  <NavigationButton 
+                    direction="prev"
+                    info={prevCategoryInfo}
+                    onClick={() => navigate(`/${prevCategoryInfo.sectionId}/${prevCategoryInfo.category.id}`)}
+                  />
+                ) : <div />}
+                
+                {nextCategoryInfo ? (
+                  <NavigationButton 
+                    direction="next"
+                    info={nextCategoryInfo}
+                    onClick={() => navigate(`/${nextCategoryInfo.sectionId}/${nextCategoryInfo.category.id}`)}
+                  />
+                ) : <div />}
+              </div>
+
+              {/* Navigation Footer */}
+              <div className="mt-16 pt-8 flex justify-center items-center text-sm text-slate-400 dark:text-slate-500 pb-8">
+                 <p>© DevLog - Knowledge Base</p>
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        </main>
+      </div>
+    </Layout>
+  );
+}

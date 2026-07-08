@@ -1,0 +1,134 @@
+import { Search, X, ChevronRight, Hash } from 'lucide-react';
+import { navData } from '../data';
+import { motion, AnimatePresence } from 'motion/react';
+import { useEffect, useRef } from 'react';
+
+type SearchResult = {
+  sectionId: string;
+  sectionTitle: string;
+  categoryId: string;
+  categoryTitle: string;
+  item: typeof navData[0]['categories'][0]['items'][0];
+};
+
+interface SearchModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+  searchResults: SearchResult[];
+  onSelectResult: (sectionId: string, categoryId: string, itemId: string) => void;
+}
+
+export default function SearchModal({
+  isOpen,
+  onClose,
+  searchQuery,
+  setSearchQuery,
+  searchResults,
+  onSelectResult
+}: SearchModalProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 100);
+    }
+  }, [isOpen]);
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 sm:pt-24 px-4">
+          {/* Click outside to close */}
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" 
+            onClick={onClose} 
+            aria-hidden="true" 
+          />
+          
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: -10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -10 }}
+            transition={{ duration: 0.2 }}
+            className="relative w-full max-w-2xl bg-white dark:bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[80vh]"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Search Documentation"
+          >
+            <div className="flex items-center px-4 border-b border-slate-200 dark:border-slate-800">
+              <Search size={20} className="text-slate-400 shrink-0" />
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder="문서 검색 (예: select, pydantic...)"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="flex-1 outline-none bg-transparent px-4 py-4 text-base sm:text-lg text-slate-900 dark:text-slate-100 placeholder-slate-400"
+                aria-label="Search query"
+              />
+              {searchQuery && (
+                 <button 
+                   onClick={() => {
+                     setSearchQuery('');
+                     inputRef.current?.focus();
+                   }}
+                   className="mr-2 p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500/50"
+                   aria-label="Clear search"
+                 >
+                   <X size={16} />
+                 </button>
+              )}
+              <div className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-400 tracking-widest hidden sm:block">ESC</div>
+            </div>
+            
+            <div className="overflow-y-auto flex-1 custom-scrollbar p-2">
+              {searchQuery.trim() === '' ? (
+                <div className="py-12 px-6 text-center text-slate-500 dark:text-slate-400">
+                  <Search size={32} className="mx-auto mb-3 opacity-20" />
+                  <p>검색어를 입력하시면 관련 문서를 찾아드립니다.</p>
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="py-12 px-6 text-center text-slate-500 dark:text-slate-400">
+                  <p className="font-medium text-slate-900 dark:text-slate-100 mb-1">검색 결과가 없습니다.</p>
+                  <p className="text-sm">다른 조합으로 검색해보세요.</p>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {searchResults.map((result) => (
+                    <button
+                      key={`${result.sectionId}-${result.categoryId}-${result.item.id}`}
+                      onClick={() => onSelectResult(result.sectionId, result.categoryId, result.item.id)}
+                      className="w-full text-left px-4 py-3 rounded-xl hover:bg-emerald-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-emerald-50 dark:focus:bg-slate-800/80"
+                    >
+                      <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest flex-wrap">
+                         <span>{result.sectionTitle}</span>
+                         <ChevronRight size={12} className="text-slate-400" />
+                         <span>{result.categoryTitle.split(':')[0]}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Hash size={16} className="text-slate-400 group-hover:text-emerald-500 transition-colors shrink-0" />
+                        <span className="font-bold text-sm sm:text-base text-slate-900 dark:text-slate-100 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
+                          {result.item.title}
+                        </span>
+                      </div>
+                      <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
+                        {result.item.description}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
