@@ -1,6 +1,0 @@
-{
-  "name": "DevLog",
-  "description": "General purpose learning hub and knowledge base",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

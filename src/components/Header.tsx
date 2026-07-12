@@ -27,7 +27,7 @@ export default function Header({ isDark, toggleDark, onOpenSearch, onOpenMobileN
               <BookMarked size={18} strokeWidth={2.5} className="sm:w-5 sm:h-5" />
             </div>
             <div className="hidden sm:block text-left">
-              <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">DevLog</h1>
+              <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">DevNote</h1>
               <p className="text-[10px] uppercase tracking-wider font-semibold text-indigo-600 dark:text-indigo-400 leading-tight">Knowledge Base</p>
             </div>
           </Link>

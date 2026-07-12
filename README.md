@@ -1,20 +1,20 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# DevNote
 
-# Run and deploy your AI Studio app
+개발 지식과 학습 내용을 정리한 정적 React 웹 앱입니다.
 
-This contains everything you need to run your app locally.
+## 로컬 실행
 
-View your app in AI Studio: https://ai.studio/apps/8cf6291b-0f8e-4099-995b-c9fea3cab7d5
+Node.js가 필요합니다.
 
-## Run Locally
+```bash
+npm install
+npm run dev
+```
 
-**Prerequisites:**  Node.js
+## 빌드
 
+```bash
+npm run build
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+정적 빌드 결과는 `dist/`에 생성됩니다. GitHub Pages에서 저장소 하위 경로와 클라이언트 라우팅이 모두 동작하도록 상대 자산 경로와 해시 라우팅을 사용합니다.

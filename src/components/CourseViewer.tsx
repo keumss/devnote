@@ -131,7 +131,7 @@ export default function CourseViewer() {
 
               {/* Navigation Footer */}
               <div className="mt-16 pt-8 flex justify-center items-center text-sm text-slate-400 dark:text-slate-500 pb-8">
-                 <p>© DevLog - Knowledge Base</p>
+                 <p>© DevNote - Knowledge Base</p>
               </div>
             </motion.div>
           </AnimatePresence>
