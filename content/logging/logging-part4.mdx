@@ -1,0 +1,83 @@
+---
+title: "Part 4. 실전: 서비스와 라이브러리의 로그 운영"
+---
+
+## 명령줄 서비스의 로그 수준을 안전하게 받기
+
+운영 중에는 재배포 없이 로그 수준을 높여 진단해야 할 수 있습니다. 사용자 입력 문자열을 그대로 `getattr()`에 넘기지 말고 허용할 레벨을 명시적으로 검증합니다. 이 예시는 `--log-level debug`처럼 대소문자와 관계없이 받을 수 있습니다.
+
+```python
+import argparse
+import logging
+
+LEVELS = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--log-level', default='INFO')
+args = parser.parse_args()
+
+level_name = args.log_level.upper()
+if level_name not in LEVELS:
+    parser.error(f'지원하지 않는 로그 수준입니다: {args.log_level}')
+
+logging.basicConfig(level=level_name)
+```
+
+평소 운영 레벨은 `INFO` 또는 `WARNING`처럼 필요한 신호만 남기고, 특정 장애를 조사하는 짧은 기간에만 `DEBUG`로 올립니다. 로그 양과 개인정보 노출 범위를 함께 점검합니다.
+
+## 라이브러리는 설정 대신 NullHandler를 제공하기
+
+재사용할 패키지는 애플리케이션의 로그 정책을 바꾸면 안 됩니다. 루트 로거를 설정하거나 파일·콘솔 핸들러를 추가하지 말고, 최상위 패키지 로거에 `NullHandler`만 붙입니다. 이를 통해 사용자가 설정하지 않았을 때 원치 않는 표준 오류 출력을 막으면서, 사용하는 애플리케이션이 정한 핸들러로는 정상 전파됩니다.
+
+```python
+# payment_sdk/__init__.py
+import logging
+
+logging.getLogger(__name__).addHandler(logging.NullHandler())
+```
+
+각 하위 모듈은 계속 `logging.getLogger(__name__)`을 사용합니다. 사용 설명서에는 사용하는 로거 이름과 중요한 이벤트의 레벨을 알려, 애플리케이션 개발자가 `payment_sdk`만 별도 조정할 수 있게 합니다.
+
+## 중복 핸들러를 피하는 초기화 함수 만들기
+
+테스트, 개발 서버 리로드, 여러 앱 팩토리에서는 설정 코드가 반복 실행될 수 있습니다. 같은 파일을 여러 번 열거나 핸들러를 중복 추가하면 로그가 중복 기록됩니다. 애플리케이션 로거를 설정하는 함수는 이미 설정했는지 검사하거나, 더 단순하게는 진입점에서 `dictConfig()`를 한 번만 호출합니다.
+
+```python
+import logging
+
+def configure_application_logger() -> logging.Logger:
+    logger = logging.getLogger('shop')
+    if logger.handlers:
+        return logger
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    return logger
+```
+
+이 예시는 `shop` 전용 출력 구성이 필요한 경우입니다. 전역 루트 설정을 이미 사용한다면 하위 로거에 핸들러를 추가하지 않는 편이 더 단순하고 중복에 강합니다.
+
+## 로그 동작을 테스트로 고정하기
+
+중요한 오류 경로는 테스트에서 로그 레벨과 메시지를 검증합니다. `pytest`의 `caplog` 픽스처를 사용하면 실제 파일이나 콘솔에 쓰지 않고 `LogRecord`를 확인할 수 있습니다. 메시지에 비밀 값이 없는지도 함께 테스트할 수 있습니다.
+
+```python
+import logging
+
+def charge(card_number: str) -> None:
+    logger = logging.getLogger('shop.payment')
+    logger.error('결제를 거절했습니다. card_last4=%s', card_number[-4:])
+
+def test_charge_logs_only_last_four_digits(caplog) -> None:
+    with caplog.at_level(logging.ERROR, logger='shop.payment'):
+        charge('4111111111111111')
+
+    assert 'card_last4=1111' in caplog.text
+    assert '4111111111111111' not in caplog.text
+```
+
+운영 전에는 로그 파일 회전, 종료 시 큐 리스너 정리, 권한, 보존 기간도 확인합니다. 장애에 필요한 상관관계 ID와 오류 정보는 남기되, 민감 정보와 지나치게 큰 객체 전체를 기록하지 않는 것이 안전한 기본값입니다.
+

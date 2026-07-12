@@ -5,6 +5,7 @@
     "alembic",
     "sql",
     "sqlalchemy",
-    "jinja2"
+    "jinja2",
+    "logging"
   ]
 }

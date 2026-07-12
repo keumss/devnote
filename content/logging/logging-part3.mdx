@@ -1,0 +1,90 @@
+---
+title: "Part 3. 고급: 전파, 컨텍스트, 성능과 동시성"
+---
+
+## 전파를 이해해 중복 로그 막기
+
+이름이 `shop.checkout`인 로거의 레코드는 기본적으로 상위 `shop`과 루트 로거의 핸들러까지 전파됩니다. 따라서 루트와 하위 로거 모두에 같은 종류의 핸들러를 붙이면 한 이벤트가 여러 번 출력될 수 있습니다. 보통은 루트에 핸들러를 붙이고 하위 로거의 `propagate`는 기본값 `True`로 둡니다.
+
+```python
+import logging
+
+root = logging.getLogger()
+root.addHandler(logging.StreamHandler())
+
+checkout_logger = logging.getLogger('shop.checkout')
+checkout_logger.info('결제를 시작합니다.')  # 루트 핸들러가 처리합니다.
+```
+
+특정 하위 로거의 출력 목적지를 완전히 분리해야 할 때에만 자체 핸들러를 붙이고 `propagate = False`를 설정합니다. 이 설정은 상위 핸들러로의 전달을 끊는다는 뜻입니다.
+
+## 요청 식별자를 extra로 기록하기
+
+동시에 처리되는 요청을 추적하려면 레코드에 요청 식별자 같은 컨텍스트를 추가합니다. `extra`의 키는 `LogRecord`가 이미 쓰는 이름과 충돌하면 안 되고, 포매터가 요구하는 키는 모든 해당 레코드에 있어야 합니다. 누락된 키는 포맷 오류로 이어질 수 있습니다.
+
+```python
+import logging
+
+logger = logging.getLogger('shop.api')
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter(
+    '%(levelname)s request_id=%(request_id)s %(message)s',
+))
+logger.addHandler(handler)
+logger.propagate = False
+
+logger.info('주문을 생성합니다.', extra={'request_id': 'req-8f31'})
+```
+
+웹 서버에서는 `contextvars.ContextVar`와 필터 또는 `LoggerAdapter`를 이용해 요청마다 자동으로 컨텍스트를 넣을 수 있습니다. 이때도 토큰·인증 헤더처럼 비밀인 값은 컨텍스트에 넣지 않습니다.
+
+## 로그 파일을 회전해 디스크 사용량 제한하기
+
+단일 파일에 계속 기록하면 디스크를 모두 사용할 수 있습니다. `RotatingFileHandler`는 파일 크기 기준으로, `TimedRotatingFileHandler`는 시간 기준으로 이전 로그를 보관하고 교체합니다. 보관 개수(`backupCount`)와 최대 크기는 서비스의 장애 조사 기간과 디스크 예산을 함께 고려해 정합니다.
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+handler = RotatingFileHandler(
+    'logs/app.log',
+    maxBytes=10 * 1024 * 1024,
+    backupCount=5,
+    encoding='utf-8',
+)
+handler.setFormatter(logging.Formatter(
+    '%(asctime)s %(levelname)s %(name)s: %(message)s',
+))
+
+logger = logging.getLogger('shop')
+logger.setLevel(logging.INFO)
+logger.addHandler(handler)
+```
+
+여러 프로세스가 같은 파일에 직접 쓰는 구조에서는 회전과 파일 잠금이 안전하지 않을 수 있습니다. 프로세스별 파일 또는 중앙 수집 방식으로 설계를 바꾸는 것이 낫습니다.
+
+## 큐로 느린 출력 작업을 분리하기
+
+표준 핸들러는 스레드에서 안전하게 동작하도록 잠금을 사용하지만, 파일·네트워크 출력이 요청 처리를 지연시킬 수 있습니다. `QueueHandler`는 레코드를 큐에 넣고, 별도 스레드의 `QueueListener`가 실제 핸들러로 전달하게 하여 요청 경로를 가볍게 합니다.
+
+```python
+import logging
+import queue
+from logging.handlers import QueueHandler, QueueListener
+
+log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
+file_handler = logging.FileHandler('app.log', encoding='utf-8')
+listener = QueueListener(log_queue, file_handler)
+
+logger = logging.getLogger('shop')
+logger.addHandler(QueueHandler(log_queue))
+listener.start()
+
+try:
+    logger.info('응답을 처리했습니다.')
+finally:
+    listener.stop()  # 종료 전에 큐에 남은 로그를 비웁니다.
+```
+
+비동기화는 로그 유실·종료 순서·큐 포화 전략까지 함께 설계해야 합니다. 특히 다중 프로세스 환경은 프로세스 간에 공유 가능한 큐와 별도 리스너 프로세스를 사용합니다.
+

@@ -1,0 +1,93 @@
+---
+title: "Part 2. 중급: 핸들러, 포매터, 선언형 설정"
+---
+
+## Logger, Handler, Formatter의 역할 나누기
+
+로거는 `LogRecord`를 만들고, 핸들러는 콘솔·파일 같은 목적지로 보냅니다. 포매터는 최종 문자열의 시간, 레벨, 이름, 메시지 순서를 결정합니다. 로거 레벨과 핸들러 레벨은 모두 통과해야 하므로, 로거는 수집 범위를 넓게 두고 핸들러마다 목적지에 필요한 기준을 적용할 수 있습니다.
+
+```python
+import logging
+
+logger = logging.getLogger('shop')
+logger.setLevel(logging.DEBUG)
+
+console = logging.StreamHandler()
+console.setLevel(logging.WARNING)
+console.setFormatter(logging.Formatter(
+    '%(levelname)s %(name)s: %(message)s',
+))
+
+logger.addHandler(console)
+logger.warning('재고가 부족합니다.')
+```
+
+이처럼 `DEBUG`까지 기록 가능한 로거라도 콘솔 핸들러가 `WARNING`이면 콘솔에는 경고 이상만 나타납니다.
+
+## 실행 비용을 줄이는 메시지 인자 전달
+
+로그 메시지는 f-string으로 미리 완성하지 말고 `%s` 자리표시자와 인자로 전달합니다. 해당 레벨이 비활성화되어 있으면 `logging`이 문자열 결합을 늦출 수 있기 때문입니다. 단, 함수 호출처럼 인자 계산 자체가 비싸다면 `isEnabledFor()`로 먼저 확인합니다.
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+logger.debug('사용자 %s가 장바구니에 %s개를 담았습니다.', user_id, count)
+
+if logger.isEnabledFor(logging.DEBUG):
+    snapshot = build_expensive_debug_snapshot()
+    logger.debug('현재 상태: %s', snapshot)
+```
+
+비밀번호, 액세스 토큰, 쿠키, 전체 개인정보처럼 민감한 값은 로그 인자로 넘기지 않습니다. 로그는 오래 보관되거나 외부 관찰 도구로 전송될 수 있으므로, 필요한 식별자만 제한적으로 기록합니다.
+
+## dictConfig로 환경별 설정을 한곳에 모으기
+
+여러 핸들러와 로거를 코드 여러 곳에서 조립하면 중복 출력과 초기화 순서 문제가 생기기 쉽습니다. 애플리케이션 진입점에서 `logging.config.dictConfig()`를 한 번 호출해 설정을 선언형 딕셔너리로 관리합니다. 새 애플리케이션에는 구성 파일 방식보다 딕셔너리 구성이 권장됩니다.
+
+```python
+import logging.config
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s %(levelname)s %(name)s: %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': 'INFO',
+            'formatter': 'standard',
+        },
+    },
+    'root': {'level': 'INFO', 'handlers': ['console']},
+}
+
+logging.config.dictConfig(LOGGING)
+```
+
+`disable_existing_loggers=False`는 이미 만들어진 서드 파티 로거를 의도치 않게 꺼뜨리지 않게 합니다. 개발·운영의 레벨과 파일 핸들러 차이는 이 설정을 환경별로 만들거나 조립하는 방식으로 분리합니다.
+
+## 예외와 진단 정보를 함께 남기기
+
+`logger.exception()`은 현재 처리 중인 예외의 traceback을 포함해 `ERROR` 레벨로 기록합니다. 예외 처리 블록 안에서만 사용하고, 예외를 사용자용 오류로 바꾸거나 복구하는 맥락을 로그에 남깁니다. 재발생시킬 때도 원인을 관찰할 수 있습니다.
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+def load_price(raw_price: str) -> int:
+    try:
+        return int(raw_price)
+    except ValueError:
+        logger.exception('가격 변환에 실패했습니다. raw_price=%r', raw_price)
+        raise
+```
+
+예외가 없는 호출 경로 자체를 조사할 때는 `stack_info=True`를 사용할 수 있습니다. traceback과 호출 스택은 서로 다른 정보이며, 지나치게 자주 기록하면 로그 양이 급증하므로 장애 분석이 필요한 지점에 한정합니다.
+
