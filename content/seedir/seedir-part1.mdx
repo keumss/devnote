@@ -1,0 +1,199 @@
+---
+title: "Part 1. 초급: 디렉터리 트리를 읽고 출력하기"
+---
+
+## seedir가 해결하는 디렉터리 구조 설명 문제
+
+`seedir`는 실제 파일 시스템, 텍스트 트리, Python 안에서 조작하는 가짜 디렉터리 사이를 오갈 수 있게 하는 라이브러리입니다. README, 버그 보고서, 설계 문서에 폴더 구조를 손으로 맞춰 쓰는 대신 현재 상태에서 트리를 만들 때 유용합니다. 이 섹션은 Python 3.12와 `seedir` 0.5.1을 기준으로 단순 출력부터 안전한 문서 스냅샷 자동화까지 다룹니다.
+
+네 파트에서는 다음 `sample-project`를 공통 입력으로 사용합니다. 같은 입력을 유지하면 옵션 하나가 출력에서 무엇을 바꾸는지 직접 비교할 수 있습니다.
+
+```text
+sample-project/
+├─.git/
+│ └─config
+├─docs/
+│ ├─guide.md
+│ └─logo.png
+├─src/
+│ ├─data/
+│ │ ├─products.csv
+│ │ └─users.csv
+│ ├─__init__.py
+│ └─api.py
+├─tests/
+│ └─test_api.py
+├─.env
+├─README.md
+└─pyproject.toml
+```
+
+실제 디렉터리를 읽으면 `.env`처럼 공개하면 안 되는 파일명도 출력에 드러날 수 있습니다. 첫 출력에서는 원본 구조를 이해하기 위해 모두 보지만, 다음 파트부터는 `.git/`과 `.env`를 제외합니다.
+
+## 설치하고 첫 디렉터리 트리 출력하기
+
+`pip`로 설치한 뒤 `seedir`를 보통 `sd`라는 별칭으로 가져옵니다. 경로를 생략하면 현재 작업 디렉터리를 읽으므로, 재현 가능한 예제와 자동화에서는 대상 경로를 명시합니다.
+
+```bash
+python -m pip install seedir==0.5.1
+```
+
+```python
+from pathlib import Path
+
+import seedir as sd
+
+project_root = Path('sample-project')
+sd.seedir(project_root, sort=True, first='folders')
+```
+
+```text
+sample-project/
+├─.git/
+│ └─config
+├─docs/
+│ ├─guide.md
+│ └─logo.png
+├─src/
+│ ├─data/
+│ │ ├─products.csv
+│ │ └─users.csv
+│ ├─__init__.py
+│ └─api.py
+├─tests/
+│ └─test_api.py
+├─.env
+├─README.md
+└─pyproject.toml
+```
+
+폴더 이름 뒤의 `/`는 디렉터리라는 뜻입니다. `src/data/products.csv`는 `src/` 아래 `data/`의 자식이고, `├─`는 뒤에 형제가 더 있으며 `└─`는 현재 폴더의 마지막 항목임을 보여 줍니다. `Path`와 경로 문자열을 모두 받을 수 있지만, 대상이 없거나 읽을 수 없으면 운영체제 오류가 발생할 수 있습니다.
+
+## printout으로 콘솔 출력과 문자열 반환 선택하기
+
+기본값 `printout=True`는 트리를 콘솔에 쓰고 `None`을 반환합니다. 문서 파일, API 응답, 테스트처럼 출력값을 다시 사용하려면 `printout=False`로 문자열을 받습니다. 다음 예제는 민감한 항목을 제외한 트리를 Markdown 코드 블록으로 저장합니다.
+
+```python
+from pathlib import Path
+
+import seedir as sd
+
+tree = sd.seedir(
+    Path('sample-project'),
+    printout=False,
+    sort=True,
+    first='folders',
+    exclude_folders='.git',
+    exclude_files='.env',
+)
+markdown = f'## 현재 구조\n\n```text\n{tree}\n```\n'
+
+Path('STRUCTURE.md').write_text(markdown, encoding='utf-8')
+print(type(tree).__name__)
+print(markdown)
+```
+
+````text
+str
+## 현재 구조
+
+```text
+sample-project/
+├─docs/
+│ ├─guide.md
+│ └─logo.png
+├─src/
+│ ├─data/
+│ │ ├─products.csv
+│ │ └─users.csv
+│ ├─__init__.py
+│ └─api.py
+├─tests/
+│ └─test_api.py
+├─README.md
+└─pyproject.toml
+```
+````
+
+첫 줄 `str`은 트리를 문자열로 돌려받았다는 증거이고, 그 아래는 `STRUCTURE.md`에 기록되는 내용입니다. 트리가 매우 크면 반환 문자열도 커지므로, 문서 생성에는 다음 파트의 깊이·항목 제한을 함께 적용합니다.
+
+## style과 indent가 트리 모양을 바꾸는 방식
+
+기본 `lines` 스타일은 부모·자식 관계가 선으로 보여 일반 문서에 적합합니다. 연결 문자가 깨지는 환경에는 `spaces` 스타일을 사용할 수 있습니다. 다음 코드는 같은 입력과 같은 깊이를 두 스타일로 출력합니다.
+
+```python
+import seedir as sd
+
+common = {
+    'depthlimit': 2,
+    'sort': True,
+    'first': 'folders',
+    'exclude_folders': '.git',
+    'exclude_files': '.env',
+}
+
+print('[lines]')
+sd.seedir('sample-project', style='lines', **common)
+print('\n[spaces]')
+sd.seedir('sample-project', style='spaces', indent=4, **common)
+```
+
+```text
+[lines]
+sample-project/
+├─docs/
+│ ├─guide.md
+│ └─logo.png
+├─src/
+│ ├─data/
+│ ├─__init__.py
+│ └─api.py
+├─tests/
+│ └─test_api.py
+├─README.md
+└─pyproject.toml
+
+[spaces]
+sample-project/
+    docs/
+        guide.md
+        logo.png
+    src/
+        data/
+        __init__.py
+        api.py
+    tests/
+        test_api.py
+    README.md
+    pyproject.toml
+```
+
+두 결과에 포함된 항목은 같고, 관계를 표현하는 문자만 다릅니다. `depthlimit=2` 때문에 `src/data/` 자체는 보이지만 CSV 파일은 보이지 않습니다. `emoji` 스타일은 `python -m pip install 'seedir[emoji]'`로 선택 의존성을 설치해야 하며, 렌더러마다 문자 폭이 다를 수 있습니다.
+
+## sort와 first로 사람이 읽기 쉬운 기본 순서 정하기
+
+파일 시스템이 항목을 돌려주는 순서는 환경에 따라 달라질 수 있습니다. `sort=True`는 이름순을 고정하고, `first='folders'`는 폴더 그룹을 파일보다 먼저 둡니다. 이 조합은 구조를 먼저 파악해야 하는 README에 잘 맞습니다.
+
+```python
+import seedir as sd
+
+sd.seedir(
+    'sample-project',
+    depthlimit=1,
+    sort=True,
+    first='folders',
+    exclude_folders='.git',
+    exclude_files='.env',
+)
+```
+
+```text
+sample-project/
+├─docs/
+├─src/
+├─tests/
+├─README.md
+└─pyproject.toml
+```
+
+루트에서 폴더 세 개가 먼저 이름순으로 나오고, 그 뒤 파일 두 개가 이름순으로 나옵니다. 여기서는 결과를 읽는 데 필요한 기본 조합만 사용했으며, 역순·사용자 정의 키와 파일 우선 정렬은 Part 2에서 비교합니다.

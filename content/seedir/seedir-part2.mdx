@@ -1,0 +1,276 @@
+---
+title: "Part 2. 중급: 필요한 항목만 선별하고 트리 크기 제어하기"
+---
+
+## exclude 규칙으로 민감하고 불필요한 항목 감추기
+
+Part 1의 원본 출력에는 `.git/`과 `.env`가 있었습니다. `exclude_folders`와 `exclude_files`는 이름이 일치하는 항목을 탐색 결과에서 뺍니다. 값 하나는 문자열로, 여러 값은 목록으로 전달합니다.
+
+```python
+import seedir as sd
+
+sd.seedir(
+    'sample-project',
+    exclude_folders=['.git', '.venv', '__pycache__'],
+    exclude_files=['.env', '.env.production'],
+    sort=True,
+    first='folders',
+)
+```
+
+```text
+sample-project/
+├─docs/
+│ ├─guide.md
+│ └─logo.png
+├─src/
+│ ├─data/
+│ │ ├─products.csv
+│ │ └─users.csv
+│ ├─__init__.py
+│ └─api.py
+├─tests/
+│ └─test_api.py
+├─README.md
+└─pyproject.toml
+```
+
+원본과 비교하면 `.git/` 전체와 `.env`가 사라지고 나머지 구조는 유지됩니다. 이 필터는 출력에서만 숨길 뿐 실제 파일을 삭제하지 않으며, 보안 경계도 아닙니다. 공개 전에는 생성된 텍스트 자체를 다시 검토합니다.
+
+## include와 regex로 Python 코드만 골라 보기
+
+`include_folders`와 `include_files`는 관심 있는 이름만 남깁니다. `regex=True`를 함께 주면 문자열을 정규식으로 해석하므로 확장자나 이름 패턴으로 고를 수 있습니다. 다음 예제는 `src/`, `tests/`와 그 안의 Python 파일만 보여 줍니다.
+
+```python
+import seedir as sd
+
+sd.seedir(
+    'sample-project',
+    include_folders=['src', 'tests'],
+    include_files=r'.*\.py$',
+    regex=True,
+    sort=True,
+    first='folders',
+)
+```
+
+```text
+sample-project/
+├─src/
+│ ├─__init__.py
+│ └─api.py
+└─tests/
+  └─test_api.py
+```
+
+`docs/`, `src/data/`, 루트 설정 파일은 선택 조건에 맞지 않아 보이지 않습니다. 정규식의 `.`은 임의 문자를 뜻하므로 확장자 앞에는 `\.`을 사용합니다. 폴더를 지나치게 좁게 포함하면 그 아래의 원하는 파일에도 도달하지 못할 수 있습니다.
+
+## depthlimit과 itemlimit의 차이를 출력으로 비교하기
+
+`depthlimit`은 내려갈 깊이를 제한하고, `itemlimit`은 각 폴더에서 보여 줄 항목 수를 제한합니다. `beyond='content'`를 함께 쓰면 생략된 폴더와 파일 개수가 나타나므로 두 제한의 효과를 구분하기 쉽습니다.
+
+```python
+import seedir as sd
+
+common = {
+    'sort': True,
+    'first': 'folders',
+    'exclude_folders': '.git',
+    'exclude_files': '.env',
+    'beyond': 'content',
+}
+
+print('[depthlimit=1]')
+sd.seedir('sample-project', depthlimit=1, **common)
+
+print('\n[itemlimit=(1, 1)]')
+sd.seedir('sample-project', itemlimit=(1, 1), **common)
+```
+
+```text
+[depthlimit=1]
+sample-project/
+├─docs/
+│ └─0 folder(s), 2 file(s)
+├─src/
+│ └─1 folder(s), 2 file(s)
+├─tests/
+│ └─0 folder(s), 1 file(s)
+├─README.md
+└─pyproject.toml
+
+[itemlimit=(1, 1)]
+sample-project/
+├─docs/
+│ ├─guide.md
+│ └─0 folder(s), 1 file(s)
+├─README.md
+└─2 folder(s), 1 file(s)
+```
+
+첫 결과는 루트 항목을 모두 보여 주되 하위 폴더 안으로 더 내려가지 않습니다. 두 번째 결과는 각 폴더에서 폴더 하나와 파일 하나만 허용합니다. 그래서 루트에는 첫 폴더 `docs/`와 첫 파일 `README.md`만 남고, 생략 표시는 폴더 둘과 파일 하나가 더 있음을 알려 줍니다. 튜플 제한은 0.5.0부터 지원합니다.
+
+## sort와 sort_key로 표시 순서를 재현하기
+
+`sort=True`는 각 폴더의 이름을 알파벳순으로 정렬합니다. `sort_key`에는 이름 문자열을 받아 비교값을 돌려주는 함수를 전달하고, `sort_reverse=True`로 그 결과를 뒤집을 수 있습니다.
+
+```python
+import seedir as sd
+
+sd.seedir(
+    'sample-project',
+    depthlimit=1,
+    sort=True,
+    sort_key=str.casefold,
+    sort_reverse=True,
+    exclude_folders='.git',
+    exclude_files='.env',
+)
+```
+
+```text
+sample-project/
+├─tests/
+├─src/
+├─README.md
+├─pyproject.toml
+└─docs/
+```
+
+`str.casefold`는 대소문자 차이를 줄여 비교하고, 역순이므로 `tests`가 먼저 옵니다. 여기서는 `first`를 지정하지 않았기 때문에 폴더와 파일을 한 그룹으로 정렬합니다. `itemlimit`을 함께 쓰면 이 순서에서 앞선 항목만 남으므로 정렬 기준은 단순한 꾸밈이 아니라 선택 결과에도 영향을 줍니다.
+
+## first로 폴더 우선과 파일 우선을 선택하기
+
+`first='folders'`와 `first='files'`는 같은 항목을 유지하면서 두 종류의 그룹 순서만 바꿉니다. 같은 입력을 연속 출력하면 차이가 명확합니다.
+
+```python
+import seedir as sd
+
+common = {
+    'depthlimit': 1,
+    'sort': True,
+    'exclude_folders': '.git',
+    'exclude_files': '.env',
+}
+
+print('[folders first]')
+sd.seedir('sample-project', first='folders', **common)
+
+print('\n[files first]')
+sd.seedir('sample-project', first='files', **common)
+```
+
+```text
+[folders first]
+sample-project/
+├─docs/
+├─src/
+├─tests/
+├─README.md
+└─pyproject.toml
+
+[files first]
+sample-project/
+├─README.md
+├─pyproject.toml
+├─docs/
+├─src/
+└─tests/
+```
+
+README처럼 계층을 먼저 읽는 문서에는 폴더 우선이, 루트 설정 파일을 점검할 때는 파일 우선이 편합니다. `sort=True`를 같이 사용했으므로 각 그룹 내부도 이름순으로 고정됩니다.
+
+## beyond로 생략 이유와 규모 표현하기
+
+`beyond`는 `depthlimit`이나 `itemlimit` 밖의 내용을 어떻게 나타낼지 정합니다. `'ellipsis'`는 생략 여부만, `'content'`는 남은 항목 수를 보여 줍니다. 밑줄로 시작하는 값은 밑줄 뒤의 문구를 그대로 표시합니다.
+
+```python
+import seedir as sd
+
+common = {
+    'depthlimit': 1,
+    'sort': True,
+    'first': 'folders',
+    'exclude_folders': '.git',
+    'exclude_files': '.env',
+}
+
+for beyond in ['ellipsis', 'content', '_하위 항목 생략']:
+    print(f'[{beyond}]')
+    sd.seedir('sample-project', beyond=beyond, **common)
+    print()
+```
+
+```text
+[ellipsis]
+sample-project/
+├─docs/
+│ └─...
+├─src/
+│ └─...
+├─tests/
+│ └─...
+├─README.md
+└─pyproject.toml
+
+[content]
+sample-project/
+├─docs/
+│ └─0 folder(s), 2 file(s)
+├─src/
+│ └─1 folder(s), 2 file(s)
+├─tests/
+│ └─0 folder(s), 1 file(s)
+├─README.md
+└─pyproject.toml
+
+[_하위 항목 생략]
+sample-project/
+├─docs/
+│ └─하위 항목 생략
+├─src/
+│ └─하위 항목 생략
+├─tests/
+│ └─하위 항목 생략
+├─README.md
+└─pyproject.toml
+```
+
+짧은 README에는 `'ellipsis'`, 규모가 중요한 점검 문서에는 `'content'`, 독자에게 행동을 안내할 때는 맞춤 문구가 적합합니다. 이 줄들은 실제 파일이 아니며 `formatter`가 처리하는 항목에도 포함되지 않습니다.
+
+## mask 함수로 경로와 속성에 따른 정책 적용하기
+
+이름 목록만으로 부족하면 `mask`에 함수를 전달합니다. 입력 경로를 `Path`로 주면 콜백도 `Path`를 받고, 유지할 항목에 `True`를 반환합니다. 다음 정책은 `.git/`을 제외하고 Python과 Markdown 파일만 남깁니다.
+
+```python
+from pathlib import Path
+
+import seedir as sd
+
+def should_show(item: Path) -> bool:
+    if item.is_dir():
+        return item.name != '.git'
+    return item.suffix in {'.py', '.md'}
+
+sd.seedir(
+    Path('sample-project'),
+    mask=should_show,
+    sort=True,
+    first='folders',
+)
+```
+
+```text
+sample-project/
+├─docs/
+│ └─guide.md
+├─src/
+│ ├─data/
+│ ├─__init__.py
+│ └─api.py
+├─tests/
+│ └─test_api.py
+└─README.md
+```
+
+`logo.png`, CSV, TOML, `.env`는 사라졌지만 `src/data/`는 남았습니다. 마스크가 폴더 자체에는 `True`를 반환한 뒤 그 자식 파일을 모두 거른 결과이므로, 빈 폴더까지 없애야 한다면 별도의 후처리가 필요합니다. `stat()` 같은 파일 시스템 호출은 순회 중 파일이 사라지거나 권한이 없으면 실패할 수 있고, 콜백은 모든 항목에 호출되므로 느린 네트워크 작업을 넣지 않습니다.
