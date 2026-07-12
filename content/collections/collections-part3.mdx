@@ -1,0 +1,120 @@
+---
+title: "Part 3. 고급: 연산 의미, 성능, 확장"
+---
+
+## Counter의 멀티셋 연산과 음수 개수 구분하기
+
+두 `Counter` 사이의 `+`, `-`, `&`, `|`는 각각 개수의 합, 차, 최솟값, 최댓값을 계산하는 멀티셋 연산입니다. 이 연산의 결과에서는 0 이하인 항목이 제외됩니다. 반면 `subtract()`는 객체를 직접 변경하며 0과 음수 개수를 보존하므로 재고 부족이나 순변화를 표현할 수 있습니다.
+
+```python
+from collections import Counter
+
+stock = Counter(apple=4, banana=1)
+order = Counter(apple=2, banana=3)
+
+print(stock - order)
+
+balance = stock.copy()
+balance.subtract(order)
+print(balance)
+print(+balance)
+```
+
+```text
+Counter({'apple': 2})
+Counter({'apple': 2, 'banana': -2})
+Counter({'apple': 2})
+```
+
+단항 `+counter`는 0과 음수 항목을 제거한 새 `Counter`를 만듭니다. `elements()` 역시 양의 정수 개수만큼만 원소를 반복합니다. 누락 키는 0으로 비교되므로 `Counter(a=1) == Counter(a=1, b=0)`은 참이라는 점도 테스트 기대값에 반영합니다.
+
+## defaultdict의 __missing__ 호출 경로 피하기
+
+`defaultdict[key]`가 없는 키를 조회할 때만 `__missing__()`이 팩터리를 호출하고 결과를 저장합니다. `get()`, `in`, 순회는 팩터리를 호출하지 않습니다. 단순 조회가 자료를 변경할 수 있으므로 사용자 입력 키를 확인만 하려다가 빈 항목을 대량으로 만드는 일을 피해야 합니다.
+
+```python
+from collections import defaultdict
+
+events = defaultdict(list)
+
+print(events.get('unknown'))
+print(dict(events))
+
+events['unknown'].append('login')
+print(dict(events))
+```
+
+```text
+None
+{}
+{'unknown': ['login']}
+```
+
+존재 여부만 확인하려면 `key in mapping`, 기본값을 저장하지 않고 읽으려면 `mapping.get(key, fallback)`을 사용합니다. 중첩 `defaultdict`의 람다 팩터리는 편리하지만 구조를 숨기고 직렬화를 어렵게 할 수 있으므로, 데이터 모양이 고정되어 있다면 명시적인 초기화나 레코드 클래스를 고려합니다.
+
+## 연산 복잡도와 동시성 경계를 기준으로 선택하기
+
+`deque`의 양끝 `append`·`pop`은 대략 O(1)이고 스레드 안전한 개별 추가·제거 연산을 제공합니다. 하지만 “비었는지 확인한 뒤 꺼내기”처럼 여러 연산을 묶은 절차 전체가 원자적이라는 뜻은 아닙니다. 작업 스레드 사이의 대기, 완료 신호, 용량 제한이 필요하면 `queue.Queue`가 더 적합합니다.
+
+```python
+from collections import deque
+
+buffer = deque(maxlen=2)
+buffer.append('event-1')
+buffer.append('event-2')
+buffer.append('event-3')
+
+if buffer:
+    print(buffer.popleft())
+```
+
+```text
+event-2
+```
+
+제한 `deque`는 새 항목을 위해 오래된 항목을 조용히 버리므로 손실이 허용되는 최근 기록에만 씁니다. 모든 작업을 반드시 처리해야 하는 큐에는 부적합합니다. 성능을 결정하기 전에는 실제 데이터 크기와 연산 비율로 측정하고, 단지 특화 타입이라는 이유만으로 기본 컨테이너를 교체하지 않습니다.
+
+## OrderedDict와 User 계열의 확장 목적 판단하기
+
+Python 3.7부터 일반 `dict`도 삽입 순서를 보장하므로 단순 순서 보존만을 위해 `OrderedDict`를 쓸 필요는 줄었습니다. 그러나 `move_to_end()`로 키를 자주 재배치하거나 `popitem(last=False)`로 가장 오래된 항목을 빠르게 제거하고, 같은 타입끼리 순서까지 포함해 비교할 때는 여전히 의미가 있습니다.
+
+```python
+from collections import OrderedDict
+
+cache = OrderedDict([('a', 10), ('b', 20), ('c', 30)])
+cache.move_to_end('a')
+oldest_key, oldest_value = cache.popitem(last=False)
+
+print(list(cache))
+print(oldest_key, oldest_value)
+```
+
+```text
+['c', 'a']
+b 20
+```
+
+`UserDict`, `UserList`, `UserString`은 내부의 실제 컨테이너를 `data` 속성에 둔 래퍼이며, 내장 타입을 직접 상속하는 것보다 동작을 일관되게 재정의하기 쉬울 때 사용합니다. 예를 들어 키 정규화 정책을 가진 매핑을 만들 수 있습니다.
+
+```python
+from collections import UserDict
+
+class LowerKeyDict(UserDict):
+    def __setitem__(self, key: str, value: object) -> None:
+        if not isinstance(key, str):
+            raise TypeError('키는 문자열이어야 합니다.')
+        self.data[key.lower()] = value
+
+headers = LowerKeyDict({'Content-Type': 'application/json'})
+headers['X-Request-ID'] = 'req-1'
+
+print(headers['content-type'])
+print(headers['x-request-id'])
+```
+
+```text
+application/json
+req-1
+```
+
+확장 타입은 생성자, `update()`, 대입 등 모든 입력 경로가 같은 불변식을 지키는지 테스트해야 합니다. 기능이 단순하면 상속보다 컨테이너를 속성으로 가진 일반 클래스가 공개 API를 더 좁게 유지할 수 있습니다.

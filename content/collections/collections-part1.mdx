@@ -1,0 +1,98 @@
+---
+title: "Part 1. 초급: 특화 컨테이너와 첫 사용법"
+---
+
+## collections가 기본 컨테이너를 보완하는 이유
+
+Python 3.12의 `collections`는 `dict`, `list`, `set`, `tuple`을 없애는 모듈이 아니라 특정 작업을 더 분명하고 효율적으로 표현하는 특화 컨테이너 모음입니다. 빈도 계산에는 `Counter`, 키별 값 모으기에는 `defaultdict`, 양끝 큐에는 `deque`, 여러 설정의 우선순위에는 `ChainMap`이 잘 맞습니다. 필드 이름이 있는 가벼운 튜플과 순서 변경에 특화된 매핑도 제공합니다.
+
+```python
+from collections import Counter, deque
+
+status_counts = Counter(['ok', 'error', 'ok'])
+recent_statuses = deque(['ok', 'error', 'ok'], maxlen=2)
+
+print(status_counts)
+print(list(recent_statuses))
+```
+
+```text
+Counter({'ok': 2, 'error': 1})
+['error', 'ok']
+```
+
+컨테이너를 고를 때는 자료의 모양뿐 아니라 자주 수행할 연산을 먼저 봅니다. 단순한 키-값 저장이면 `dict`가 가장 자연스럽고, 왼쪽에서 계속 꺼내는 큐를 `list.pop(0)`로 구현하고 있다면 `deque`로 의도를 드러내는 식입니다.
+
+## Counter로 해시 가능한 값의 빈도 세기
+
+`Counter`는 해시 가능한 원소를 키로, 빈도를 값으로 보관하는 `dict` 하위 클래스입니다. 반복 가능한 객체를 넘기면 각 원소를 세고, 매핑을 넘기면 이미 계산된 개수를 읽습니다. 없는 키를 조회하면 `KeyError` 대신 `0`을 반환하므로 별도 초기화 없이 누적할 수 있습니다.
+
+```python
+from collections import Counter
+
+levels = ['info', 'error', 'info', 'warning', 'error', 'info']
+counts = Counter(levels)
+
+counts['warning'] += 1
+print(counts.most_common(2))
+print(counts['critical'])
+print(counts.total())
+```
+
+```text
+[('info', 3), ('error', 2)]
+0
+7
+```
+
+`most_common(n)`은 빈도가 큰 순서로 `(원소, 개수)`를 반환하고, 동률이면 처음 만난 순서를 유지합니다. `total()`은 모든 개수의 합입니다. 개수를 `0`으로 대입해도 키는 남아 있으므로 항목 자체를 없애려면 `del counts[key]`를 사용합니다.
+
+## defaultdict로 키별 값을 모으기
+
+`defaultdict`는 없는 키를 `[]`, `set()`, `0` 같은 초기값으로 자동 생성할 때 사용합니다. 생성자 첫 인자인 `default_factory`는 인자를 받지 않는 호출 가능 객체여야 합니다. 아래 예제에서는 `list`가 새 목록을 만들기 때문에 `setdefault()`를 반복하지 않고도 부서별 이름을 모을 수 있습니다.
+
+```python
+from collections import defaultdict
+
+employees = [
+    ('backend', '민수'),
+    ('frontend', '지수'),
+    ('backend', '서연'),
+]
+by_team = defaultdict(list)
+
+for team, name in employees:
+    by_team[team].append(name)
+
+print(dict(by_team))
+```
+
+```text
+{'backend': ['민수', '서연'], 'frontend': ['지수']}
+```
+
+팩터리로 `list()`를 한 번 호출한 결과인 `list()`를 넘기면 안 됩니다. `defaultdict(list)`처럼 함수 자체를 넘겨야 키마다 서로 다른 새 목록이 생깁니다. 중복을 제거해 모으려면 `defaultdict(set)`, 정수를 세려면 `defaultdict(int)`를 선택합니다.
+
+## namedtuple로 가벼운 불변 레코드 만들기
+
+`namedtuple()`은 위치뿐 아니라 필드 이름으로도 접근할 수 있는 `tuple` 하위 클래스를 만드는 팩터리입니다. 반환된 클래스를 모듈 수준 변수에 같은 이름으로 할당하면 표현과 피클링이 예측 가능해집니다. 인스턴스는 일반 튜플처럼 순회·인덱싱·언패킹할 수 있고, 필드로 의도를 읽을 수도 있습니다.
+
+```python
+from collections import namedtuple
+
+Point = namedtuple('Point', ['x', 'y'], defaults=[0])
+
+origin = Point(0)
+location = Point(x=3, y=4)
+x, y = location
+
+print(origin)
+print(location.x, location[1], x + y)
+```
+
+```text
+Point(x=0, y=0)
+3 4 7
+```
+
+`defaults`는 오른쪽 필드부터 적용되므로 위에서는 `y`만 기본값을 가집니다. 값 변경이 필요하면 `location._replace(x=5)`로 새 인스턴스를 만들고, 딕셔너리가 필요하면 `_asdict()`를 사용합니다. 정적 타입 검사와 타입 선언이 중요하다면 `typing.NamedTuple`, 더 풍부한 검증과 메서드가 필요하다면 `dataclasses.dataclass`도 비교합니다.
