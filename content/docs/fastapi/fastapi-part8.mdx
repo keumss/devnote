@@ -1,0 +1,73 @@
+---
+title: "Part 8. 실전: 배포 및 운영 (Deployment)"
+description: "운영(Production) 환경에서는 단일 Uvicorn 프로세스 대신 Gunicorn을 프로세스 매니저로 사용하고, Uvicorn 워커를 여러 개 띄워 멀티코어 환경의 성능을 극대화합니다."
+section: "fastapi"
+sectionTitle: "FastAPI (Python)"
+sectionOrder: 1
+order: 8
+---
+
+## Gunicorn과 Uvicorn 워커 (Production Server)
+
+운영(Production) 환경에서는 단일 Uvicorn 프로세스 대신 Gunicorn을 프로세스 매니저로 사용하고, Uvicorn 워커를 여러 개 띄워 멀티코어 환경의 성능을 극대화합니다.
+
+```bash
+# pip install gunicorn uvicorn
+
+# 터미널에서 다음 명령어로 서버를 실행합니다.
+# -w 4: 4개의 워커 프로세스를 생성합니다. (일반적으로 CPU 코어 수 * 2 + 1)
+# -k uvicorn.workers.UvicornWorker: Uvicorn 워커 클래스를 사용합니다.
+# --bind 0.0.0.0:8000: 모든 외부 IP의 8000번 포트로 수신합니다.
+
+gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+```
+
+## Dockerfile 작성
+
+FastAPI 애플리케이션을 Docker 컨테이너로 패키징하기 위한 표준적인 Dockerfile 예시입니다. 컨테이너 내부에서도 uvicorn 혹은 gunicorn을 실행하여 서비스를 제공할 수 있습니다.
+
+```dockerfile
+# 1. 공식 Python 경량 이미지 사용
+FROM python:3.11-slim
+
+# 2. 작업 디렉터리 설정
+WORKDIR /code
+
+# 3. 의존성 파일 복사 및 설치
+COPY ./requirements.txt /code/requirements.txt
+RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+
+# 4. 소스 코드 복사
+COPY ./app /code/app
+
+# 5. 서버 실행 (컨테이너 환경에서는 uvicorn 단일 프로세스를 사용하고 포트를 노출하거나,
+# 워커가 필요한 경우 gunicorn을 사용합니다.)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+## Docker Compose로 DB와 함께 배포
+
+FastAPI 서버와 데이터베이스(예: PostgreSQL)를 묶어서 동시에 띄울 때 Docker Compose를 사용합니다. 데이터베이스 연결 주소를 서비스 이름(db)으로 지정하여 간단하게 구성할 수 있습니다.
+
+```yaml
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: blogdb
+    ports:
+      - "5432:5432"
+
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://admin:password@db:5432/blogdb
+    depends_on:
+      - db
+```

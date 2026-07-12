@@ -1,6 +1,6 @@
 import { useState, useEffect, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { navData } from '../data';
+import { navData } from '../content';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 

@@ -1,5 +1,5 @@
 import { Search, X, ChevronRight, Hash } from 'lucide-react';
-import { navData } from '../data';
+import { navData } from '../content';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useRef } from 'react';
 

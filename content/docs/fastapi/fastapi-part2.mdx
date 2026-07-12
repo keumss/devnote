@@ -1,0 +1,110 @@
+---
+title: "Part 2. 라우팅, 예외 처리 및 공통 의존성"
+description: "앱의 규모가 커지면 단일 파일(main.py) 대신 APIRouter를 사용해 리소스(예: users, posts)별로 API 엔드포인트를 나누어 관리합니다."
+section: "fastapi"
+sectionTitle: "FastAPI (Python)"
+sectionOrder: 1
+order: 2
+---
+
+## APIRouter를 활용한 라우팅 분리
+
+앱의 규모가 커지면 단일 파일(main.py) 대신 APIRouter를 사용해 리소스(예: users, posts)별로 API 엔드포인트를 나누어 관리합니다.
+
+```python
+# app/api/endpoints/posts.py
+from fastapi import APIRouter, Depends
+
+router = APIRouter()
+
+@router.get("/")
+def read_posts_route():
+    return [{"title": "Hello Router"}]
+
+# app/main.py
+from fastapi import FastAPI
+from app.api.endpoints import posts
+
+app = FastAPI()
+
+# 하위 라우터를 메인 앱에 포함시키며 공통 prefix 및 태그를 부여합니다.
+app.include_router(posts.router, prefix="/posts", tags=["posts"])
+```
+
+## 전역 예외 처리기 (Exception Handlers)
+
+HTTPException 외에도 커스텀 예외를 발생시키거나 시스템 오류를 가로채어 클라이언트에게 일관된 에러 응답 포맷을 반환할 수 있도록 예외 처리기를 등록합니다.
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+class PostNotFoundException(Exception):
+    def __init__(self, post_id: int):
+        self.post_id = post_id
+
+app = FastAPI()
+
+@app.exception_handler(PostNotFoundException)
+async def post_not_found_exception_handler(request: Request, exc: PostNotFoundException):
+    # 커스텀 예외가 발생하면 특정 JSON 구조로 응답합니다.
+    return JSONResponse(
+        status_code=404,
+        content={"message": f"Oops! The post {exc.post_id} could not be found."},
+    )
+
+@app.get("/posts/{post_id}")
+async def read_post_custom_exc(post_id: int):
+    if post_id == 3:
+        raise PostNotFoundException(post_id=post_id)
+    return {"post_id": post_id}
+```
+
+## Depends를 이용한 페이징 의존성 분리
+
+블로그 글 목록, 댓글 목록 등을 조회할 때 페이지네이션(offset, limit) 파라미터가 반복해서 사용됩니다. 이 공통 로직을 별도의 의존성(Depends)으로 분리하면 코드의 중복을 줄일 수 있습니다.
+
+```python
+from fastapi import Depends, APIRouter
+from typing import Tuple
+
+router = APIRouter()
+
+# 공통으로 사용할 페이징 파라미터 의존성 함수
+def get_pagination(offset: int = 0, limit: int = 10) -> Tuple[int, int]:
+    # 클라이언트가 너무 많은 데이터를 요청하지 못하도록 제한할 수 있습니다.
+    if limit > 100:
+        limit = 100
+    return offset, limit
+
+@router.get("/posts/")
+def read_posts(pagination: Tuple[int, int] = Depends(get_pagination)):
+    offset, limit = pagination
+    # 실제 사용 예시: session.exec(select(Post).offset(offset).limit(limit)).all()
+    return {"offset": offset, "limit": limit}
+```
+
+## 미들웨어를 활용한 로깅 및 시간 측정
+
+미들웨어(Middleware)는 요청이 엔드포인트에 도달하기 전, 그리고 응답이 클라이언트에게 전달되기 전에 공통적으로 실행되는 코드입니다. API 요청의 처리 시간을 측정하거나 접근 로그를 남길 때 매우 유용합니다.
+
+```python
+from fastapi import FastAPI, Request
+import time
+
+app = FastAPI()
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start_time = time.time()
+
+    # 다음 미들웨어나 라우터로 요청을 넘기고 응답을 받아옵니다.
+    response = await call_next(request)
+
+    process_time = time.time() - start_time
+    # 처리 시간을 커스텀 HTTP 헤더에 추가합니다.
+    response.headers["X-Process-Time"] = str(process_time)
+
+    print(f"[{request.method}] {request.url.path} - {process_time:.4f}초")
+    return response
+```

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { navData } from '../data';
+import { navData } from '../content';
 import { Link } from 'react-router-dom';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';

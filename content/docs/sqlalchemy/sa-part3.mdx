@@ -1,0 +1,76 @@
+---
+title: "Part 3. 실무 쿼리 기법: 조인과 집계"
+description: "join() 또는 isouter=True를 통해 필요한 여러 테이블을 한 번에 읽어옵니다."
+section: "sqlalchemy"
+sectionTitle: "SQLAlchemy (Python)"
+sectionOrder: 5
+order: 3
+---
+
+## 데이터 결합 (Inner Join & Left Join)
+
+join() 또는 isouter=True를 통해 필요한 여러 테이블을 한 번에 읽어옵니다.
+
+```python
+with Session(engine) as session:
+    # User와 Post를 조인하여 데이터를 튜플 형태로 가져오기
+    stmt = select(User.name, Post.title).join(Post, User.id == Post.user_id)
+
+    # Left Outer Join (작성한 글이 없는 유저도 포함)
+    # stmt = select(User, Post).join(Post, isouter=True)
+
+    for user_name, post_title in session.execute(stmt):
+        print(f"{user_name} wrote {post_title}")
+```
+
+## 집계 및 그룹핑 (Group By, Count, Sum)
+
+sqlachemy.func 모듈을 이용해 그룹별 통계를 계산합니다.
+
+```python
+from sqlalchemy import func
+
+with Session(engine) as session:
+    # 유저별 작성한 포스트 개수 구하기
+    stmt = (
+        select(User.name, func.count(Post.id))
+        .join(Post, User.id == Post.user_id, isouter=True)
+        .group_by(User.id, User.name)
+    )
+
+    for author, post_count in session.execute(stmt):
+        print(f"{author} has {post_count} posts.")
+```
+
+## 페이지네이션 (Limit & Offset)
+
+많은 양의 데이터를 가져올 때, 특정 페이지의 부분 데이터만 조회합니다.
+
+```python
+with Session(engine) as session:
+    page = 2
+    page_size = 10
+
+    # 11번째 데이터부터 10개를 가져옴
+    stmt = select(User).order_by(User.id).offset((page - 1) * page_size).limit(page_size)
+
+    paged_users = session.scalars(stmt).all()
+    print(f"Total entries in this page: {len(paged_users)}")
+```
+
+## 서브쿼리 / CTE (Subquery / CTE)
+
+복잡한 중첩 쿼리나 공통 테이블 식을 객체지향 방식으로 구성합니다.
+
+```python
+with Session(engine) as session:
+    # 평균 나이를 계산하는 서브쿼리
+    avg_age_subq = select(func.avg(User.age)).scalar_subquery()
+
+    # 평균 나이보다 나이가 많은 유저만 필터링
+    stmt = select(User).where(User.age > avg_age_subq)
+
+    # 실행
+    for u in session.scalars(stmt):
+        print(u.name)
+```

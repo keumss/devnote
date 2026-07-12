@@ -1,0 +1,60 @@
+---
+title: "Part 1. 템플릿 상속 및 기본 문법"
+description: "블로그의 공통 레이아웃(헤더, 푸터, 사이드바 등)을 유지하기 위해 base.html을 만들고 다른 페이지들이 이를 상속(extends)받아 특정 블록(block)만 재정의합니다."
+section: "jinja2"
+sectionTitle: "Jinja2 템플릿 엔진"
+sectionOrder: 6
+order: 1
+---
+
+## 템플릿 상속 (Template Inheritance)
+
+블로그의 공통 레이아웃(헤더, 푸터, 사이드바 등)을 유지하기 위해 base.html을 만들고 다른 페이지들이 이를 상속(extends)받아 특정 블록(block)만 재정의합니다.
+
+```html
+<!-- app/templates/base.html -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <title>{% block title %}My Blog{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+    <header>
+        <h1><a href="{{ url_for('render_home') }}">My Awesome Blog</a></h1>
+    </header>
+
+    <main>
+        <!-- 자식 템플릿이 내용을 채울 영역 -->
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <p>&copy; 2026 My Blog</p>
+    </footer>
+</body>
+</html>
+```
+
+## 변수 출력 및 필터 (Variables & Filters)
+
+이중 중괄호 `{{ }}`를 사용하여 서버에서 전달된 변수(SQLModel 객체 등)를 출력합니다. 파이프(`|`)를 이용해 필터를 적용하여 데이터를 포맷팅하거나 이스케이프를 방지할 수 있습니다.
+
+```html
+<!-- app/templates/post_detail.html -->
+{% extends "base.html" %}
+
+{% block title %}{{ post.title }} - My Blog{% endblock %}
+
+{% block content %}
+    <article>
+        <h2>{{ post.title }}</h2>
+        <p class="meta">작성자: {{ post.author.username | default("익명") }} | 작성일: {{ post.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
+
+        <div class="content">
+            <!-- HTML 태그가 포함된 본문을 그대로 렌더링하려면 safe 필터 사용 -->
+            {{ post.content | safe }}
+        </div>
+    </article>
+{% endblock %}
+```

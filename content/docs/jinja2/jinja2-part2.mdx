@@ -1,0 +1,53 @@
+---
+title: "Part 2. 제어 흐름 (Control Structures)"
+description: "{% for %} 구문을 사용하여 데이터베이스에서 조회한 포스트 목록을 순회하며 렌더링합니다. 반복문 내에서 loop 객체를 사용하여 현재 인덱스 등을 확인할 수 있습니다."
+section: "jinja2"
+sectionTitle: "Jinja2 템플릿 엔진"
+sectionOrder: 6
+order: 2
+---
+
+## 반복문 (For Loops)
+
+`{% for %}` 구문을 사용하여 데이터베이스에서 조회한 포스트 목록을 순회하며 렌더링합니다. 반복문 내에서 loop 객체를 사용하여 현재 인덱스 등을 확인할 수 있습니다.
+
+```html
+<!-- app/templates/index.html -->
+{% extends "base.html" %}
+
+{% block content %}
+    <h2>최신 글 목록</h2>
+    <ul class="post-list">
+        {% for post in posts %}
+            <li>
+                <a href="/posts/{{ post.id }}">{{ post.title }}</a>
+                {% if loop.first %}
+                    <span class="badge">New!</span>
+                {% endif %}
+            </li>
+        {% else %}
+            <!-- posts 리스트가 비어있을 때 실행됩니다. -->
+            <li>현재 등록된 글이 없습니다. 첫 글을 작성해보세요!</li>
+        {% endfor %}
+    </ul>
+{% endblock %}
+```
+
+## 조건문 (If / Elif / Else)
+
+`{% if %}` 구문을 사용하여 조건에 따라 다른 HTML을 렌더링합니다. 로그인 여부에 따라 글쓰기 버튼을 보이거나 숨길 때 유용합니다.
+
+```html
+{% if request.state.user %}
+    <div class="user-menu">
+        <p>환영합니다, {{ request.state.user.username }}님!</p>
+        <a href="{{ url_for('create_post_form') }}" class="btn">새 글 작성</a>
+        <a href="/logout" class="btn">로그아웃</a>
+    </div>
+{% else %}
+    <div class="guest-menu">
+        <a href="/login" class="btn">로그인</a>
+        <a href="/signup" class="btn">회원가입</a>
+    </div>
+{% endif %}
+```

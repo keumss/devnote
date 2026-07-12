@@ -1,0 +1,72 @@
+---
+title: "Part 4. FastAPI + SQLModel 연동하기"
+description: "SQLModel을 쓴다면 SQLAlchemy 방식과 조금 다르게 메타데이터를 매핑해야 감지가 정상적으로 이뤄집니다."
+section: "alembic"
+sectionTitle: "Alembic (Python)"
+sectionOrder: 3
+order: 4
+---
+
+## SQLModel용 env.py 메타데이터 설정
+
+SQLModel을 쓴다면 SQLAlchemy 방식과 조금 다르게 메타데이터를 매핑해야 감지가 정상적으로 이뤄집니다.
+
+```python
+# alembic/env.py
+
+# 1. SQLModel 임포트 (내부에서 SQLAlchemy 메타데이터를 관리함)
+from sqlmodel import SQLModel
+
+# 2. 모델들이 정의된 파일을 필수 임포트해야 스캐너가 감지할 수 있습니다.
+from app.models import Hero, Team
+
+# 3. target_metadata 에 SQLModel 내부 메타데이터 자산을 등록
+target_metadata = SQLModel.metadata
+
+# 옵션: DB 주소를 환경변수로부터 주입하려면 아래 방식으로 대체
+# import os
+# config.set_main_option("sqlalchemy.url", os.environ.get("DATABASE_URL"))
+```
+
+## FastAPI의 비동기 (Async) Alembic 설정
+
+성능 최적화를 위해 비동기 드라이버 (asyncpg 등) 사용 시, alembic 템플릿 명령어와 초기 코드 구성이 다릅니다.
+
+```python
+# 애초에 alembic 초기 세팅부터 async 템플릿 사용을 권장
+alembic init -t async alembic
+
+#############################################
+# env.py 스크립트 안에 비동기 엔진(async_engine_from_config) 처리가 포함됩니다.
+from sqlalchemy.ext.asyncio import async_engine_from_config
+
+def do_run_migrations(connection):
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
+
+async def run_async_migrations():
+    connectable = async_engine_from_config(config.get_section(config.config_ini_section, {}))
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+#############################################
+```
+
+## SQLModel 타입 및 디폴트 값 감지 옵션
+
+SQLModel(또는 SQLAlchemy)에서 컬럼 타입 교체나 server_default 등의 변동을 추적하려면 추가 옵션을 활성화해야 합니다.
+
+```python
+# alembic/env.py 의 context.configure(...) 인스턴스를 찾습니다.
+
+def run_migrations_online():
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,          # (중요) 기존 컬럼 데이터 타입 변경을 감지
+        compare_server_default=True # (중요) DB단 디폴트 값 변경 감지
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+```

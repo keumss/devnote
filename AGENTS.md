@@ -2,7 +2,9 @@
 
 ## Project Structure & Module Organization
 
-DevNote is a static React 19 and TypeScript application built with Vite. Code lives in `src/`. `src/main.tsx` initializes hash-based routing, while `src/App.tsx` defines routes. Reusable UI belongs in `src/components/`, hooks in `src/hooks/`, and curriculum content in `src/data.ts`. Global styles live in `src/index.css`; root configuration controls the build.
+DevNote is a static React 19 and TypeScript application built with Vite. Code lives in `src/`. `src/main.tsx` initializes hash-based routing, while `src/App.tsx` defines routes. Reusable UI belongs in `src/components/`, hooks in `src/hooks/`, and the Fumadocs-backed content loader in `src/content.ts`. Global styles live in `src/index.css`; root configuration controls the build.
+
+Curriculum content lives in category-level Markdown/MDX files under `content/docs/<section>/`. Each document's frontmatter defines its section, display titles, and ordering. `source.config.ts` validates this metadata and configures Fumadocs MDX. The generated `.source/` directory is build output and must not be committed.
 
 There is no test or public asset directory. Add colocated tests as `ComponentName.test.tsx` or broader tests under `src/__tests__/`. Put future static assets in `public/`.
 
@@ -20,6 +22,8 @@ Before submitting changes, run `npm run lint && npm run build`.
 ## Coding Style & Naming Conventions
 
 Use TypeScript, ES modules, React function components, and two-space indentation. Follow the existing semicolon and single-quote style. Name component files in PascalCase (`SearchModal.tsx`), hooks in camelCase with a `use` prefix (`useDarkMode.ts`), and variables/functions in camelCase. Move reusable stateful logic into hooks. Preserve existing Tailwind and dark-mode patterns.
+
+For curriculum changes, add or edit `.md`/`.mdx` files instead of embedding content in TypeScript. Keep the required frontmatter fields aligned with `source.config.ts`; use level-two headings (`##`) for searchable learning items and fenced code blocks with a language identifier. Navigation and search data are generated from these files, so do not maintain a separate content index.
 
 No automatic formatter or ESLint configuration is present. Keep diffs focused and use `npm run lint` as the required static check.
 

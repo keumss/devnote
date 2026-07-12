@@ -1,0 +1,84 @@
+---
+title: "Part 3. 고급: 프로그래밍 및 최적화"
+description: "반복되는 비즈니스 로직을 DB 내부에 저장해둡니다. 파라미터(인자)를 받고 제어문도 쓸 수 있습니다. (Postgres는 Function을 더 널리 씁니다)"
+section: "sql"
+sectionTitle: "SQL (PostgreSQL)"
+sectionOrder: 4
+order: 3
+---
+
+## 프로시저 / 함수 (Function & Procedure)
+
+반복되는 비즈니스 로직을 DB 내부에 저장해둡니다. 파라미터(인자)를 받고 제어문도 쓸 수 있습니다. (Postgres는 Function을 더 널리 씁니다)
+
+```sql
+CREATE OR REPLACE FUNCTION get_discount(price NUMERIC)
+RETURNS NUMERIC AS $$
+BEGIN
+  IF price > 1000 THEN
+    RETURN price * 0.9; -- 10% 할인
+  ELSE
+    RETURN price;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+## 날짜 및 시간 다루기
+
+날짜 데이터에 더하고 빼거나 특정 포맷으로 변환합니다.
+
+```sql
+-- 현재 시간 기준 한달 후 계산하기
+SELECT CURRENT_TIMESTAMP + INTERVAL '1 month';
+
+-- 특정 단위만 추출 (ex: 연도)
+SELECT EXTRACT(YEAR FROM created_at) FROM users;
+```
+
+## 검색 속도 올리기 (INDEX)
+
+책의 목차처럼 인덱스를 만들어 WHERE 조건 등에 의한 색인 속도를 비약적으로 높입니다.
+
+```sql
+-- 유저네임 컬럼에 B-Tree 인덱스 생성
+CREATE INDEX idx_users_username ON users(username);
+
+-- 쿼리가 인덱스를 타는지 실행계획 확인
+EXPLAIN ANALYZE SELECT * FROM users WHERE username = 'John';
+```
+
+## 전문 검색 (Full Text Search)
+
+LIKE %검색어% 로는 느린 긴 텍스트 검색을 더 빠르고 유연하게 구현합니다.
+
+```sql
+-- 'apple' 이라는 단어가 포함된 텍스트 찾기
+SELECT * FROM articles
+WHERE to_tsvector('english', body) @@ to_tsquery('apple');
+```
+
+## 안전한 거래 (TRANSACTION)
+
+여러 쿼리 작업이 모두 성공해야만 반영(COMMIT)하고, 중간에 실패하면 기존으로 되돌립니다(ROLLBACK). 돈 다룰 때 필수입니다.
+
+```sql
+BEGIN;
+
+UPDATE accounts SET balance = balance - 100 WHERE id = 1; -- 출금
+UPDATE accounts SET balance = balance + 100 WHERE id = 2; -- 입금
+
+COMMIT; -- 모두 문제없으면 확정
+-- 문제가 생겼을경우 ROLLBACK;
+```
+
+## 자동화 (TRIGGER)
+
+특정 테이블에 데이터 변경(INSERT, UPDATE, DELETE)이 생길 때, 자동으로 미리 지정된 함수를 실행합니다.
+
+```sql
+CREATE TRIGGER update_modified_time
+BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+```

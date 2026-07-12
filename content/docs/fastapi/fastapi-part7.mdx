@@ -1,0 +1,109 @@
+---
+title: "Part 7. 실전: 블로그 서비스 확장 기능"
+description: "블로그 운영 환경에서는 DB 주소, JWT 비밀키 등의 민감한 설정값을 코드에 하드코딩해서는 안 됩니다. pydantic-settings 라이브러리를 사용해 .env 파일과 환경변수에서 설정값을 타입-세이프하게 불러옵니다."
+section: "fastapi"
+sectionTitle: "FastAPI (Python)"
+sectionOrder: 1
+order: 7
+---
+
+## 환경변수 관리 (Pydantic Settings)
+
+블로그 운영 환경에서는 DB 주소, JWT 비밀키 등의 민감한 설정값을 코드에 하드코딩해서는 안 됩니다. pydantic-settings 라이브러리를 사용해 .env 파일과 환경변수에서 설정값을 타입-세이프하게 불러옵니다.
+
+```python
+# pip install pydantic-settings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from functools import lru_cache
+
+class Settings(BaseSettings):
+    project_name: str = "My Awesome Blog"
+    database_url: str
+    secret_key: str
+    access_token_expire_minutes: int = 30
+
+    # .env 파일을 자동으로 읽어오도록 설정합니다.
+    model_config = SettingsConfigDict(env_file=".env")
+
+@lru_cache
+def get_settings():
+    return Settings()
+
+# 사용 예시 (deps.py 등에서)
+# settings = get_settings()
+# engine = create_engine(settings.database_url)
+```
+
+## 백그라운드 작업 (Background Tasks)
+
+새 포스트가 등록될 때 구독자들에게 이메일 알림을 보내거나, 업로드된 썸네일 이미지를 리사이징하는 작업은 응답을 지연시킬 수 있습니다. BackgroundTasks를 사용하면 HTTP 응답을 먼저 보낸 뒤 작업을 비동기적으로 처리할 수 있습니다.
+
+```python
+from fastapi import BackgroundTasks, APIRouter
+
+router = APIRouter()
+
+def send_new_post_email_notification(post_title: str):
+    # 이메일 전송 로직 시뮬레이션 (시간 소요)
+    import time
+    time.sleep(3)
+    print(f"새 글 알림 발송 완료: {post_title}")
+
+@router.post("/posts/")
+def create_post_with_notification(post: PostCreate, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
+    # 1. DB에 포스트 저장
+    db_post = Post.model_validate(post)
+    session.add(db_post)
+    session.commit()
+    session.refresh(db_post)
+
+    # 2. 백그라운드 큐에 알림 작업 추가 (즉시 응답 반환)
+    background_tasks.add_task(send_new_post_email_notification, db_post.title)
+
+    return db_post
+```
+
+## CORS 미들웨어 적용
+
+FastAPI 백엔드 API를 Jinja2 템플릿 외에도 외부 프론트엔드(React, Vue 등)나 관리자 패널에서 접근하려면 CORS(Cross-Origin Resource Sharing) 설정이 필수적입니다.
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+# 접근을 허용할 도메인 목록
+origins = [
+    "http://localhost:3000",   # React 개발 서버
+    "http://admin.myblog.com", # 관리자 패널
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"], # GET, POST, DELETE 등 모든 메서드 허용
+    allow_headers=["*"],
+)
+```
+
+## TestClient를 활용한 API 테스트
+
+FastAPI는 내장된 TestClient를 제공하여 매우 쉽게 API 테스트 코드를 작성할 수 있습니다. pytest와 결합하여 라우터가 정상적으로 작동하는지 검증합니다.
+
+```python
+# pip install pytest httpx
+from fastapi.testclient import TestClient
+from app.main import app
+
+client = TestClient(app)
+
+def test_read_posts():
+    # 메인 포스트 목록 API 호출
+    response = client.get("/posts/")
+
+    # 상태 코드와 응답 데이터 검증
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+```

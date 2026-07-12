@@ -1,0 +1,84 @@
+---
+title: "Part 4. 최적화: N+1 문제와 비동기"
+description: "컬렉션을 접근할 때마다 쿼리가 발생하는 N+1 문제를 방지하기 위해 쿼리 단계에서 연관 데이터를 한 번에 가져옵니다."
+section: "sqlalchemy"
+sectionTitle: "SQLAlchemy (Python)"
+sectionOrder: 5
+order: 4
+---
+
+## 즉시 로딩으로 N+1 문제 해결 (Eager Loading)
+
+컬렉션을 접근할 때마다 쿼리가 발생하는 N+1 문제를 방지하기 위해 쿼리 단계에서 연관 데이터를 한 번에 가져옵니다.
+
+```python
+from sqlalchemy.orm import selectinload, joinedload
+
+with Session(engine) as session:
+    # 주의: selectinload는 별도 쿼리로 in_ 연산자를 통해 1:N 관계를 로딩함 (리스트에 유리)
+    # joinedload는 JOIN을 통해 1:1 관계를 로딩함
+    stmt = select(User).options(selectinload(User.posts))
+
+    users = session.scalars(stmt).all()
+    for u in users:
+        # DB에 추가 접근(쿼리) 없이 하위 데이터(posts) 사용 가능!
+        print(u.name, [p.title for p in u.posts])
+```
+
+## SQL 주입 안전한 원시 쿼리 (Raw SQL)
+
+ORM으로 표현하기 힘들거나 극한의 튜닝이 필요한 쿼리를 파라미터 바인딩과 함께 안전히 실행합니다.
+
+```python
+from sqlalchemy import text
+
+with Session(engine) as session:
+    # 파라미터가 포함된 SQL
+    stmt = text("SELECT id, name FROM users WHERE age >= :min_age")
+
+    # 실행하면서 파라미터 딕셔너리 제공
+    results = session.execute(stmt, {"min_age": 20})
+
+    for row in results:
+        # row.id 처럼 키로 접근 가능
+        print(f"[{row.id}] {row.name}")
+```
+
+## FastAPI 환상의 짝꿍: 비동기 설정 (AsyncIO)
+
+FastAPI의 속도를 극대화하기 위해 완전한 비동기(non-blocking) DB 엔진과 세션을 사용합니다.
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+# 드라이버를 asyncpg (Postgres) 등으로 교체해야 함
+async_engine = create_async_engine('postgresql+asyncpg://user:pass@localhost/mydb')
+
+async def get_users():
+    # 비동기 컨텍스트 매니저
+    async with AsyncSession(async_engine) as session:
+        stmt = select(User)
+
+        # await를 이용해 결과를 비동기적으로 기다림
+        result = await session.execute(stmt)
+        return result.scalars().all()
+```
+
+## 오류 방어: 트랜잭션 수동 제어
+
+비즈니스 로직 중 예외가 발생할 경우, rollback()을 호출해 데이터가 꼬이는 것을 방지합니다.
+
+```python
+with Session(engine) as session:
+    try:
+        session.add(User(name="Daniel", age=40))
+
+        # 여기서 DB 제약조건 위반 또는 서버 에러가 발생했다면?
+        # raise Exception("Oops!")
+
+        session.commit()
+    except Exception as e:
+        # 실패 시 전부 원상복구
+        session.rollback()
+        print(f"Transaction failed: {e}")
+```

@@ -1,10 +1,10 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import CodeBlock from './CodeBlock';
 import NavigationButton from './NavigationButton';
 import SidebarNav from './SidebarNav';
 import Layout from './Layout';
-import { navData } from '../data';
+import { navData } from '../content';
+import { mdxComponents } from './MdxContent';
 import { BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -76,38 +76,8 @@ export default function CourseViewer() {
                 </h2>
               </div>
 
-              <div className="space-y-10">
-                {activeCategory.items.map((item, idx) => (
-                  <article 
-                    key={item.id}
-                    id={item.id}
-                    className="group relative rounded-2xl pt-2 pb-6 sm:pb-8 border-b border-dashed border-slate-200 dark:border-slate-800 last:border-0"
-                  >
-                    <div className="flex gap-4 sm:gap-6">
-                      <div className="flex-shrink-0 mt-1 hidden sm:block">
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800/50 text-slate-400 dark:text-slate-500 font-bold text-sm shadow-sm border border-slate-200 dark:border-slate-700/50">
-                          {idx + 1}
-                        </span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 sm:gap-3 mb-2 sm:mb-3">
-                          <span className="sm:hidden flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800/50 text-slate-600 dark:text-slate-400 font-bold text-xs shrink-0 shadow-sm border border-slate-200 dark:border-slate-700/50">
-                            {idx + 1}
-                          </span>
-                          <h3 className="text-lg flex items-center gap-2 sm:text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                            {item.title}
-                          </h3>
-                        </div>
-                        <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 mb-5 leading-relaxed">
-                          {item.description}
-                        </p>
-                        {item.code && (
-                          <CodeBlock code={item.code} language={item.language} />
-                        )}
-                      </div>
-                    </div>
-                  </article>
-                ))}
+              <div className="lesson-content">
+                <activeCategory.Content components={mdxComponents} />
               </div>
               
               {/* Page Navigation */}

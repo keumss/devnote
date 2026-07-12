@@ -1,0 +1,76 @@
+---
+title: "Part 2. 활용: 데이터 조회/수정/삭제"
+description: "select() 함수와 Session.exec()를 이용해 조건에 맞는 데이터를 하나 혹은 여러 개 가져옵니다."
+section: "sqlmodel"
+sectionTitle: "SQLModel (Python)"
+sectionOrder: 2
+order: 2
+---
+
+## 단일 검색조건 (Select & Where)
+
+select() 함수와 Session.exec()를 이용해 조건에 맞는 데이터를 하나 혹은 여러 개 가져옵니다.
+
+```python
+from sqlmodel import select, Session
+
+with Session(engine) as session:
+    # WHERE 조건이 추가된 Select 객체
+    statement = select(Hero).where(Hero.name == "Deadpond")
+
+    # exec를 이용해 실행 후 결과 스캔
+    # .first() : 첫 번째 값 (없으면 None)
+    # .one() : 정확히 1개 보장 (없거나 여러개면 Exception 발생)
+    hero = session.exec(statement).first()
+    print(hero)
+```
+
+## 페이지네이션 (Offset & Limit)
+
+대량의 데이터를 조금씩 나누어 가져올 때 사용합니다. FastAPI 라우터와 궁합이 찰떡입니다.
+
+```python
+with Session(engine) as session:
+    offset = 0 # 스킵할 아이템 수
+    limit = 10 # 가져올 아이템 수
+
+    # offset과 limit를 걸어 부분 결과만 가져옵니다
+    statement = select(Hero).offset(offset).limit(limit)
+    heroes = session.exec(statement).all()
+
+    print(f"Loaded {len(heroes)} heroes")
+```
+
+## 데이터 업데이트 (Update & Refresh)
+
+데이터를 데이터베이스에서 가져온 뒤, 객체 속성을 수정하고 커밋합니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero).where(Hero.name == "Spider-Boy")
+    hero = session.exec(statement).one()
+
+    # Pydantic을 쓰듯 간단히 객체 속성을 수정
+    hero.age = 16
+    hero.name = "Spider-Man"
+
+    # 세션에 속성이 변경되었음을 알린 후 커밋
+    session.add(hero)
+    session.commit()
+    # 업데이트된 버전으로 동기화
+    session.refresh(hero)
+```
+
+## 객체 삭제 (Delete)
+
+Session.delete() 함수를 사용해 데이터베이스에서 완전히 레코드를 지웁니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero).where(Hero.name == "Spider-Man")
+    hero = session.exec(statement).one()
+
+    # 객체를 삭제하고 확정
+    session.delete(hero)
+    session.commit()
+```

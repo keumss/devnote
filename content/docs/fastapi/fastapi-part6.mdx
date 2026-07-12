@@ -1,0 +1,103 @@
+---
+title: "Part 6. 심화: 파일 업로드 (File Uploads)"
+description: "Jinja2 기반의 HTML 폼이나 일반적인 application/x-www-form-urlencoded 데이터를 서버에서 받을 때는 Form 의존성을 사용합니다. JSON 바디를 받을 때와 달리 파라미터에 Form(...)을 명시해야 합니다."
+section: "fastapi"
+sectionTitle: "FastAPI (Python)"
+sectionOrder: 1
+order: 6
+---
+
+## Form Data 처리하기 (Form)
+
+Jinja2 기반의 HTML 폼이나 일반적인 application/x-www-form-urlencoded 데이터를 서버에서 받을 때는 Form 의존성을 사용합니다. JSON 바디를 받을 때와 달리 파라미터에 Form(...)을 명시해야 합니다.
+
+```python
+from fastapi import APIRouter, Form
+
+router = APIRouter()
+
+@router.post("/login-form/")
+def login_via_form(username: str = Form(...), password: str = Form(...)):
+    # HTML의 <form> 태그에서 전송된 데이터를 처리합니다.
+    return {"username": username, "message": "로그인 폼 제출 성공!"}
+```
+
+## 단일 이미지 업로드 (썸네일)
+
+블로그 포스트의 썸네일과 같은 단일 파일을 업로드하는 방법입니다. FastAPI의 UploadFile 객체를 사용하면 비동기 환경에서도 파일을 안전하고 효율적으로 다룰 수 있습니다.
+
+```python
+from fastapi import APIRouter, File, UploadFile
+import shutil
+import os
+import uuid
+
+router = APIRouter()
+UPLOAD_DIR = "app/static/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+@router.post("/posts/{post_id}/thumbnail")
+async def upload_thumbnail(post_id: int, file: UploadFile = File(...)):
+    # 파일명 중복을 피하기 위해 UUID 사용
+    file_extension = file.filename.split(".")[-1]
+    unique_filename = f"thumb_{post_id}_{uuid.uuid4().hex}.{file_extension}"
+    file_location = os.path.join(UPLOAD_DIR, unique_filename)
+
+    # 파일을 청크 단위로 읽어 디스크에 저장합니다.
+    with open(file_location, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    # 클라이언트가 접근할 수 있는 URL 경로 반환
+    return {"thumbnail_url": f"/static/uploads/{unique_filename}"}
+```
+
+## 다중 이미지 업로드 (포스트 본문)
+
+블로그 포스트 본문에 들어갈 여러 개의 이미지를 동시에 업로드하는 방법입니다. List[UploadFile] 타입을 파라미터로 받아 순회하며 저장합니다.
+
+```python
+from fastapi import APIRouter, File, UploadFile
+from typing import List
+import shutil
+import os
+import uuid
+
+@router.post("/posts/{post_id}/images")
+async def upload_multiple_images(post_id: int, files: List[UploadFile] = File(...)):
+    saved_urls = []
+
+    for file in files:
+        file_extension = file.filename.split(".")[-1]
+        unique_filename = f"post_{post_id}_{uuid.uuid4().hex}.{file_extension}"
+        file_location = os.path.join(UPLOAD_DIR, unique_filename)
+
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        saved_urls.append(f"/static/uploads/{unique_filename}")
+
+    return {"image_urls": saved_urls}
+```
+
+## HTML Form 파일 업로드 요소 구성
+
+파일 업로드를 지원하는 HTML 폼 양식 예시입니다. 단일 파일과 다중 파일(multiple) 속성을 폼 인풋(input)으로 구성할 수 있습니다. 폼 전송 시에는 반드시 enctype="multipart/form-data" 속성이 있어야 합니다.
+
+```html
+<!-- 파일 업로드용 폼. enctype은 필수입니다. -->
+<form action="/posts/1/images" method="post" enctype="multipart/form-data">
+    <div>
+        <label for="thumbnail">썸네일 업로드:</label>
+        <!-- accept 속성으로 선택할 수 있는 파일 형식을 이미지로 제한할 수 있습니다. -->
+        <input type="file" id="thumbnail" name="file" accept="image/*">
+    </div>
+
+    <div>
+        <label for="images">본문 이미지 다중 업로드:</label>
+        <!-- multiple 속성을 주면 사용자가 여러 개의 파일을 동시에 선택할 수 있습니다. -->
+        <input type="file" id="images" name="files" accept="image/*" multiple>
+    </div>
+
+    <button type="submit">업로드 완료</button>
+</form>
+```

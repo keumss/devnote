@@ -28,6 +28,28 @@
 }
 
 @layer utilities {
+  .lesson-content {
+    counter-reset: lesson;
+  }
+
+  .lesson-heading {
+    @apply relative mt-10 mb-3 border-t border-dashed border-slate-200 pt-10 pl-10 dark:border-slate-800;
+    counter-increment: lesson;
+  }
+
+  .lesson-heading:first-child {
+    @apply mt-0 border-t-0 pt-2;
+  }
+
+  .lesson-heading::before {
+    content: counter(lesson);
+    @apply absolute left-0 top-9 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-500 shadow-sm dark:border-slate-700/50 dark:bg-slate-800/50 dark:text-slate-400;
+  }
+
+  .lesson-heading:first-child::before {
+    @apply top-1;
+  }
+
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;

@@ -1,0 +1,68 @@
+---
+title: "Part 1. 기초: 스키마 정의 및 조작"
+description: "SQLModel은 SQLAlchemy(DB ORM)와 Pydantic(FastAPI의 데이터 검증 라이브러리)의 장점을 한데 묶은 최신 라이브러리입니다. FastAPI의 창시자가 직접 만들었기에, SQLAlchemy의 강력한 ORM 기능을 그대로 쓰면서도 별도의 중복(DB용 모델 클래스 정의, 검증용 DTO 정의) 없이 하나의 모델 코드로 유지보수할 수 있습니다. 학습 난이도와 보일러플레이트 코드를 줄여주며, 특히 FastAPI와의 결합도가 압도적으로 높아 모던 웹 파이썬 백엔드를 구성할 때 우선적으로 권장됩니다."
+section: "sqlmodel"
+sectionTitle: "SQLModel (Python)"
+sectionOrder: 2
+order: 1
+---
+
+## SQLModel이란?
+
+SQLModel은 SQLAlchemy(DB ORM)와 Pydantic(FastAPI의 데이터 검증 라이브러리)의 장점을 한데 묶은 최신 라이브러리입니다. FastAPI의 창시자가 직접 만들었기에, SQLAlchemy의 강력한 ORM 기능을 그대로 쓰면서도 별도의 중복(DB용 모델 클래스 정의, 검증용 DTO 정의) 없이 하나의 모델 코드로 유지보수할 수 있습니다. 학습 난이도와 보일러플레이트 코드를 줄여주며, 특히 FastAPI와의 결합도가 압도적으로 높아 모던 웹 파이썬 백엔드를 구성할 때 우선적으로 권장됩니다.
+
+## 모델 정의 (SQLModel & Pydantic)
+
+SQLModel 클래스를 상속받아 데이터베이스 테이블과 Pydantic(데이터 검증) 모델을 동시에 정의합니다.
+
+```python
+from sqlmodel import Field, SQLModel
+from typing import Optional
+
+# table=True면 테이블 생성 매핑, False면 단순 Pydantic 검증 모델(기본값)
+class Hero(SQLModel, table=True):
+    # primary_key 지정
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # 인덱스 생성
+    name: str = Field(index=True)
+    secret_name: str
+    # 옵셔널 (Nullable)
+    age: Optional[int] = None
+```
+
+## 엔진 연결 및 테이블 생성
+
+create_engine을 이용해 DB에 연결하고, SQLModel.metadata.create_all을 통해 테이블을 실제로 만듭니다.
+
+```python
+from sqlmodel import create_engine, SQLModel
+
+sqlite_file_name = "database.db"
+sqlite_url = f"sqlite:///{sqlite_file_name}"
+
+# echo=True 설정을 통해 실제 렌더링 된 SQL들을 확인 가능합니다.
+engine = create_engine(sqlite_url, echo=True)
+
+# 정의된 모든 모델을 스캔하여 DB에 테이블로 생성합니다. (앱 시작 시 활용)
+def create_db_and_tables():
+    SQLModel.metadata.create_all(engine)
+```
+
+## 데이터 생성 파이프라인 (Session.add)
+
+Session을 활용해 파이썬 인스턴스로 정의된 데이터를 DB에 추가합니다.
+
+```python
+from sqlmodel import Session
+
+def create_heroes():
+    hero_1 = Hero(name="Deadpond", secret_name="Dive Wilson")
+    hero_2 = Hero(name="Spider-Boy", secret_name="Pedro Parqueador")
+
+    with Session(engine) as session:
+        session.add(hero_1)
+        session.add(hero_2)
+
+        session.commit() # 실제 DB 저장
+        session.refresh(hero_1) # DB 저장 후 id 등 자동 생성 속성을 객체에 업데이트(반영) 시킴
+```

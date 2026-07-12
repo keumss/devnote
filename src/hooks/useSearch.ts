@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import Fuse from 'fuse.js';
-import { navData } from '../data';
+import { navData } from '../content';
 
 type SearchResultItem = {
   sectionId: string;
@@ -59,7 +59,7 @@ export function useSearch(onSelectResult: (sectionId: string, categoryId: string
   }, []);
 
   const fuse = useMemo(() => new Fuse(flatData, {
-    keys: ['item.title', 'item.description', 'item.code'],
+    keys: ['item.title', 'item.description', 'item.content'],
     threshold: 0.4,
     ignoreLocation: true,
     minMatchCharLength: 2,

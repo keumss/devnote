@@ -1,5 +1,5 @@
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { navData } from '../data';
+import { navData } from '../content';
 
 type CategoryInfo = {
   sectionId: string;

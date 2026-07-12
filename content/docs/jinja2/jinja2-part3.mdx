@@ -1,0 +1,79 @@
+---
+title: "Part 3. 폼 처리 및 컴포넌트 재사용"
+description: "새로운 블로그 포스트를 작성하는 폼입니다. 폼의 action과 FastAPI의 엔드포인트를 연결하고, 에러 메시지가 있을 경우 출력하도록 구성합니다."
+section: "jinja2"
+sectionTitle: "Jinja2 템플릿 엔진"
+sectionOrder: 6
+order: 3
+---
+
+## HTML Form 및 FastAPI 라우팅 결합
+
+새로운 블로그 포스트를 작성하는 폼입니다. 폼의 action과 FastAPI의 엔드포인트를 연결하고, 에러 메시지가 있을 경우 출력하도록 구성합니다.
+
+```html
+<!-- app/templates/create_post.html -->
+{% extends "base.html" %}
+
+{% block content %}
+    <h2>새 포스트 작성</h2>
+
+    {% if error_message %}
+        <div class="alert alert-danger">{{ error_message }}</div>
+    {% endif %}
+
+    <!-- 파일(썸네일 등)을 함께 업로드하려면 enctype="multipart/form-data" 필수 -->
+    <form action="/posts/" method="post" enctype="multipart/form-data">
+        <div class="form-group">
+            <label for="title">제목</label>
+            <input type="text" id="title" name="title" required value="{{ form_data.title | default('') }}">
+        </div>
+
+        <div class="form-group">
+            <label for="content">본문</label>
+            <textarea id="content" name="content" rows="10" required>{{ form_data.content | default('') }}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="thumbnail">썸네일 이미지</label>
+            <input type="file" id="thumbnail" name="thumbnail" accept="image/*">
+        </div>
+
+        <button type="submit" class="btn btn-primary">저장하기</button>
+    </form>
+{% endblock %}
+```
+
+## 매크로 (Macros) - 재사용 가능한 컴포넌트
+
+블로그의 포스트 카드(Post Card)나 페이지네이션 버튼처럼 여러 템플릿에서 반복적으로 사용되는 UI 요소를 매크로로 정의하여 재사용합니다.
+
+```html
+<!-- app/templates/macros/post_card.html -->
+{% macro render_post_card(post) %}
+    <div class="post-card">
+        {% if post.thumbnail %}
+            <img src="{{ post.thumbnail }}" alt="{{ post.title }} 썸네일">
+        {% else %}
+            <img src="/static/images/default-thumb.png" alt="기본 썸네일">
+        {% endif %}
+
+        <div class="post-card-content">
+            <h3><a href="/posts/{{ post.id }}">{{ post.title }}</a></h3>
+            <p class="summary">{{ post.content[:80] }}...</p>
+            <small>{{ post.author.username }} | {{ post.created_at.strftime("%Y-%m-%d") }}</small>
+        </div>
+    </div>
+{% endmacro %}
+
+<!-- 다른 템플릿에서 불러와서 사용하기 -->
+<!--
+{% from "macros/post_card.html" import render_post_card %}
+
+<div class="grid">
+    {% for post in posts %}
+        {{ render_post_card(post) }}
+    {% endfor %}
+</div>
+-->
+```

@@ -1,0 +1,105 @@
+---
+title: "Part 5. 정적 파일 제공 및 SSR (Static Files & Jinja2)"
+description: "업로드된 이미지(썸네일, 본문 이미지 등)를 클라이언트(브라우저)에서 접근할 수 있도록 URL을 통해 제공하려면 StaticFiles를 사용해 특정 디렉터리를 라우팅 경로에 마운트해야 합니다."
+section: "fastapi"
+sectionTitle: "FastAPI (Python)"
+sectionOrder: 1
+order: 5
+---
+
+## 정적 파일 제공 (이미지 서버)
+
+업로드된 이미지(썸네일, 본문 이미지 등)를 클라이언트(브라우저)에서 접근할 수 있도록 URL을 통해 제공하려면 StaticFiles를 사용해 특정 디렉터리를 라우팅 경로에 마운트해야 합니다.
+
+```python
+from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+import os
+
+app = FastAPI()
+
+UPLOAD_DIR = "app/static/uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# /static 경로로 들어오는 요청을 app/static 디렉터리와 연결합니다.
+# 예: http://localhost:8000/static/uploads/thumb_1_img.png
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+```
+
+## Jinja2 설정 및 템플릿 렌더링 준비
+
+FastAPI는 웹 애플리케이션 프레임워크인 Starlette를 기반으로 하므로, Jinja2Templates를 이용해 서버사이드 렌더링(SSR)을 쉽고 간편하게 구현할 수 있습니다. HTML을 동적으로 생성하여 풀스택 블로그 서비스로 거듭날 수 있습니다.
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.templating import Jinja2Templates
+
+app = FastAPI()
+
+# 템플릿 파일이 위치할 디렉터리 지정
+templates = Jinja2Templates(directory="app/templates")
+```
+
+## Jinja2 템플릿에 데이터 렌더링하기
+
+템플릿 엔진을 사용하여 DB에 저장된 블로그 포스트 데이터를 화면에 출력해 봅니다. TemplateResponse를 반환하며 request 객체를 반드시 콘텍스트(context) 딕셔너리에 포함해야 합니다.
+
+```python
+from fastapi import APIRouter, Request, Depends
+from sqlmodel import select, Session
+from typing import List
+# 위에서 정의한 get_session, Post 모델 등 임포트
+
+router = APIRouter()
+
+# 블로그 메인 페이지 (목록 화면)
+@router.get("/", response_class=HTMLResponse)
+async def render_home(request: Request, session: Session = Depends(get_session)):
+    # DB에서 최신 포스트 10개를 조회합니다
+    posts = session.exec(select(Post).order_by(Post.created_at.desc()).limit(10)).all()
+
+    # index.html 템플릿을 호출하며 포스트 데이터를 넘겨줍니다
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,     # 필수값
+            "blog_title": "My Awesome Blog",
+            "posts": posts
+        }
+    )
+```
+
+## index.html 템플릿 파일 예시
+
+Jinja2 문법(`{{ 변수명 }}`, `{% 제어문 %}`)을 사용해 서버에서 넘겨받은 컨텍스트 데이터를 HTML 상에 출력하는 템플릿 코드의 예시입니다.
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ blog_title }}</title>
+    <!-- 정적 파일 링크 (url_for 사용 권장) -->
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+    <h1>Welcome to {{ blog_title }}</h1>
+
+    <ul class="post-list">
+        <!-- 넘겨받은 posts 리스트를 순회하며 렌더링 -->
+        {% for post in posts %}
+            <li>
+                <h2><a href="/posts/{{ post.id }}">{{ post.title }}</a></h2>
+                <!-- 썸네일 이미지가 있으면 표시 -->
+                {% if post.thumbnail %}
+                    <img src="{{ post.thumbnail }}" alt="Thumbnail">
+                {% endif %}
+                <p>{{ post.content[:100] }}...</p>
+                <small>Created at: {{ post.created_at.strftime("%Y-%m-%d") }}</small>
+            </li>
+        {% else %}
+            <li>현재 등록된 글이 없습니다.</li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
+```

@@ -1,0 +1,57 @@
+---
+title: "Part 1. 초급: 설치 및 초기 설정"
+description: "Alembic은 SQLAlchemy 생태계의 데이터베이스 마이그레이션 도구입니다. 코드의 변경사항(컬럼 추가, 테이블 생성 등)을 파이썬 스크립트 형태로 추출/생성하여 \"이력(리비전) 관리\" 처럼 데이터베이스의 버전을 관리할 수 있게 돕습니다. 마치 코드베이스를 관리하는 Git과 같으며, 데이터베이스 변경 작업을 협업 시 매우 안전하게 동기화하고 적용/롤백 할 수 있는 강력한 기능이 있습니다."
+section: "alembic"
+sectionTitle: "Alembic (Python)"
+sectionOrder: 3
+order: 1
+---
+
+## Alembic이란?
+
+Alembic은 SQLAlchemy 생태계의 데이터베이스 마이그레이션 도구입니다. 코드의 변경사항(컬럼 추가, 테이블 생성 등)을 파이썬 스크립트 형태로 추출/생성하여 "이력(리비전) 관리" 처럼 데이터베이스의 버전을 관리할 수 있게 돕습니다. 마치 코드베이스를 관리하는 Git과 같으며, 데이터베이스 변경 작업을 협업 시 매우 안전하게 동기화하고 적용/롤백 할 수 있는 강력한 기능이 있습니다.
+
+## 설치 및 초기화 (Init)
+
+Alembic을 설치하고 프로젝트에 마이그레이션 적용을 위한 폴더 및 설정 파일을 생성합니다.
+
+```python
+# pip 설치
+pip install alembic
+
+# 현재 디렉토리에 'alembic' 폴더와 'alembic.ini' 환경 설정 파일 생성
+alembic init alembic
+```
+
+## alembic.ini 파일 설정
+
+데이터베이스 연결을 위해 alembic.ini 파일에서 sqlalchemy.url을 프로젝트 환경에 맞춰 수정합니다.
+
+```python
+# alembic.ini 파일 (기본 생성)
+# sqlalchemy.url = driver://user:pass@localhost/dbname
+
+# 👇 실제 연결할 DB URL로 변경합니다. (또는 env.py에서 환경변수 덮어쓰기 권장)
+sqlalchemy.url = postgresql://admin:secret@localhost:5432/mydb
+```
+
+## env.py 설정 (모델 인식)
+
+Alembic이 우리가 정의한 테이블 모델의 변경사항을 감지할 수 있도록, 대상 메타데이터(target_metadata)를 연결합니다.
+
+```python
+# alembic/env.py 파일 수정
+
+from logging.config import fileConfig
+from sqlalchemy import engine_from_config, pool
+from alembic import context
+
+# 1. 사용할 Base(또는 SQLModel)가 정의된 파일 임포트
+from app.models import Base
+
+# 2. Alembic이 모델의 변화를 추적할 수 있도록 target_metadata를 설정
+target_metadata = Base.metadata
+
+# 나머지 코드는 그대로 유지
+# ...
+```
