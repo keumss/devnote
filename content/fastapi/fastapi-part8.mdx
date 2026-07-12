@@ -17,7 +17,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 이미지에는 실행에 필요한 코드와 의존성만 넣고, 비밀값은 이미지에 복사하지 않습니다. 아래 예시는 플랫폼이 컨테이너 복제를 관리하는 경우에 맞춘 단일 Uvicorn 프로세스 구성입니다.
 
 ```dockerfile
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 WORKDIR /code
 
