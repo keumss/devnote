@@ -6,6 +6,7 @@
     "sql",
     "sqlalchemy",
     "jinja2",
-    "logging"
+    "logging",
+    "argparse"
   ]
 }

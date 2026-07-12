@@ -1,0 +1,76 @@
+---
+title: "Part 1. 초급: 명령줄 인터페이스와 첫 파서"
+---
+
+## argparse가 해결하는 명령줄 입력 문제
+
+`argparse`는 Python 3.12 표준 라이브러리에서 명령줄 인자를 읽고 검증하는 도구입니다. 프로그램이 필요한 입력을 선언하면 사용법(`--help`)과 오류 메시지를 자동으로 만들고, `sys.argv`의 문자열을 읽기 쉬운 값으로 바꿔 줍니다. 이 섹션에서는 단일 명령 프로그램에서 시작해 하위 명령, 테스트 가능한 설계, 운영 시 주의점까지 다룹니다.
+
+```bash
+python backup.py --help
+python backup.py ./data --destination ./archive
+```
+
+셸은 공백으로 구분한 인자를 프로그램에 전달합니다. 따라서 경로에 공백이 있다면 셸에서 따옴표로 감싸야 하며, `argparse`는 이미 나뉜 인자 목록을 해석한다는 점을 이해하는 것이 출발점입니다.
+
+## ArgumentParser와 parse_args로 입력 받기
+
+`ArgumentParser`에 인자의 규칙을 추가한 다음 `parse_args()`를 호출합니다. 반환값은 각 인자를 속성으로 가진 `argparse.Namespace`입니다. 인자 없이 `parse_args()`를 호출하면 현재 프로세스의 `sys.argv[1:]`을 읽으므로, 일반적인 실행 파일에서는 별도 전달이 필요 없습니다.
+
+```python
+# greet.py
+import argparse
+
+parser = argparse.ArgumentParser(description='이름을 받아 인사합니다.')
+parser.add_argument('name', help='인사할 이름')
+args = parser.parse_args()
+
+print(f'안녕하세요, {args.name}!')
+```
+
+```bash
+python greet.py Minji
+# 안녕하세요, Minji!
+```
+
+`description`은 도움말의 사용법 아래에 나타납니다. 실제 배포 명령과 도움말의 프로그램 이름을 일치시키고 싶다면 `ArgumentParser(prog='greet')`처럼 `prog`를 명시할 수 있습니다.
+
+## 위치 인자와 선택 인자를 구분하기
+
+이름만 적은 `add_argument('path')`는 위치 인자입니다. 순서로 의미가 정해지므로 파일 경로처럼 반드시 필요한 핵심 입력에 적합합니다. `-o`, `--output`처럼 대시로 시작하는 선택 인자는 순서와 무관하며, 기본값이 있거나 부가 동작을 조절할 때 사용합니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(prog='copy')
+parser.add_argument('source', help='복사할 원본 파일')
+parser.add_argument('-o', '--output', default='copied.txt', help='결과 파일')
+args = parser.parse_args()
+
+print(f'{args.source} -> {args.output}')
+```
+
+```bash
+python copy.py report.txt --output backup.txt
+python copy.py report.txt  # output은 copied.txt
+```
+
+긴 옵션과 짧은 옵션을 함께 제공하면 `args.output`처럼 긴 이름에서 하이픈을 밑줄로 바꾼 속성으로 접근합니다. 값을 받는 선택 인자를 꼭 지정해야 한다면 `required=True`를 쓸 수 있지만, 사용자에게 더 자연스러운 위치 인자가 아닌지 먼저 검토합니다.
+
+## 플래그와 기본값으로 동작 선택하기
+
+값을 따로 받지 않는 켜기/끄기 옵션에는 `action='store_true'`를 사용합니다. 옵션이 없을 때 `False`, 있을 때 `True`가 저장됩니다. 반대로 `store_false`는 기본값이 `True`인 기능을 끌 때 쓸 수 있습니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('filename')
+parser.add_argument('-v', '--verbose', action='store_true', help='상세 정보를 출력')
+args = parser.parse_args()
+
+if args.verbose:
+    print(f'파일을 읽습니다: {args.filename}')
+```
+
+플래그 이름은 사용자가 읽었을 때 결과를 예측할 수 있게 짓습니다. 기본적으로 조용한 명령에는 `--verbose`가, 위험한 동작을 명시적으로 활성화할 때는 `--force`가 좋은 선택입니다. 같은 동작을 뜻하는 부정 플래그를 여러 개 만들기보다 기본값과 도움말을 명확히 하는 편이 낫습니다.

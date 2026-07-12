@@ -1,0 +1,90 @@
+---
+title: "Part 3. 고급: 하위 명령과 오류·도움말 설계"
+---
+
+## subparsers로 여러 작업을 한 CLI에 구성하기
+
+`git commit`, `git push`처럼 첫 번째 단어가 작업을 고르는 명령은 `add_subparsers()`로 구성합니다. 각 하위 명령은 독립적인 `ArgumentParser`를 가지므로, 필요한 인자와 도움말을 작업별로 가까이 둘 수 있습니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(prog='todo')
+commands = parser.add_subparsers(dest='command', required=True)
+
+add_parser = commands.add_parser('add', help='할 일을 추가')
+add_parser.add_argument('title')
+
+list_parser = commands.add_parser('list', help='할 일 목록을 표시')
+list_parser.add_argument('--done', action='store_true')
+
+args = parser.parse_args()
+```
+
+`required=True`를 지정하면 하위 명령을 생략했을 때 즉시 사용법 오류가 납니다. `dest='command'`를 지정하면 선택한 이름을 `args.command`로 확인할 수 있어, 로깅과 분기에 유용합니다.
+
+## set_defaults로 명령별 함수를 연결하기
+
+긴 `if` 또는 `match` 문 대신 각 하위 파서에 실행 함수를 저장하면 명령을 추가할 때 변경 범위가 작습니다. `set_defaults()`로 넣은 `handler`는 파싱 후 `Namespace`의 속성이 됩니다.
+
+```python
+import argparse
+
+def add_task(args: argparse.Namespace) -> None:
+    print(f'추가: {args.title}')
+
+def list_tasks(args: argparse.Namespace) -> None:
+    print('완료 항목도 표시' if args.done else '미완료 항목만 표시')
+
+parser = argparse.ArgumentParser(prog='todo')
+commands = parser.add_subparsers(required=True)
+
+add_parser = commands.add_parser('add')
+add_parser.add_argument('title')
+add_parser.set_defaults(handler=add_task)
+
+list_parser = commands.add_parser('list')
+list_parser.add_argument('--done', action='store_true')
+list_parser.set_defaults(handler=list_tasks)
+
+args = parser.parse_args()
+args.handler(args)
+```
+
+핸들러는 입출력과 도메인 로직을 모두 떠안지 않게 유지합니다. 파일·데이터베이스 작업은 별도 함수나 객체로 분리하면 명령 해석과 비즈니스 규칙을 독립적으로 테스트할 수 있습니다.
+
+## 상호 배타 옵션을 현재 방식으로 만들기
+
+둘 중 하나만 허용해야 하는 옵션은 `add_mutually_exclusive_group()`에 넣습니다. 예를 들어 `--quiet`와 `--verbose`를 동시에 지정하면 모순된 요청이므로 파서가 초기에 막아야 합니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser()
+verbosity = parser.add_mutually_exclusive_group()
+verbosity.add_argument('-q', '--quiet', action='store_true')
+verbosity.add_argument('-v', '--verbose', action='store_true')
+args = parser.parse_args()
+```
+
+Python 3.12에서는 인자 그룹 안에 다시 인자 그룹이나 상호 배타 그룹을 중첩하는 방식이 폐기 예정입니다. 시각적으로 묶고 싶으면 최상위 파서에서 별도 그룹을 만들고, 복잡한 규칙은 파싱 뒤의 명시적인 검증으로 처리합니다.
+
+## 오류 종료와 도움말을 사용자 경험으로 다루기
+
+기본 `parse_args()`는 잘못된 입력에 사용법과 오류를 표준 오류로 출력한 뒤 상태 코드 2로 종료합니다. 실행형 CLI에는 이 기본 동작이 알맞습니다. 반면 다른 프로그램에 포함하거나 파서 자체를 테스트할 때는 `exit_on_error=False`로 설정해 `ArgumentError`를 잡을 수 있습니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(exit_on_error=False)
+parser.add_argument('--count', type=int)
+
+try:
+    args = parser.parse_args(['--count', 'many'])
+except argparse.ArgumentError as error:
+    print(f'입력을 고쳐 주세요: {error}')
+else:
+    print(args.count)
+```
+
+`--help`는 기본으로 제공되므로 직접 구현할 필요가 없습니다. 각 인자에 행동 중심의 `help`를 쓰고, 긴 설명이 필요할 때는 `description`, 마지막 안내에는 `epilog`를 사용해 사용자가 오류를 스스로 해결할 수 있게 합니다.

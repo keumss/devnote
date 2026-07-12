@@ -1,0 +1,104 @@
+---
+title: "Part 4. 실전: 테스트 가능한 파일 변환 CLI"
+---
+
+## 파서 생성과 실행을 분리해 테스트 가능하게 만들기
+
+실전 CLI는 `parse_args()` 호출을 모듈 최상위에 두지 않습니다. `build_parser()`는 규칙만 만들고 `main(argv)`는 인자 목록을 받아 실행하게 하면, 실제 셸 없이도 다양한 입력을 테스트할 수 있습니다. 진입점에서만 `main()`을 호출합니다.
+
+```python
+# convert.py
+import argparse
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog='convert')
+    parser.add_argument('source', help='입력 텍스트 파일')
+    parser.add_argument('-o', '--output', required=True, help='출력 파일')
+    parser.add_argument('--uppercase', action='store_true', help='대문자로 변환')
+    return parser
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    text = open(args.source, encoding='utf-8').read()
+    if args.uppercase:
+        text = text.upper()
+    with open(args.output, 'w', encoding='utf-8') as output:
+        output.write(text)
+    return 0
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+`argv=None`이면 `parse_args()`가 실제 명령줄을 사용하고, 테스트에서는 문자열 목록을 넘길 수 있습니다. 예제처럼 종료 상태를 반환하고 마지막에만 `SystemExit`로 바꾸면 성공·실패 정책도 한곳에서 관리할 수 있습니다.
+
+## 파일 처리 오류는 파싱 오류와 구분하기
+
+인자 형식 오류는 파서가 책임지지만, 파일이 없어졌거나 권한이 없는 실행 시점 오류는 실제 작업 코드가 처리해야 합니다. `Path`와 컨텍스트 관리자를 쓰고 `OSError`를 잡아 짧고 실행 가능한 오류를 표준 오류에 출력합니다.
+
+```python
+from pathlib import Path
+import sys
+
+def convert(source: Path, output: Path, uppercase: bool) -> None:
+    try:
+        text = source.read_text(encoding='utf-8')
+        output.write_text(text.upper() if uppercase else text, encoding='utf-8')
+    except OSError as error:
+        raise RuntimeError(f'파일을 처리할 수 없습니다: {error}') from error
+
+def run(args) -> int:
+    try:
+        convert(Path(args.source), Path(args.output), args.uppercase)
+    except RuntimeError as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+```
+
+비밀 값, 전체 환경 변수, 민감한 파일 내용을 오류에 포함하지 않습니다. 또한 입력과 출력 경로가 같은 경우처럼 프로그램 고유의 제약은 작업 전에 검사하고, 왜 거부했는지 알려 줍니다.
+
+## 안전한 기본값과 확인 옵션을 설계하기
+
+파일을 덮어쓰거나 외부 변경을 수행하는 명령은 안전한 기본값을 선택합니다. 아래처럼 이미 출력 파일이 있을 때 `--force` 없이는 중단하면, 오타로 데이터를 잃을 위험을 줄일 수 있습니다.
+
+```python
+import argparse
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument('source', type=Path)
+parser.add_argument('-o', '--output', type=Path, required=True)
+parser.add_argument('--force', action='store_true', help='기존 출력 파일을 덮어씀')
+args = parser.parse_args()
+
+if args.output.exists() and not args.force:
+    parser.error(f'출력 파일이 이미 있습니다: {args.output} (--force로 덮어쓰기)')
+```
+
+`parser.error()`는 사용법과 함께 상태 코드 2로 종료하므로 잘못된 호출에 적합합니다. 단, 이미 일부 파일을 쓴 뒤의 실패처럼 실행 중 오류에는 일반 오류 상태 코드와 정리 작업을 사용해 부분 결과를 남기지 않도록 합니다.
+
+## CLI 계약을 자동 테스트로 지키기
+
+파서 규칙은 사용자와의 공개 계약입니다. 필수 인자, 기본값, 플래그, 오류를 테스트로 고정하면 옵션을 추가하거나 리팩터링할 때 의도치 않은 호환성 변경을 빠르게 발견할 수 있습니다.
+
+```python
+import pytest
+
+from convert import build_parser
+
+def test_parser_accepts_conversion_options() -> None:
+    args = build_parser().parse_args(['input.txt', '-o', 'out.txt', '--uppercase'])
+
+    assert args.source == 'input.txt'
+    assert args.output == 'out.txt'
+    assert args.uppercase is True
+
+def test_parser_requires_output() -> None:
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(['input.txt'])
+
+    assert error.value.code == 2
+```
+
+도움말도 중요한 인터페이스라면 `parser.format_help()` 결과에 핵심 옵션과 예제가 포함되는지 검사합니다. 릴리스 전에는 실제 터미널에서 `--help`, 잘못된 입력, 공백이 든 경로, 덮어쓰기 거부 경로를 직접 실행해 오류 문구와 종료 상태를 확인합니다.
