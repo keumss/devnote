@@ -1,0 +1,10 @@
+{
+  "pages": [
+    "fastapi",
+    "sqlmodel",
+    "alembic",
+    "sql",
+    "sqlalchemy",
+    "jinja2"
+  ]
+}

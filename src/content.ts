@@ -3,11 +3,11 @@ import type { MDXProps } from 'mdx/types';
 
 interface ContentFrontmatter {
   title: string;
-  description?: string;
-  section: string;
-  sectionTitle: string;
-  sectionOrder: number;
-  order: number;
+}
+
+interface ContentMeta {
+  title?: string;
+  pages?: string[];
 }
 
 interface StructuredData {
@@ -37,8 +37,6 @@ export interface CheatSheetItem {
 export interface CheatSheetCategory {
   id: string;
   title: string;
-  description?: string;
-  order: number;
   items: CheatSheetItem[];
   Content: ComponentType<MDXProps>;
 }
@@ -46,7 +44,6 @@ export interface CheatSheetCategory {
 export interface NavSection {
   id: string;
   title: string;
-  order: number;
   categories: CheatSheetCategory[];
 }
 
@@ -58,8 +55,49 @@ const contentModules = import.meta.glob<ContentModule>(
   },
 );
 
-function getDocumentId(filePath: string) {
-  return filePath.split('/').pop()?.replace(/\.(md|mdx)$/, '') ?? filePath;
+const metaFiles = import.meta.glob<ContentMeta>(
+  '/content/docs/**/meta.json',
+  {
+    eager: true,
+    import: 'default',
+    query: { collection: 'docs' },
+  },
+);
+
+const naturalCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+const rootMeta = metaFiles['/content/docs/meta.json'];
+const sectionOrder = rootMeta?.pages;
+
+if (!sectionOrder) {
+  throw new Error('content/docs/meta.json must define the section order in "pages".');
+}
+
+function getContentLocation(filePath: string) {
+  const relativePath = filePath.replace('/content/docs/', '');
+  const pathParts = relativePath.split('/');
+  const fileName = pathParts.pop();
+  const sectionId = pathParts.pop();
+
+  if (!fileName || !sectionId || pathParts.length > 0) {
+    throw new Error(`Content must be placed directly under a section folder: ${filePath}`);
+  }
+
+  return {
+    sectionId,
+    documentId: fileName.replace(/\.(md|mdx)$/, ''),
+  };
+}
+
+function getSectionTitle(sectionId: string) {
+  const sectionMeta = metaFiles[`/content/docs/${sectionId}/meta.json`];
+  if (!sectionMeta?.title) {
+    throw new Error(`content/docs/${sectionId}/meta.json must define a section title.`);
+  }
+  return sectionMeta.title;
 }
 
 function getItems(structuredData: StructuredData): CheatSheetItem[] {
@@ -84,18 +122,16 @@ const sectionMap = new Map<string, NavSection>();
 
 for (const [filePath, contentModule] of Object.entries(contentModules)) {
   const { frontmatter, structuredData, default: Content } = contentModule;
-  const section = sectionMap.get(frontmatter.section) ?? {
-    id: frontmatter.section,
-    title: frontmatter.sectionTitle,
-    order: frontmatter.sectionOrder,
+  const { sectionId, documentId } = getContentLocation(filePath);
+  const section = sectionMap.get(sectionId) ?? {
+    id: sectionId,
+    title: getSectionTitle(sectionId),
     categories: [],
   };
 
   section.categories.push({
-    id: getDocumentId(filePath),
+    id: documentId,
     title: frontmatter.title,
-    description: frontmatter.description,
-    order: frontmatter.order,
     items: getItems(structuredData),
     Content,
   });
@@ -103,8 +139,14 @@ for (const [filePath, contentModule] of Object.entries(contentModules)) {
 }
 
 export const navData = [...sectionMap.values()]
-  .sort((a, b) => a.order - b.order)
+  .sort((a, b) => {
+    const aIndex = sectionOrder.indexOf(a.id);
+    const bIndex = sectionOrder.indexOf(b.id);
+    const safeAIndex = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
+    const safeBIndex = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
+    return safeAIndex - safeBIndex || naturalCollator.compare(a.id, b.id);
+  })
   .map((section) => ({
     ...section,
-    categories: section.categories.sort((a, b) => a.order - b.order),
+    categories: section.categories.sort((a, b) => naturalCollator.compare(a.id, b.id)),
   }));
