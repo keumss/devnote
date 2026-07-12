@@ -151,16 +151,16 @@ export default function SearchModal({
                       type="button"
                       key={`${result.sectionId}-${result.noteId}-${result.topic.id}`}
                       onClick={() => onSelectResult(result.sectionId, result.noteId, result.topic.id)}
-                      className="w-full text-left px-4 py-3 rounded-xl hover:bg-emerald-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-emerald-50 dark:focus:bg-slate-800/80"
+                      className="w-full text-left px-4 py-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-indigo-50 dark:focus:bg-slate-800/80"
                     >
-                      <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest flex-wrap">
+                      <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex-wrap">
                          <span>{result.sectionTitle}</span>
                          <ChevronRight size={12} className="text-slate-400" />
                          <span>{result.noteTitle}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Hash size={16} className="text-slate-400 group-hover:text-emerald-500 transition-colors shrink-0" />
-                        <span className="font-bold text-sm sm:text-base text-slate-900 dark:text-slate-100 group-hover:text-emerald-700 dark:group-hover:text-emerald-300 transition-colors">
+                        <Hash size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0" />
+                        <span className="font-bold text-sm sm:text-base text-slate-900 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300 transition-colors">
                           {result.topic.title}
                         </span>
                       </div>

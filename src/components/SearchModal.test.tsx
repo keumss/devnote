@@ -1,4 +1,4 @@
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import SearchModal from './SearchModal';
 
@@ -41,5 +41,22 @@ describe('SearchModal', () => {
     rerender(<SearchModal {...props} isOpen={false} />);
     expect(trigger).toHaveFocus();
     trigger.remove();
+  });
+
+  it('uses indigo accents for search results', () => {
+    render(
+      <SearchModal
+        isOpen
+        onClose={vi.fn()}
+        searchQuery="select"
+        setSearchQuery={vi.fn()}
+        searchResults={searchResults}
+        onSelectResult={vi.fn()}
+      />,
+    );
+
+    const result = screen.getByRole('button', { name: /sql.*part 1.*select/i });
+    expect(result).toHaveClass('hover:bg-indigo-50', 'focus:bg-indigo-50');
+    expect(result).not.toHaveClass('hover:bg-emerald-50', 'focus:bg-emerald-50');
   });
 });
