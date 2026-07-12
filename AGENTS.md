@@ -4,7 +4,7 @@
 
 DevNote is a static React 19 and TypeScript application built with Vite. Code lives in `src/`. `src/main.tsx` initializes hash-based routing, while `src/App.tsx` defines routes. Reusable UI belongs in `src/components/`, hooks in `src/hooks/`, and the Fumadocs-backed content loader in `src/content.ts`. Global styles live in `src/index.css`; root configuration controls the build.
 
-Curriculum content lives in category-level Markdown/MDX files under `content/docs/<section>/`. A document's parent directory determines its section, its frontmatter defines the page title, and filenames determine natural numeric page order. Each section's `meta.json` defines its display title, while `content/docs/meta.json` defines section order. `source.config.ts` configures Fumadocs MDX and validates its standard page and meta schemas. The generated `.source/` directory is build output and must not be committed.
+Curriculum content lives in category-level Markdown/MDX files under `content/<section>/`. A document's parent directory determines its section, its frontmatter defines the page title, and filenames determine natural numeric page order. Each section's `meta.json` defines its display title, while `content/meta.json` defines section order. `source.config.ts` configures Fumadocs MDX and validates its standard page and meta schemas. The generated `.source/` directory is build output and must not be committed.
 
 There is no test or public asset directory. Add colocated tests as `ComponentName.test.tsx` or broader tests under `src/__tests__/`. Put future static assets in `public/`.
 

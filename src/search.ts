@@ -10,7 +10,7 @@ import {
 export type { SearchResult } from './content';
 
 const contentStructuredData = import.meta.glob<StructuredData>(
-  '/content/docs/**/*.{md,mdx}',
+  '/content/**/*.{md,mdx}',
   {
     eager: true,
     import: 'structuredData',

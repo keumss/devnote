@@ -63,14 +63,14 @@ export interface SearchResult {
 // Use a distinct module query for metadata so Rollup can tree-shake the MDX
 // renderer from the eager imports while retaining separate lazy render chunks.
 const contentLoaders = import.meta.glob<ContentModule>(
-  '/content/docs/**/*.{md,mdx}',
+  '/content/**/*.{md,mdx}',
   {
     query: { collection: 'docs' },
   },
 );
 
 const contentFrontmatters = import.meta.glob<ContentFrontmatter>(
-  '/content/docs/**/*.{md,mdx}',
+  '/content/**/*.{md,mdx}',
   {
     eager: true,
     import: 'frontmatter',
@@ -79,7 +79,7 @@ const contentFrontmatters = import.meta.glob<ContentFrontmatter>(
 );
 
 const metaFiles = import.meta.glob<ContentMeta>(
-  '/content/docs/**/meta.json',
+  '/content/**/meta.json',
   {
     eager: true,
     import: 'default',
@@ -97,7 +97,7 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 export function getContentLocation(filePath: string) {
-  const relativePath = filePath.replace('/content/docs/', '');
+  const relativePath = filePath.replace('/content/', '');
   const pathParts = relativePath.split('/');
   const fileName = pathParts.pop();
   const sectionId = pathParts.pop();
@@ -113,11 +113,11 @@ export function getContentLocation(filePath: string) {
 }
 
 function getSectionIdFromMetaPath(filePath: string) {
-  if (filePath === '/content/docs/meta.json') {
+  if (filePath === '/content/meta.json') {
     return null;
   }
 
-  const match = filePath.match(/^\/content\/docs\/([^/]+)\/meta\.json$/);
+  const match = filePath.match(/^\/content\/([^/]+)\/meta\.json$/);
   if (!match) {
     throw new Error(`Section metadata must be placed directly under a section folder: ${filePath}`);
   }
@@ -126,31 +126,31 @@ function getSectionIdFromMetaPath(filePath: string) {
 }
 
 function getRootSectionOrder() {
-  const rootMeta = metaFiles['/content/docs/meta.json'];
+  const rootMeta = metaFiles['/content/meta.json'];
   if (!Array.isArray(rootMeta?.pages)) {
-    throw new Error('content/docs/meta.json must define the section order in "pages".');
+    throw new Error('content/meta.json must define the section order in "pages".');
   }
 
   const sectionIds = rootMeta.pages;
   if (sectionIds.length === 0) {
-    throw new Error('content/docs/meta.json "pages" must contain at least one section.');
+    throw new Error('content/meta.json "pages" must contain at least one section.');
   }
   if (sectionIds.some((sectionId) => !isNonEmptyString(sectionId) || sectionId.includes('/'))) {
-    throw new Error('content/docs/meta.json "pages" must contain non-empty section folder names.');
+    throw new Error('content/meta.json "pages" must contain non-empty section folder names.');
   }
 
   const uniqueSectionIds = new Set(sectionIds);
   if (uniqueSectionIds.size !== sectionIds.length) {
-    throw new Error('content/docs/meta.json "pages" must not contain duplicate sections.');
+    throw new Error('content/meta.json "pages" must not contain duplicate sections.');
   }
 
   return sectionIds;
 }
 
 function getSectionTitle(sectionId: string) {
-  const sectionMeta = metaFiles[`/content/docs/${sectionId}/meta.json`];
+  const sectionMeta = metaFiles[`/content/${sectionId}/meta.json`];
   if (!isNonEmptyString(sectionMeta?.title)) {
-    throw new Error(`content/docs/${sectionId}/meta.json must define a section title.`);
+    throw new Error(`content/${sectionId}/meta.json must define a section title.`);
   }
   return sectionMeta.title.trim();
 }
@@ -186,22 +186,22 @@ function validateContentFiles(sectionOrder: string[]) {
 
   for (const sectionId of sectionOrder) {
     if (!contentSections.has(sectionId)) {
-      throw new Error(`Section "${sectionId}" is listed in content/docs/meta.json but has no content.`);
+      throw new Error(`Section "${sectionId}" is listed in content/meta.json but has no content.`);
     }
     if (!metadataSections.has(sectionId)) {
-      throw new Error(`Section "${sectionId}" is missing content/docs/${sectionId}/meta.json.`);
+      throw new Error(`Section "${sectionId}" is missing content/${sectionId}/meta.json.`);
     }
   }
 
   for (const sectionId of contentSections) {
     if (!sectionOrder.includes(sectionId)) {
-      throw new Error(`Content section "${sectionId}" is missing from content/docs/meta.json.`);
+      throw new Error(`Content section "${sectionId}" is missing from content/meta.json.`);
     }
   }
 
   for (const sectionId of metadataSections) {
     if (!sectionOrder.includes(sectionId)) {
-      throw new Error(`Metadata section "${sectionId}" is missing from content/docs/meta.json.`);
+      throw new Error(`Metadata section "${sectionId}" is missing from content/meta.json.`);
     }
   }
 }
