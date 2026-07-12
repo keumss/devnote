@@ -124,6 +124,7 @@ const example = true;
 - 짧은 명령형 커밋 메시지를 쓴다.
   - 예: `fix: preserve search navigation`
   - 예: `docs: update contributor guide`
+- 사용자가 브랜치를 따로 지정하지 않고 커밋 또는 푸시를 요청하면, 현재 변경 사항을 `main` 브랜치에 커밋하고 `origin/main`으로 푸시한다. 별도 작업 브랜치를 만들지 않는다.
 - PR에는 변경 내용, 검증 명령어, 관련 이슈를 적는다.
 - UI 변경 PR에는 전·후 스크린샷을 넣는다.
 - `dist/`, 환경 파일, 자격 증명, 생성 로그는 커밋하지 않는다.
