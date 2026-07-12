@@ -27,12 +27,13 @@ target_metadata = SQLModel.metadata
 
 성능 최적화를 위해 비동기 드라이버 (asyncpg 등) 사용 시, alembic 템플릿 명령어와 초기 코드 구성이 다릅니다.
 
-```python
-# 애초에 alembic 초기 세팅부터 async 템플릿 사용을 권장
+```bash
+# 비동기 드라이버를 쓴다면 초기화 시 async 템플릿을 선택합니다.
 alembic init -t async alembic
+```
 
-#############################################
-# env.py 스크립트 안에 비동기 엔진(async_engine_from_config) 처리가 포함됩니다.
+```python
+# alembic/env.py에는 비동기 엔진 처리가 포함됩니다.
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 def do_run_migrations(connection):
@@ -44,12 +45,11 @@ async def run_async_migrations():
     connectable = async_engine_from_config(config.get_section(config.config_ini_section, {}))
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
-#############################################
 ```
 
 ## SQLModel 타입 및 디폴트 값 감지 옵션
 
-SQLModel(또는 SQLAlchemy)에서 컬럼 타입 교체나 server_default 등의 변동을 추적하려면 추가 옵션을 활성화해야 합니다.
+SQLModel(또는 SQLAlchemy)에서 타입과 DB 서버 기본값의 변경을 어떻게 비교할지 명시합니다. 최근 Alembic은 `compare_type`을 기본으로 비교하지만, 설정에 적어 두면 팀의 의도를 분명히 할 수 있습니다. `compare_server_default` 결과는 DB마다 차이가 있을 수 있으므로 생성된 리비전을 검토합니다.
 
 ```python
 # alembic/env.py 의 context.configure(...) 인스턴스를 찾습니다.
@@ -64,4 +64,17 @@ def run_migrations_online():
 
     with context.begin_transaction():
         context.run_migrations()
+```
+
+## 배포 단계에서 한 번만 마이그레이션 적용
+
+여러 API 인스턴스가 동시에 시작되는 환경에서 각 인스턴스가 마이그레이션을 실행하면 락 경합이나 예측하기 어려운 실패가 생길 수 있습니다. 배포 파이프라인의 일회성 작업으로 현재 리비전을 확인하고 `head`까지 적용한 뒤, 애플리케이션을 시작합니다.
+
+```bash
+# 배포 작업이 사용할 DATABASE_URL을 환경 변수로 주입합니다.
+alembic current
+alembic upgrade head
+
+# 문제가 생겼을 때 원인을 확인할 수 있도록 적용 가능한 이력도 남깁니다.
+alembic history --verbose
 ```

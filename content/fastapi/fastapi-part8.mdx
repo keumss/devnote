@@ -1,68 +1,78 @@
 ---
-title: "Part 8. 실전: 배포 및 운영 (Deployment)"
+title: "Part 8. 실전: 컨테이너 배포와 운영"
 ---
 
-## Gunicorn과 Uvicorn 워커 (Production Server)
+## Uvicorn 워커로 단일 서버 운영
 
-운영(Production) 환경에서는 단일 Uvicorn 프로세스 대신 Gunicorn을 프로세스 매니저로 사용하고, Uvicorn 워커를 여러 개 띄워 멀티코어 환경의 성능을 극대화합니다.
+단일 서버나 Docker Compose 환경에서는 Uvicorn 또는 `fastapi` 명령의 `--workers` 옵션으로 여러 프로세스를 실행할 수 있습니다. 워커 수는 측정한 부하와 메모리를 기준으로 정합니다. Kubernetes처럼 컨테이너 복제와 로드 밸런싱을 플랫폼이 담당하는 환경에서는 컨테이너마다 단일 프로세스를 두고 컨테이너 수를 늘리는 편이 일반적입니다.
 
 ```bash
-# pip install gunicorn uvicorn
-
-# 터미널에서 다음 명령어로 서버를 실행합니다.
-# -w 4: 4개의 워커 프로세스를 생성합니다. (일반적으로 CPU 코어 수 * 2 + 1)
-# -k uvicorn.workers.UvicornWorker: Uvicorn 워커 클래스를 사용합니다.
-# --bind 0.0.0.0:8000: 모든 외부 IP의 8000번 포트로 수신합니다.
-
-gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
+# 개발용 --reload는 운영에서 사용하지 않습니다.
+# 단일 서버에서만 여러 워커를 고려합니다.
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
-## Dockerfile 작성
+## Docker 이미지 작성
 
-FastAPI 애플리케이션을 Docker 컨테이너로 패키징하기 위한 표준적인 Dockerfile 예시입니다. 컨테이너 내부에서도 uvicorn 혹은 gunicorn을 실행하여 서비스를 제공할 수 있습니다.
+이미지에는 실행에 필요한 코드와 의존성만 넣고, 비밀값은 이미지에 복사하지 않습니다. 아래 예시는 플랫폼이 컨테이너 복제를 관리하는 경우에 맞춘 단일 Uvicorn 프로세스 구성입니다.
 
 ```dockerfile
-# 1. 공식 Python 경량 이미지 사용
-FROM python:3.11-slim
+FROM python:3.14-slim
 
-# 2. 작업 디렉터리 설정
 WORKDIR /code
 
-# 3. 의존성 파일 복사 및 설치
 COPY ./requirements.txt /code/requirements.txt
 RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
-# 4. 소스 코드 복사
 COPY ./app /code/app
 
-# 5. 서버 실행 (컨테이너 환경에서는 uvicorn 단일 프로세스를 사용하고 포트를 노출하거나,
-# 워커가 필요한 경우 gunicorn을 사용합니다.)
+# 실제 서비스에서는 HTTPS 종료를 리버스 프록시 또는 클라우드 로드 밸런서에 맡깁니다.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-## Docker Compose로 DB와 함께 배포
+## Docker Compose로 DB 의존성 확인
 
-FastAPI 서버와 데이터베이스(예: PostgreSQL)를 묶어서 동시에 띄울 때 Docker Compose를 사용합니다. 데이터베이스 연결 주소를 서비스 이름(db)으로 지정하여 간단하게 구성할 수 있습니다.
+로컬 또는 단일 서버의 Compose 환경에서는 DB가 연결을 받을 준비가 된 뒤 API를 시작하도록 healthcheck를 둡니다. 예시 비밀번호는 개발 전용이며, 운영에서는 시크릿 관리 기능이나 환경 변수로 주입합니다.
 
 ```yaml
-version: "3.9"
-
 services:
   db:
-    image: postgres:15
+    image: postgres:18
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: blogdb
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   web:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://admin:password@db:5432/blogdb
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/app
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+```
+
+## 상태 확인과 마이그레이션 분리
+
+로드 밸런서가 프로세스의 생존 여부를 확인할 수 있도록 가벼운 헬스 엔드포인트를 둡니다. DB 스키마 변경은 API 워커가 동시에 실행하지 않도록 배포 단계에서 `alembic upgrade head`를 한 번만 실행합니다. 준비 상태 점검에 외부 의존성을 넣을 때는 짧은 타임아웃을 적용합니다.
+
+```python
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get('/healthz')
+def healthz() -> dict[str, str]:
+    # 프로세스가 HTTP 요청을 처리할 수 있는지만 빠르게 확인합니다.
+    return {'status': 'ok'}
+
+# 배포 파이프라인 또는 별도 일회성 작업에서 실행합니다.
+# $ alembic upgrade head
 ```

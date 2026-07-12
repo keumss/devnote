@@ -1,5 +1,5 @@
 ---
-title: "Part 2. 제어 흐름 (Control Structures)"
+title: "Part 2. 중급: 제어 흐름과 템플릿 조합"
 ---
 
 ## 반복문 (For Loops)
@@ -44,5 +44,41 @@ title: "Part 2. 제어 흐름 (Control Structures)"
         <a href="/login" class="btn">로그인</a>
         <a href="/signup" class="btn">회원가입</a>
     </div>
+{% endif %}
+```
+
+## include로 공통 조각 조합하기
+
+상속은 전체 레이아웃에, `include`는 알림·페이지네이션처럼 작은 화면 조각에 적합합니다. 포함되는 템플릿은 기본적으로 현재 컨텍스트를 받으므로, 필요한 변수 이름을 문서화해 결합도를 낮춥니다.
+
+```html
+<!-- app/templates/index.html -->
+{% extends "base.html" %}
+
+{% block content %}
+    {% include "partials/pagination.html" %}
+{% endblock %}
+
+<!-- app/templates/partials/pagination.html -->
+{% if page > 1 %}
+    <a href="{{ url_for('render_home', page=page - 1) }}">이전</a>
+{% endif %}
+<span>{{ page }} / {{ total_pages }}</span>
+{% if page < total_pages %}
+    <a href="{{ url_for('render_home', page=page + 1) }}">다음</a>
+{% endif %}
+```
+
+## 필터와 테스트로 표시 규칙 정리하기
+
+간단한 표현식에는 내장 필터와 테스트를 사용하면 템플릿을 읽기 쉬워집니다. 복잡한 계산이나 DB 접근은 템플릿에 넣지 말고 라우터에서 값을 준비합니다.
+
+```html
+{% set display_name = user.nickname | default(user.username, true) %}
+
+{% if posts is defined and posts | length > 0 %}
+    <p>{{ display_name }}님의 글 {{ posts | length }}개</p>
+{% else %}
+    <p>아직 표시할 글이 없습니다.</p>
 {% endif %}
 ```

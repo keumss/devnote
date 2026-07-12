@@ -1,5 +1,5 @@
 ---
-title: "Part 4. 최적화: N+1 문제와 비동기"
+title: "Part 4. 고급 및 실전: 성능, 비동기, 트랜잭션 경계"
 ---
 
 ## 즉시 로딩으로 N+1 문제 해결 (Eager Loading)
@@ -10,8 +10,8 @@ title: "Part 4. 최적화: N+1 문제와 비동기"
 from sqlalchemy.orm import selectinload, joinedload
 
 with Session(engine) as session:
-    # 주의: selectinload는 별도 쿼리로 in_ 연산자를 통해 1:N 관계를 로딩함 (리스트에 유리)
-    # joinedload는 JOIN을 통해 1:1 관계를 로딩함
+    # selectinload는 별도 SELECT의 IN 조건으로 컬렉션을 로딩하므로 1:N에 대체로 적합합니다.
+    # joinedload는 단일 JOIN으로 스칼라 관계(N:1, 1:1)를 가져올 때 자주 사용합니다.
     stmt = select(User).options(selectinload(User.posts))
 
     users = session.scalars(stmt).all()
@@ -44,14 +44,16 @@ with Session(engine) as session:
 FastAPI의 속도를 극대화하기 위해 완전한 비동기(non-blocking) DB 엔진과 세션을 사용합니다.
 
 ```python
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 # 드라이버를 asyncpg (Postgres) 등으로 교체해야 함
 async_engine = create_async_engine('postgresql+asyncpg://user:pass@localhost/mydb')
 
+AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
+
 async def get_users():
-    # 비동기 컨텍스트 매니저
-    async with AsyncSession(async_engine) as session:
+    async with AsyncSessionLocal() as session:
         stmt = select(User)
 
         # await를 이용해 결과를 비동기적으로 기다림
@@ -76,4 +78,23 @@ with Session(engine) as session:
         # 실패 시 전부 원상복구
         session.rollback()
         print(f"Transaction failed: {e}")
+```
+
+## 서비스 계층에서 트랜잭션 경계 만들기
+
+한 요청의 여러 쓰기 작업은 하나의 서비스 함수에서 성공하거나 함께 취소되어야 합니다. 라우터나 화면 코드에 `commit()`을 흩어놓지 말고, 작업 단위가 끝나는 지점에서 한 번만 확정하면 실패 처리를 테스트하기도 쉽습니다.
+
+```python
+from sqlalchemy.orm import Session
+
+def transfer_points(session: Session, sender: User, receiver: User, points: int) -> None:
+    if points <= 0 or sender.points < points:
+        raise ValueError('유효하지 않은 포인트 이체입니다.')
+
+    # flush는 필요한 INSERT/UPDATE를 DB에 보내지만 아직 확정하지는 않습니다.
+    sender.points -= points
+    receiver.points += points
+    session.flush()
+
+    # 호출자가 성공 시점에 한 번만 commit하고, 예외 시 rollback합니다.
 ```
