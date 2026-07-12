@@ -1,10 +1,10 @@
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import { navData } from '../content';
+import type { CheatSheetCategory } from '../content';
 
 type CategoryInfo = {
   sectionId: string;
   sectionTitle: string;
-  category: typeof navData[0]['categories'][0];
+  category: CheatSheetCategory;
 };
 
 interface NavigationButtonProps {
@@ -18,6 +18,7 @@ export default function NavigationButton({ direction, info, onClick }: Navigatio
   
   return (
     <button
+      type="button"
       onClick={onClick}
       className={`group relative flex flex-col ${isPrev ? 'items-start text-left' : 'items-end text-right'} max-w-[45%]`}
     >

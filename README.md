@@ -19,6 +19,14 @@ npm run build
 
 정적 빌드 결과는 `dist/`에 생성됩니다. GitHub Pages에서 저장소 하위 경로와 클라이언트 라우팅이 모두 동작하도록 상대 자산 경로와 해시 라우팅을 사용합니다.
 
+## 검증
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
 ## 콘텐츠 추가
 
 학습 콘텐츠는 `content/docs/<section>/<document>.mdx`에 있습니다. 같은 폴더에 제목 frontmatter를 가진 문서를 추가하면 파일명의 숫자를 인식하는 이름순으로 정렬되고, 내비게이션과 검색 인덱스에 자동 반영됩니다. 섹션 표시 이름은 각 폴더의 `meta.json`, 섹션 순서는 `content/docs/meta.json`에서 관리합니다.

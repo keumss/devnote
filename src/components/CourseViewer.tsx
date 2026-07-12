@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Suspense, useEffect } from 'react';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import NavigationButton from './NavigationButton';
 import SidebarNav from './SidebarNav';
 import Layout from './Layout';
@@ -7,36 +7,74 @@ import { navData } from '../content';
 import { mdxComponents } from './MdxContent';
 import { BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { getCategoryPath, getHashTarget, resolveCategory } from '../navigation';
+
+function ScrollToContent({ hash, navigationKey }: { hash: string; navigationKey: string }) {
+  useEffect(() => {
+    const targetId = getHashTarget(hash);
+    if (!targetId) {
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    const prefersReducedMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.getElementById(targetId)?.scrollIntoView({
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+      block: 'start',
+    });
+  }, [hash, navigationKey]);
+
+  return null;
+}
+
+function ContentLoader() {
+  return (
+    <div className="space-y-4 py-4" role="status" aria-label="문서 불러오는 중">
+      <div className="h-7 w-2/3 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
+      <div className="h-4 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+      <div className="h-4 w-5/6 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+    </div>
+  );
+}
+
+const allCategories = navData.flatMap(section => (
+  section.categories.map(category => ({
+    sectionId: section.id,
+    sectionTitle: section.title,
+    category,
+  }))
+));
 
 export default function CourseViewer() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { sectionId: paramSectionId, categoryId: paramCategoryId } = useParams();
-  
-  // Find the valid state or default
-  const activeSection = navData.find(s => s.id === paramSectionId) || navData[0];
-  const activeCategory = activeSection.categories.find(c => c.id === paramCategoryId) || activeSection.categories[0];
+
+  const resolvedCategory = resolveCategory(navData, paramSectionId, paramCategoryId);
+  if (!resolvedCategory) {
+    return <Navigate to="/" replace />;
+  }
+
+  const { section: activeSection, category: activeCategory, isExact } = resolvedCategory;
   
   const activeSectionId = activeSection.id;
   const activeCategoryId = activeCategory.id;
 
-  // Scroll to top only on initial mount (IndexPage -> CourseViewer)
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, []);
-
-  const allCategories = useMemo(() => 
-    navData.flatMap(section => 
-      section.categories.map(category => ({
-        sectionId: section.id,
-        sectionTitle: section.title,
-        category
-      }))
-    ), 
-  []);
-
-  const currentCategoryIndex = allCategories.findIndex(c => c.category.id === activeCategoryId);
+  const currentCategoryIndex = allCategories.findIndex(categoryInfo => (
+    categoryInfo.sectionId === activeSectionId && categoryInfo.category.id === activeCategoryId
+  ));
   const prevCategoryInfo = currentCategoryIndex > 0 ? allCategories[currentCategoryIndex - 1] : null;
   const nextCategoryInfo = currentCategoryIndex < allCategories.length - 1 ? allCategories[currentCategoryIndex + 1] : null;
+
+  if (!isExact) {
+    return (
+      <Navigate
+        to={getCategoryPath(activeSectionId, activeCategoryId)}
+        replace
+      />
+    );
+  }
 
   return (
     <Layout activeSectionId={activeSectionId} activeCategoryId={activeCategoryId}>
@@ -55,10 +93,7 @@ export default function CourseViewer() {
 
         {/* Main Learning Content Area */}
         <main className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
-          <AnimatePresence 
-            mode="wait"
-            onExitComplete={() => window.scrollTo(0, 0)}
-          >
+          <AnimatePresence mode="wait">
             <motion.div 
               key={activeCategory.id}
               initial={{ opacity: 0, y: 15 }}
@@ -77,7 +112,10 @@ export default function CourseViewer() {
               </div>
 
               <div className="lesson-content">
-                <activeCategory.Content components={mdxComponents} />
+                <Suspense fallback={<ContentLoader />}>
+                  <activeCategory.Content components={mdxComponents} />
+                  <ScrollToContent hash={location.hash} navigationKey={location.key} />
+                </Suspense>
               </div>
               
               {/* Page Navigation */}
@@ -86,7 +124,7 @@ export default function CourseViewer() {
                   <NavigationButton 
                     direction="prev"
                     info={prevCategoryInfo}
-                    onClick={() => navigate(`/${prevCategoryInfo.sectionId}/${prevCategoryInfo.category.id}`)}
+                    onClick={() => navigate(getCategoryPath(prevCategoryInfo.sectionId, prevCategoryInfo.category.id))}
                   />
                 ) : <div />}
                 
@@ -94,7 +132,7 @@ export default function CourseViewer() {
                   <NavigationButton 
                     direction="next"
                     info={nextCategoryInfo}
-                    onClick={() => navigate(`/${nextCategoryInfo.sectionId}/${nextCategoryInfo.category.id}`)}
+                    onClick={() => navigate(getCategoryPath(nextCategoryInfo.sectionId, nextCategoryInfo.category.id))}
                   />
                 ) : <div />}
               </div>

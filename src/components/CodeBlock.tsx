@@ -1,7 +1,39 @@
-import { useState, memo } from 'react';
+import { memo, useEffect, useState, type CSSProperties } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { PrismAsync as SyntaxHighlighter } from 'react-syntax-highlighter';
+import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
+import docker from 'react-syntax-highlighter/dist/esm/languages/prism/docker';
+import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useDarkMode } from '../hooks/useDarkMode';
+
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('dockerfile', docker);
+SyntaxHighlighter.registerLanguage('html', markup);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('yaml', yaml);
+
+const sharedCodeStyle: CSSProperties = {
+  background: 'transparent',
+  textShadow: 'none',
+  fontFamily: 'inherit',
+  fontSize: '12px',
+  lineHeight: '1.625'
+};
+
+const highlighterStyle: CSSProperties = {
+  ...sharedCodeStyle,
+  margin: 0,
+  padding: '1rem'
+};
+
+const codeTagProps = {
+  style: sharedCodeStyle
+};
 
 interface CodeBlockProps {
   code: string;
@@ -10,12 +42,19 @@ interface CodeBlockProps {
 
 export default memo(function CodeBlock({ code, language = 'sql' }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
+  const { isDark } = useDarkMode();
+
+  useEffect(() => {
+    if (!copied) return;
+
+    const timeoutId = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(timeoutId);
+  }, [copied]);
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy code', err);
     }
@@ -26,6 +65,7 @@ export default memo(function CodeBlock({ code, language = 'sql' }: CodeBlockProp
       <div className="flex items-center justify-between px-4 py-2.5 bg-slate-100 dark:bg-[#161b22] border-b border-slate-200 dark:border-slate-800 transition-colors duration-200">
         <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">{language}</span>
         <button
+          type="button"
           onClick={handleCopy}
           className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
           aria-label="Copy code"
@@ -38,58 +78,14 @@ export default memo(function CodeBlock({ code, language = 'sql' }: CodeBlockProp
         </button>
       </div>
       <div className="custom-scrollbar relative leading-relaxed overflow-x-auto syntax-highlighter-container">
-        <div className="dark:hidden">
-          <SyntaxHighlighter
-            language={language}
-            style={oneLight}
-            customStyle={{
-              margin: 0,
-              padding: '1rem',
-              background: 'transparent',
-              textShadow: 'none',
-              fontFamily: 'inherit',
-              fontSize: '12px',
-              lineHeight: '1.625'
-            }}
-            codeTagProps={{
-              style: {
-                fontFamily: 'inherit',
-                fontSize: '12px',
-                background: 'transparent',
-                textShadow: 'none',
-                lineHeight: '1.625'
-              }
-            }}
-          >
-            {code}
-          </SyntaxHighlighter>
-        </div>
-        <div className="hidden dark:block">
-          <SyntaxHighlighter
-            language={language}
-            style={oneDark}
-            customStyle={{
-              margin: 0,
-              padding: '1rem',
-              background: 'transparent',
-              textShadow: 'none',
-              fontFamily: 'inherit',
-              fontSize: '12px',
-              lineHeight: '1.625'
-            }}
-            codeTagProps={{
-              style: {
-                fontFamily: 'inherit',
-                fontSize: '12px',
-                background: 'transparent',
-                textShadow: 'none',
-                lineHeight: '1.625'
-              }
-            }}
-          >
-            {code}
-          </SyntaxHighlighter>
-        </div>
+        <SyntaxHighlighter
+          language={language}
+          style={isDark ? oneDark : oneLight}
+          customStyle={highlighterStyle}
+          codeTagProps={codeTagProps}
+        >
+          {code}
+        </SyntaxHighlighter>
       </div>
     </div>
   );

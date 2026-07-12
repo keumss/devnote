@@ -1,16 +1,17 @@
-import type { ComponentType } from 'react';
+import { lazy } from 'react';
+import type { ComponentType, LazyExoticComponent } from 'react';
 import type { MDXProps } from 'mdx/types';
 
-interface ContentFrontmatter {
+export interface ContentFrontmatter {
   title: string;
 }
 
-interface ContentMeta {
+export interface ContentMeta {
   title?: string;
   pages?: string[];
 }
 
-interface StructuredData {
+export interface StructuredData {
   headings: Array<{
     id: string;
     content: string;
@@ -27,6 +28,10 @@ interface ContentModule {
   structuredData: StructuredData;
 }
 
+type ContentLoader = () => Promise<ContentModule>;
+
+export type MdxContentComponent = LazyExoticComponent<ComponentType<MDXProps>>;
+
 export interface CheatSheetItem {
   id: string;
   title: string;
@@ -37,8 +42,8 @@ export interface CheatSheetItem {
 export interface CheatSheetCategory {
   id: string;
   title: string;
-  items: CheatSheetItem[];
-  Content: ComponentType<MDXProps>;
+  displayTitle: string;
+  Content: MdxContentComponent;
 }
 
 export interface NavSection {
@@ -47,11 +52,29 @@ export interface NavSection {
   categories: CheatSheetCategory[];
 }
 
-const contentModules = import.meta.glob<ContentModule>(
+export interface SearchResult {
+  sectionId: string;
+  sectionTitle: string;
+  categoryId: string;
+  categoryTitle: string;
+  item: CheatSheetItem;
+}
+
+// Use a distinct module query for metadata so Rollup can tree-shake the MDX
+// renderer from the eager imports while retaining separate lazy render chunks.
+const contentLoaders = import.meta.glob<ContentModule>(
+  '/content/docs/**/*.{md,mdx}',
+  {
+    query: { collection: 'docs' },
+  },
+);
+
+const contentFrontmatters = import.meta.glob<ContentFrontmatter>(
   '/content/docs/**/*.{md,mdx}',
   {
     eager: true,
-    query: { collection: 'docs' },
+    import: 'frontmatter',
+    query: { collection: 'docs', purpose: 'metadata' },
   },
 );
 
@@ -69,14 +92,11 @@ const naturalCollator = new Intl.Collator(undefined, {
   sensitivity: 'base',
 });
 
-const rootMeta = metaFiles['/content/docs/meta.json'];
-const sectionOrder = rootMeta?.pages;
-
-if (!sectionOrder) {
-  throw new Error('content/docs/meta.json must define the section order in "pages".');
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
-function getContentLocation(filePath: string) {
+export function getContentLocation(filePath: string) {
   const relativePath = filePath.replace('/content/docs/', '');
   const pathParts = relativePath.split('/');
   const fileName = pathParts.pop();
@@ -92,59 +112,144 @@ function getContentLocation(filePath: string) {
   };
 }
 
+function getSectionIdFromMetaPath(filePath: string) {
+  if (filePath === '/content/docs/meta.json') {
+    return null;
+  }
+
+  const match = filePath.match(/^\/content\/docs\/([^/]+)\/meta\.json$/);
+  if (!match) {
+    throw new Error(`Section metadata must be placed directly under a section folder: ${filePath}`);
+  }
+
+  return match[1];
+}
+
+function getRootSectionOrder() {
+  const rootMeta = metaFiles['/content/docs/meta.json'];
+  if (!Array.isArray(rootMeta?.pages)) {
+    throw new Error('content/docs/meta.json must define the section order in "pages".');
+  }
+
+  const sectionIds = rootMeta.pages;
+  if (sectionIds.length === 0) {
+    throw new Error('content/docs/meta.json "pages" must contain at least one section.');
+  }
+  if (sectionIds.some((sectionId) => !isNonEmptyString(sectionId) || sectionId.includes('/'))) {
+    throw new Error('content/docs/meta.json "pages" must contain non-empty section folder names.');
+  }
+
+  const uniqueSectionIds = new Set(sectionIds);
+  if (uniqueSectionIds.size !== sectionIds.length) {
+    throw new Error('content/docs/meta.json "pages" must not contain duplicate sections.');
+  }
+
+  return sectionIds;
+}
+
 function getSectionTitle(sectionId: string) {
   const sectionMeta = metaFiles[`/content/docs/${sectionId}/meta.json`];
-  if (!sectionMeta?.title) {
+  if (!isNonEmptyString(sectionMeta?.title)) {
     throw new Error(`content/docs/${sectionId}/meta.json must define a section title.`);
   }
-  return sectionMeta.title;
+  return sectionMeta.title.trim();
 }
 
-function getItems(structuredData: StructuredData): CheatSheetItem[] {
-  return structuredData.headings
-    .filter((heading) => heading.id)
-    .map((heading) => {
-      const content = structuredData.contents
-        .filter((entry) => entry.heading === heading.id)
-        .map((entry) => entry.content.trim())
-        .filter(Boolean);
+function validateContentFiles(sectionOrder: string[]) {
+  const contentPaths = Object.keys(contentLoaders);
+  const documentIds = new Set<string>();
+  const contentSections = new Set(
+    contentPaths.map((filePath) => getContentLocation(filePath).sectionId),
+  );
+  const metadataSections = new Set<string>();
 
-      return {
-        id: heading.id,
-        title: heading.content,
-        description: content[0] ?? '',
-        content: content.join('\n'),
-      };
-    });
+  for (const filePath of Object.keys(metaFiles)) {
+    const sectionId = getSectionIdFromMetaPath(filePath);
+    if (sectionId) {
+      metadataSections.add(sectionId);
+    }
+  }
+
+  for (const filePath of contentPaths) {
+    const { sectionId, documentId } = getContentLocation(filePath);
+    const documentKey = `${sectionId}/${documentId}`;
+    if (documentIds.has(documentKey)) {
+      throw new Error(`Duplicate content document id: ${documentKey}.`);
+    }
+    documentIds.add(documentKey);
+
+    const frontmatter = contentFrontmatters[filePath];
+    if (!isNonEmptyString(frontmatter?.title)) {
+      throw new Error(`Frontmatter in ${filePath} must define a title.`);
+    }
+  }
+
+  for (const sectionId of sectionOrder) {
+    if (!contentSections.has(sectionId)) {
+      throw new Error(`Section "${sectionId}" is listed in content/docs/meta.json but has no content.`);
+    }
+    if (!metadataSections.has(sectionId)) {
+      throw new Error(`Section "${sectionId}" is missing content/docs/${sectionId}/meta.json.`);
+    }
+  }
+
+  for (const sectionId of contentSections) {
+    if (!sectionOrder.includes(sectionId)) {
+      throw new Error(`Content section "${sectionId}" is missing from content/docs/meta.json.`);
+    }
+  }
+
+  for (const sectionId of metadataSections) {
+    if (!sectionOrder.includes(sectionId)) {
+      throw new Error(`Metadata section "${sectionId}" is missing from content/docs/meta.json.`);
+    }
+  }
 }
 
+export function formatCategoryTitle(title: string) {
+  const prefix = title.split(':', 1)[0].trim();
+  return prefix || title.trim();
+}
+
+function createLazyContent(loadContent: ContentLoader): MdxContentComponent {
+  return lazy(async () => {
+    const contentModule = await loadContent();
+    return { default: contentModule.default };
+  });
+}
+
+const sectionOrder = getRootSectionOrder();
+validateContentFiles(sectionOrder);
+
+const sectionOrderMap = new Map(
+  sectionOrder.map((sectionId, index) => [sectionId, index]),
+);
 const sectionMap = new Map<string, NavSection>();
 
-for (const [filePath, contentModule] of Object.entries(contentModules)) {
-  const { frontmatter, structuredData, default: Content } = contentModule;
+for (const [filePath, loadContent] of Object.entries(contentLoaders)) {
+  const frontmatter = contentFrontmatters[filePath];
   const { sectionId, documentId } = getContentLocation(filePath);
   const section = sectionMap.get(sectionId) ?? {
     id: sectionId,
     title: getSectionTitle(sectionId),
     categories: [],
   };
+  const title = frontmatter.title.trim();
 
   section.categories.push({
     id: documentId,
-    title: frontmatter.title,
-    items: getItems(structuredData),
-    Content,
+    title,
+    displayTitle: formatCategoryTitle(title),
+    Content: createLazyContent(loadContent),
   });
   sectionMap.set(section.id, section);
 }
 
-export const navData = [...sectionMap.values()]
+export const navData: NavSection[] = [...sectionMap.values()]
   .sort((a, b) => {
-    const aIndex = sectionOrder.indexOf(a.id);
-    const bIndex = sectionOrder.indexOf(b.id);
-    const safeAIndex = aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex;
-    const safeBIndex = bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex;
-    return safeAIndex - safeBIndex || naturalCollator.compare(a.id, b.id);
+    const aIndex = sectionOrderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+    const bIndex = sectionOrderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+    return aIndex - bIndex || naturalCollator.compare(a.id, b.id);
   })
   .map((section) => ({
     ...section,

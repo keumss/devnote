@@ -1,15 +1,7 @@
 import { Search, X, ChevronRight, Hash } from 'lucide-react';
-import { navData } from '../content';
+import type { SearchResult } from '../search';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useRef } from 'react';
-
-type SearchResult = {
-  sectionId: string;
-  sectionTitle: string;
-  categoryId: string;
-  categoryTitle: string;
-  item: typeof navData[0]['categories'][0]['items'][0];
-};
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -29,14 +21,56 @@ export default function SearchModal({
   onSelectResult
 }: SearchModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 100);
-    }
-  }, [isOpen]);
+    if (!isOpen) return;
+
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    const focusFrame = window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+
+      const focusableElements = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+      );
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+
+      if (!firstElement || !lastElement) {
+        event.preventDefault();
+        return;
+      }
+
+      if (event.shiftKey && document.activeElement === firstElement) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && document.activeElement === lastElement) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocusedRef.current?.focus();
+    };
+  }, [isOpen, onClose]);
 
   return (
     <AnimatePresence>
@@ -53,6 +87,7 @@ export default function SearchModal({
           />
           
           <motion.div 
+            ref={dialogRef}
             initial={{ opacity: 0, scale: 0.95, y: -10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -10 }}
@@ -60,8 +95,9 @@ export default function SearchModal({
             className="relative w-full max-w-2xl bg-white dark:bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[80vh]"
             role="dialog"
             aria-modal="true"
-            aria-label="Search Documentation"
+            aria-labelledby="search-dialog-title"
           >
+            <h2 id="search-dialog-title" className="sr-only">문서 검색</h2>
             <div className="flex items-center px-4 border-b border-slate-200 dark:border-slate-800">
               <Search size={20} className="text-slate-400 shrink-0" />
               <input
@@ -75,6 +111,7 @@ export default function SearchModal({
               />
               {searchQuery && (
                  <button 
+                   type="button"
                    onClick={() => {
                      setSearchQuery('');
                      inputRef.current?.focus();
@@ -86,6 +123,14 @@ export default function SearchModal({
                  </button>
               )}
               <div className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-400 tracking-widest hidden sm:block">ESC</div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="ml-2 p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500/50"
+                aria-label="검색 닫기"
+              >
+                <X size={18} />
+              </button>
             </div>
             
             <div className="overflow-y-auto flex-1 custom-scrollbar p-2">
@@ -100,9 +145,10 @@ export default function SearchModal({
                   <p className="text-sm">다른 조합으로 검색해보세요.</p>
                 </div>
               ) : (
-                <div className="space-y-1">
+                <div className="space-y-1" aria-live="polite" aria-label={`${searchResults.length}개의 검색 결과`}>
                   {searchResults.map((result) => (
                     <button
+                      type="button"
                       key={`${result.sectionId}-${result.categoryId}-${result.item.id}`}
                       onClick={() => onSelectResult(result.sectionId, result.categoryId, result.item.id)}
                       className="w-full text-left px-4 py-3 rounded-xl hover:bg-emerald-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-emerald-50 dark:focus:bg-slate-800/80"
@@ -110,7 +156,7 @@ export default function SearchModal({
                       <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest flex-wrap">
                          <span>{result.sectionTitle}</span>
                          <ChevronRight size={12} className="text-slate-400" />
-                         <span>{result.categoryTitle.split(':')[0]}</span>
+                         <span>{result.categoryTitle}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Hash size={16} className="text-slate-400 group-hover:text-emerald-500 transition-colors shrink-0" />

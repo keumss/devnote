@@ -1,16 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
-import Fuse from 'fuse.js';
-import { navData } from '../content';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { searchContent } from '../search';
 
-type SearchResultItem = {
-  sectionId: string;
-  sectionTitle: string;
-  categoryId: string;
-  categoryTitle: string;
-  item: typeof navData[0]['categories'][0]['items'][0];
-};
-
-export function useSearch(onSelectResult: (sectionId: string, categoryId: string, itemId: string) => void) {
+export function useSearch(
+  onSelectResult: (sectionId: string, categoryId: string, itemId: string) => void,
+  onBeforeOpen?: () => void,
+) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
 
@@ -18,63 +12,25 @@ export function useSearch(onSelectResult: (sectionId: string, categoryId: string
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
+        onBeforeOpen?.();
         setIsSearchModalOpen(true);
-      } else if (e.key === 'Escape' && isSearchModalOpen) {
-        setIsSearchModalOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isSearchModalOpen]);
-
-  // Lock body scroll when modal is open
-  useEffect(() => {
-    if (isSearchModalOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
-  }, [isSearchModalOpen]);
-
-  // Flatten data for Fuse
-  const flatData = useMemo(() => {
-    const results: SearchResultItem[] = [];
-    navData.forEach(section => {
-      section.categories.forEach(category => {
-        category.items.forEach(item => {
-          results.push({
-            sectionId: section.id,
-            sectionTitle: section.title,
-            categoryId: category.id,
-            categoryTitle: category.title,
-            item
-          });
-        });
-      });
-    });
-    return results;
-  }, []);
-
-  const fuse = useMemo(() => new Fuse(flatData, {
-    keys: ['item.title', 'item.description', 'item.content'],
-    threshold: 0.4,
-    ignoreLocation: true,
-    minMatchCharLength: 2,
-  }), [flatData]);
+  }, [onBeforeOpen]);
 
   const searchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    return fuse.search(searchQuery).map(result => result.item);
-  }, [searchQuery, fuse]);
+    const normalizedQuery = searchQuery.trim();
+    if (!normalizedQuery) return [];
+    return searchContent(normalizedQuery);
+  }, [searchQuery]);
 
-  const handleSelectSearchResult = (sectionId: string, categoryId: string, itemId: string) => {
+  const handleSelectSearchResult = useCallback((sectionId: string, categoryId: string, itemId: string) => {
     onSelectResult(sectionId, categoryId, itemId);
     setIsSearchModalOpen(false);
     setSearchQuery('');
-  };
+  }, [onSelectResult]);
 
   return {
     searchQuery,

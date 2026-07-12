@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import Layout from './Layout';
+import { getCategoryPath } from '../navigation';
 
 export default function IndexPage() {
   useEffect(() => {
@@ -58,11 +59,11 @@ export default function IndexPage() {
                     {section.categories.map((category) => (
                       <Link
                         key={category.id}
-                        to={`/${section.id}/${category.id}`}
+                        to={getCategoryPath(section.id, category.id)}
                         className="group flex items-center justify-between py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                       >
                         <span className="text-sm font-medium text-slate-600 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors line-clamp-1">
-                          {category.title.split(':')[0]}
+                          {category.displayTitle}
                         </span>
                         <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 group-hover:text-indigo-500 transition-transform group-hover:translate-x-0.5 shrink-0 ml-2 opacity-0 group-hover:opacity-100" />
                       </Link>

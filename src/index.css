@@ -9,6 +9,14 @@
 }
 
 @layer base {
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
   html, body {
     @apply antialiased text-slate-900 bg-slate-50;
   }
@@ -17,13 +25,27 @@
     @apply text-slate-100 bg-slate-950;
   }
 
-  *, *::before, *::after {
+  body,
+  #root,
+  #root > div,
+  #root :where(header, nav, aside, main, article, section, button, a, input, textarea, select, [role='dialog']),
+  .lesson-heading,
+  .lesson-heading::before {
     @apply transition-colors duration-200 ease-in-out;
   }
 
   /* Exclude syntax highlighter spans from transition to prevent jank */
   .syntax-highlighter-container * {
     transition: none !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 

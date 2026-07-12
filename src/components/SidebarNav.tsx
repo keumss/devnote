@@ -1,11 +1,9 @@
 import { useState, useEffect, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { navData } from '../content';
+import { navData, type CheatSheetCategory, type NavSection } from '../content';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-
-type SectionType = typeof navData[0];
-type CategoryType = SectionType['categories'][0];
+import { getCategoryPath } from '../navigation';
 
 interface SidebarNavProps {
   activeSectionId?: string;
@@ -18,13 +16,14 @@ const NavCategoryItem = memo(({
   isActive, 
   onClick 
 }: { 
-  category: CategoryType, 
+  category: CheatSheetCategory,
   isActive: boolean, 
   onClick: () => void 
 }) => {
   return (
     <li>
       <button
+        type="button"
         onClick={onClick}
         className={`relative w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-colors duration-200 ${
           isActive
@@ -38,7 +37,7 @@ const NavCategoryItem = memo(({
           />
         )}
         <span className={`text-sm leading-snug relative z-10 transition-all duration-200`}>
-          {category.title.split(':')[0]}
+          {category.displayTitle}
         </span>
         {isActive && (
           <ChevronRight size={14} className="text-indigo-500 min-w-4 relative z-10" />
@@ -55,7 +54,7 @@ const NavSectionItem = memo(({
   onToggle, 
   onNavigate 
 }: { 
-  section: SectionType, 
+  section: NavSection,
   isExpanded: boolean, 
   activeCategoryId?: string, 
   onToggle: () => void, 
@@ -66,6 +65,7 @@ const NavSectionItem = memo(({
   return (
     <div>
       <button
+        type="button"
         onClick={onToggle}
         className={`w-full flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded transition-colors ${
           isExpanded 
@@ -92,7 +92,7 @@ const NavSectionItem = memo(({
                   category={category}
                   isActive={activeCategoryId === category.id}
                   onClick={() => {
-                    navigate(`/${section.id}/${category.id}`);
+                    navigate(getCategoryPath(section.id, category.id));
                     if (onNavigate) onNavigate();
                   }}
                 />

@@ -3,6 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (() => {
+        let storedTheme = null;
+        let prefersDark = false;
+
+        try {
+          storedTheme = localStorage.getItem('theme');
+        } catch {
+          // Storage can be unavailable in privacy-restricted environments.
+        }
+
+        try {
+          prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        } catch {
+          // Light mode is the safe fallback when matchMedia is unavailable.
+        }
+
+        const isDark = storedTheme === 'dark'
+          || (storedTheme !== 'light' && prefersDark);
+        document.documentElement.classList.toggle('dark', isDark);
+        document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+      })();
+    </script>
     <title>DevNote</title>
   </head>
   <body>

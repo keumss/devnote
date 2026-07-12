@@ -1,53 +1,180 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useSyncExternalStore } from 'react';
 
-// Global state for theme
-let globalIsDark = false;
-if (typeof window !== 'undefined') {
-  const stored = localStorage.getItem('theme');
-  if (stored) {
-    globalIsDark = stored === 'dark';
-  } else {
-    globalIsDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+const STORAGE_KEY = 'theme';
+const DARK_MODE_QUERY = '(prefers-color-scheme: dark)';
+
+type ThemePreference = 'dark' | 'light' | null;
+
+const listeners = new Set<() => void>();
+let mediaQuery: MediaQueryList | null = null;
+let isListeningToSystemTheme = false;
+let isListeningToStorage = false;
+
+function normalizePreference(value: string | null): ThemePreference {
+  return value === 'dark' || value === 'light' ? value : null;
+}
+
+function readStoredPreference(): ThemePreference {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    return normalizePreference(window.localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return null;
   }
 }
 
-const listeners = new Set<(isDark: boolean) => void>();
+function getMediaQuery(): MediaQueryList | null {
+  if (mediaQuery) return mediaQuery;
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return null;
+  }
+
+  try {
+    mediaQuery = window.matchMedia(DARK_MODE_QUERY);
+    return mediaQuery;
+  } catch {
+    return null;
+  }
+}
+
+function prefersDarkMode() {
+  return getMediaQuery()?.matches ?? false;
+}
+
+function resolveIsDark(preference: ThemePreference) {
+  return preference === null ? prefersDarkMode() : preference === 'dark';
+}
+
+function applyTheme(isDark: boolean) {
+  if (typeof document === 'undefined') return;
+
+  document.documentElement.classList.toggle('dark', isDark);
+  document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+}
+
+let themePreference = readStoredPreference();
+let globalIsDark = resolveIsDark(themePreference);
+
+// Keep direct imports and non-HTML test environments in sync as well. In the
+// browser, the inline script in index.html has already done this before paint.
+applyTheme(globalIsDark);
 
 function setGlobalIsDark(next: boolean) {
+  applyTheme(next);
   if (globalIsDark === next) return;
 
   globalIsDark = next;
-  const root = document.documentElement;
-  if (globalIsDark) {
-    root.classList.add('dark');
-    localStorage.setItem('theme', 'dark');
-  } else {
-    root.classList.remove('dark');
-    localStorage.setItem('theme', 'light');
+  listeners.forEach(listener => listener());
+}
+
+function handleSystemThemeChange(event: MediaQueryListEvent) {
+  if (themePreference === null) {
+    setGlobalIsDark(event.matches);
   }
-  listeners.forEach(listener => listener(globalIsDark));
+}
+
+function startSystemThemeListener() {
+  if (isListeningToSystemTheme || themePreference !== null) return;
+
+  const query = getMediaQuery();
+  if (!query) return;
+
+  if (typeof query.addEventListener === 'function') {
+    query.addEventListener('change', handleSystemThemeChange);
+  } else {
+    query.addListener(handleSystemThemeChange);
+  }
+  isListeningToSystemTheme = true;
+}
+
+function stopSystemThemeListener() {
+  if (!isListeningToSystemTheme || !mediaQuery) return;
+
+  if (typeof mediaQuery.removeEventListener === 'function') {
+    mediaQuery.removeEventListener('change', handleSystemThemeChange);
+  } else {
+    mediaQuery.removeListener(handleSystemThemeChange);
+  }
+  isListeningToSystemTheme = false;
+}
+
+function syncSystemThemeListener() {
+  if (themePreference === null && listeners.size > 0) {
+    startSystemThemeListener();
+  } else {
+    stopSystemThemeListener();
+  }
+}
+
+function handleStorageChange(event: StorageEvent) {
+  if (event.key !== STORAGE_KEY && event.key !== null) return;
+
+  themePreference = event.key === STORAGE_KEY
+    ? normalizePreference(event.newValue)
+    : readStoredPreference();
+  syncSystemThemeListener();
+  setGlobalIsDark(resolveIsDark(themePreference));
+}
+
+function startStorageListener() {
+  if (isListeningToStorage || typeof window === 'undefined') return;
+
+  window.addEventListener('storage', handleStorageChange);
+  isListeningToStorage = true;
+}
+
+function stopStorageListener() {
+  if (!isListeningToStorage || typeof window === 'undefined') return;
+
+  window.removeEventListener('storage', handleStorageChange);
+  isListeningToStorage = false;
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  startStorageListener();
+  syncSystemThemeListener();
+
+  // The system preference may have changed between module evaluation and the
+  // first subscriber being registered.
+  if (themePreference === null) {
+    setGlobalIsDark(prefersDarkMode());
+  }
+
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      stopSystemThemeListener();
+      stopStorageListener();
+    }
+  };
+}
+
+function getSnapshot() {
+  return globalIsDark;
+}
+
+function getServerSnapshot() {
+  return false;
+}
+
+function toggleDarkMode() {
+  const nextPreference: Exclude<ThemePreference, null> = globalIsDark ? 'light' : 'dark';
+  themePreference = nextPreference;
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, nextPreference);
+  } catch {
+    // The in-memory preference still makes the toggle work for this session.
+  }
+
+  syncSystemThemeListener();
+  setGlobalIsDark(nextPreference === 'dark');
 }
 
 export function useDarkMode() {
-  const [isDark, setIsDark] = useState<boolean>(globalIsDark);
+  const isDark = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  useEffect(() => {
-    // Initial sync in case it changed before effect runs
-    setIsDark(globalIsDark);
-    
-    const listener = (newIsDark: boolean) => {
-      setIsDark(newIsDark);
-    };
-    
-    listeners.add(listener);
-    return () => {
-      listeners.delete(listener);
-    };
-  }, []);
-
-  const toggle = useCallback(() => {
-    setGlobalIsDark(!globalIsDark);
-  }, []);
-
-  return { isDark, toggle };
+  return { isDark, toggle: toggleDarkMode };
 }

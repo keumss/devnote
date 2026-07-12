@@ -13,11 +13,12 @@ There is no test or public asset directory. Add colocated tests as `ComponentNam
 - `npm install` installs the locked dependencies from `package-lock.json`.
 - `npm run dev` starts Vite on port 3000 and exposes it to the local network.
 - `npm run lint` runs TypeScript type checking with no emitted files.
+- `npm test` runs the Vitest test suite once in jsdom.
 - `npm run build` creates the production site in `dist/`.
 - `npm run preview` serves the production build for local verification.
 - `npm run clean` removes generated build output.
 
-Before submitting changes, run `npm run lint && npm run build`.
+Before submitting changes, run `npm run lint && npm test && npm run build`.
 
 ## Coding Style & Naming Conventions
 
@@ -29,7 +30,7 @@ No automatic formatter or ESLint configuration is present. Keep diffs focused an
 
 ## Testing Guidelines
 
-No automated test framework or coverage threshold is configured yet. For UI changes, manually verify desktop and mobile layouts, search, navigation, code copying, and light/dark themes. If adding tests, introduce the runner and an `npm test` script in the same change, then document it here.
+Vitest, Testing Library, and jsdom provide the automated test environment. Keep focused tests colocated as `ComponentName.test.tsx` or put broader tests under `src/__tests__/`. For UI changes, also manually verify desktop and mobile layouts, search, navigation, code copying, and light/dark themes. No coverage threshold is configured.
 
 ## Commit & Pull Request Guidelines
 
