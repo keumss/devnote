@@ -1,4 +1,4 @@
-import { BookMarked, Moon, Sun, Search, Menu } from 'lucide-react';
+import { BookOpenText, Moon, Sun, Search, Menu } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface HeaderProps {
@@ -32,13 +32,21 @@ export default function Header({
               <Menu size={20} strokeWidth={2.5} />
             </button>
           )}
-          <Link to="/" className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity">
-            <div className="bg-indigo-500 text-white p-2 rounded-xl shadow-sm shrink-0">
-              <BookMarked size={18} strokeWidth={2.5} className="sm:w-5 sm:h-5" />
+          <Link
+            to="/"
+            className="group flex items-center gap-2.5 sm:gap-3.5 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+            aria-label="DevNote 홈으로 이동"
+          >
+            <div className="relative flex size-9 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 via-indigo-600 to-sky-500 text-white shadow-[0_8px_20px_-8px_rgba(79,70,229,0.8)] ring-1 ring-white/30 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:scale-105 dark:ring-white/10 sm:size-10 shrink-0">
+              <BookOpenText size={18} strokeWidth={2.25} className="sm:size-5" />
             </div>
-            <div className="hidden sm:block text-left">
-              <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">DevNote</h1>
-              <p className="text-[10px] tracking-wider font-semibold text-indigo-600 dark:text-indigo-400 leading-tight">개발 학습 노트</p>
+            <div className="hidden sm:block text-left leading-none">
+              <h1 className="text-[1.15rem] font-bold tracking-[-0.04em] text-slate-950 dark:text-white">
+                Dev<span className="text-indigo-600 dark:text-indigo-400">Note</span>
+              </h1>
+              <p className="mt-1.5 text-[10px] font-semibold tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                BUILD · LEARN · SHARE
+              </p>
             </div>
           </Link>
         </div>

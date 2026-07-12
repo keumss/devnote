@@ -21,45 +21,38 @@ export default function IndexPage() {
             initial={{ opacity: 0, y: -16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
-            className="relative mb-8 overflow-hidden rounded-3xl border border-indigo-100 bg-white px-5 py-7 shadow-sm dark:border-indigo-500/15 dark:bg-[#131620] sm:mb-10 sm:px-8 sm:py-9"
+            className="mb-7 flex flex-col gap-4 border-b border-slate-200 pb-6 dark:border-slate-800 sm:mb-8 sm:flex-row sm:items-end sm:justify-between sm:gap-6 sm:pb-7"
             aria-labelledby="index-page-title"
           >
-            <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-indigo-100/70 blur-3xl dark:bg-indigo-500/10" />
-            <div className="relative flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
-              <div className="max-w-2xl">
-                <p className="mb-3 flex items-center gap-2 text-xs font-bold tracking-[0.18em] text-indigo-600 dark:text-indigo-400">
-                  <BookOpen className="h-4 w-4" strokeWidth={2.5} />
-                  DEVNOTE LIBRARY
-                </p>
-                <h1 id="index-page-title" className="text-2xl font-extrabold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-                  개발 학습 노트
-                </h1>
-                <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400 sm:text-base">
-                  기술별로 정리한 노트를 탐색하세요.
-                </p>
-              </div>
-
-              <dl className="grid grid-cols-2 gap-3 sm:gap-4 lg:w-[22rem]">
-                <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4 dark:border-slate-700/70 dark:bg-slate-900/60">
-                  <dt className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    <Layers className="h-4 w-4 text-indigo-500" />
-                    학습 섹션
-                  </dt>
-                  <dd className="mt-2 text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                    {navData.length}<span className="ml-1 text-sm font-semibold text-slate-500 dark:text-slate-400">개</span>
-                  </dd>
-                </div>
-                <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-4 dark:border-slate-700/70 dark:bg-slate-900/60">
-                  <dt className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
-                    <FileText className="h-4 w-4 text-indigo-500" />
-                    학습 노트
-                  </dt>
-                  <dd className="mt-2 text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-                    {totalNotes}<span className="ml-1 text-sm font-semibold text-slate-500 dark:text-slate-400">개</span>
-                  </dd>
-                </div>
-              </dl>
+            <div>
+              <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.16em] text-indigo-600 dark:text-indigo-400">
+                <BookOpen className="h-3.5 w-3.5" strokeWidth={2.5} />
+                DEVNOTE LIBRARY
+              </p>
+              <h1 id="index-page-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+                개발 학습 노트
+              </h1>
+              <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
+                기술별로 정리한 노트를 탐색하세요.
+              </p>
             </div>
+
+            <dl className="flex items-center divide-x divide-slate-200 rounded-xl border border-slate-200 bg-white/60 text-sm dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900/40">
+              <div className="flex flex-1 items-center gap-2 px-3 py-2.5 sm:px-4">
+                <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
+                <div>
+                  <dt className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">학습 섹션</dt>
+                  <dd className="font-bold text-slate-900 dark:text-white">{navData.length}개</dd>
+                </div>
+              </div>
+              <div className="flex flex-1 items-center gap-2 px-3 py-2.5 sm:px-4">
+                <FileText className="h-4 w-4 shrink-0 text-indigo-500" />
+                <div>
+                  <dt className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">학습 노트</dt>
+                  <dd className="font-bold text-slate-900 dark:text-white">{totalNotes}개</dd>
+                </div>
+              </div>
+            </dl>
           </motion.section>
 
           <section aria-labelledby="section-list-title">
