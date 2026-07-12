@@ -2,62 +2,82 @@
 title: "Part 1. 기초: 스키마 정의 및 조작"
 ---
 
-## SQLModel이란?
+## SQLModel이 줄여 주는 모델 중복 이해하기
 
-SQLModel은 SQLAlchemy(DB ORM)와 Pydantic(FastAPI의 데이터 검증 라이브러리)의 장점을 한데 묶은 최신 라이브러리입니다. FastAPI의 창시자가 직접 만들었기에, SQLAlchemy의 강력한 ORM 기능을 그대로 쓰면서도 별도의 중복(DB용 모델 클래스 정의, 검증용 DTO 정의) 없이 하나의 모델 코드로 유지보수할 수 있습니다. 학습 난이도와 보일러플레이트 코드를 줄여주며, 특히 FastAPI와의 결합도가 압도적으로 높아 모던 웹 파이썬 백엔드를 구성할 때 우선적으로 권장됩니다.
+SQLModel은 SQLAlchemy의 테이블 매핑과 Pydantic의 데이터 모델 기능을 함께 사용할 수 있게 합니다. `table=True`인 클래스는 DB 테이블에 대응하고, `table=False`인 기본 SQLModel 클래스는 요청·응답처럼 DB에 직접 저장하지 않는 데이터 형식을 표현합니다.
 
-## 모델 정의 (SQLModel & Pydantic)
+하나의 클래스를 모든 계층에 그대로 노출하는 것이 목표는 아닙니다. 예를 들어 비밀 이름을 입력에서는 받되 공개 응답에서는 숨겨야 한다면 테이블 모델과 API 모델을 분리해야 합니다. 공통 필드만 상속해 중복을 줄이는 방식이 실전에서 안전합니다.
 
-SQLModel 클래스를 상속받아 데이터베이스 테이블과 Pydantic(데이터 검증) 모델을 동시에 정의합니다.
+## 공통 필드와 테이블 모델 분리하기
+
+기본 클래스에는 여러 모델이 공유할 필드를 두고, DB 전용 클래스에 기본 키와 `table=True`를 추가합니다. 생성 입력은 클라이언트가 ID를 임의로 지정하지 못하도록 별도 클래스로 둡니다.
 
 ```python
 from sqlmodel import Field, SQLModel
-from typing import Optional
 
-# table=True면 테이블 생성 매핑, False면 단순 Pydantic 검증 모델(기본값)
-class Hero(SQLModel, table=True):
-    # primary_key 지정
-    id: Optional[int] = Field(default=None, primary_key=True)
-    # 인덱스 생성
-    name: str = Field(index=True)
+class HeroBase(SQLModel):
+    name: str = Field(index=True, min_length=1, max_length=50)
+    age: int | None = Field(default=None, ge=0)
+
+class Hero(HeroBase, table=True):
+    id: int | None = Field(default=None, primary_key=True)
     secret_name: str
-    # 옵셔널 (Nullable)
-    age: Optional[int] = None
+
+class HeroCreate(HeroBase):
+    secret_name: str
+
+payload = HeroCreate(name='Deadpond', secret_name='Dive Wilson')
+print(payload.model_dump())
 ```
 
-## 엔진 연결 및 테이블 생성
+```text
+{'name': 'Deadpond', 'age': None, 'secret_name': 'Dive Wilson'}
+```
 
-create_engine을 이용해 DB에 연결하고, SQLModel.metadata.create_all을 통해 테이블을 실제로 만듭니다.
+`id`는 DB가 생성하므로 생성 입력에 없고, 선택적인 `age`는 기본값 `None`으로 나타납니다. `min_length`, `max_length`, `ge`는 API 경계의 잘못된 입력을 일찍 발견하게 하지만 DB 제약도 별도로 설계해야 합니다.
+
+## 엔진 연결 후 생성된 테이블 확인하기
+
+학습 예제는 별도 서버 없이 실행할 수 있는 SQLite를 사용합니다. 모델을 모두 가져온 뒤 `SQLModel.metadata.create_all()`을 호출해야 메타데이터에 등록된 테이블이 생성됩니다.
 
 ```python
-from sqlmodel import create_engine, SQLModel
+from sqlalchemy import inspect
+from sqlmodel import SQLModel, create_engine
 
-sqlite_file_name = "database.db"
-sqlite_url = f"sqlite:///{sqlite_file_name}"
+engine = create_engine('sqlite:///database.db', echo=False)
+SQLModel.metadata.create_all(engine)
 
-# echo=True 설정을 통해 실제 렌더링 된 SQL들을 확인 가능합니다.
-engine = create_engine(sqlite_url, echo=True)
-
-# 정의된 모든 모델을 스캔하여 DB에 테이블로 생성합니다. (앱 시작 시 활용)
-def create_db_and_tables():
-    SQLModel.metadata.create_all(engine)
+print(inspect(engine).get_table_names())
 ```
 
-## 데이터 생성 파이프라인 (Session.add)
+```text
+['hero']
+```
 
-Session을 활용해 파이썬 인스턴스로 정의된 데이터를 DB에 추가합니다.
+기본 테이블 이름은 클래스 이름을 소문자로 바꾼 `hero`입니다. `create_all()`은 없는 테이블을 만드는 학습·테스트 용도에는 편하지만 기존 운영 테이블의 컬럼을 안전하게 변경하지는 않습니다. 운영 스키마 변경에는 Alembic 리비전을 사용합니다.
+
+## Session.add와 refresh로 생성 결과 확인하기
+
+입력 모델을 테이블 객체로 바꾸고 세션에 추가합니다. `commit()`이 트랜잭션을 확정하고, `refresh()`는 DB가 만든 기본 키 같은 값을 객체에 다시 읽어 옵니다.
 
 ```python
 from sqlmodel import Session
 
-def create_heroes():
-    hero_1 = Hero(name="Deadpond", secret_name="Dive Wilson")
-    hero_2 = Hero(name="Spider-Boy", secret_name="Pedro Parqueador")
+hero_data = HeroCreate(name='Deadpond', secret_name='Dive Wilson')
+hero = Hero.model_validate(hero_data)
 
-    with Session(engine) as session:
-        session.add(hero_1)
-        session.add(hero_2)
+with Session(engine) as session:
+    session.add(hero)
+    session.commit()
+    session.refresh(hero)
 
-        session.commit() # 실제 DB 저장
-        session.refresh(hero_1) # DB 저장 후 id 등 자동 생성 속성을 객체에 업데이트(반영) 시킴
+    print(hero.id, hero.name, hero.age)
 ```
+
+새 데이터베이스에서 처음 실행했다면 다음처럼 자동 생성된 ID를 확인할 수 있습니다.
+
+```text
+1 Deadpond None
+```
+
+같은 파일 DB에서 예제를 반복하면 ID는 2 이상이 될 수 있습니다. `commit()` 전에 오류가 나면 세션 컨텍스트를 빠져나가기 전에 `rollback()`해야 같은 세션을 계속 사용할 수 있으며, 비밀 필드를 응답으로 직렬화하지 않도록 별도 응답 모델을 둡니다.

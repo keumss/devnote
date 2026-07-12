@@ -12,6 +12,19 @@ title: "Part 8. 실전: 컨테이너 배포와 운영"
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 ```
 
+시작 로그에는 부모 프로세스와 네 워커가 준비되었다는 메시지가 나타납니다. PID는 실행마다 달라집니다.
+
+```text
+INFO: Uvicorn running on http://0.0.0.0:8000
+INFO: Started parent process [1200]
+INFO: Started server process [1202]
+INFO: Started server process [1203]
+INFO: Started server process [1204]
+INFO: Started server process [1205]
+```
+
+워커는 메모리를 공유하지 않으므로 프로세스 전역 딕셔너리에 세션이나 작업 상태를 저장하면 요청마다 다른 값을 볼 수 있습니다. 공유 상태는 DB나 Redis 같은 외부 저장소에 두고, 시작 작업이 워커 수만큼 반복되어도 안전한지 확인합니다.
+
 ## Docker 이미지 작성
 
 이미지에는 실행에 필요한 코드와 의존성만 넣고, 비밀값은 이미지에 복사하지 않습니다. 아래 예시는 플랫폼이 컨테이너 복제를 관리하는 경우에 맞춘 단일 Uvicorn 프로세스 구성입니다.
@@ -29,6 +42,19 @@ COPY ./app /code/app
 # 실제 서비스에서는 HTTPS 종료를 리버스 프록시 또는 클라우드 로드 밸런서에 맡깁니다.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
+
+빌드한 이미지의 실제 시작 명령을 확인하면 Dockerfile의 JSON 배열이 그대로 들어갔는지 검증할 수 있습니다.
+
+```bash
+docker build -t sample-api .
+docker image inspect sample-api --format '{{json .Config.Cmd}}'
+```
+
+```text
+["uvicorn","app.main:app","--host","0.0.0.0","--port","8000"]
+```
+
+`.dockerignore`에는 `.git`, `.venv`, `__pycache__`, 테스트 캐시와 환경 파일을 넣어 빌드 컨텍스트와 비밀 노출을 줄입니다. 의존성 파일을 애플리케이션 코드보다 먼저 복사한 이유는 코드만 바뀐 빌드에서 의존성 설치 레이어를 재사용하기 위해서입니다.
 
 ## Docker Compose로 DB 의존성 확인
 
@@ -59,6 +85,22 @@ services:
         condition: service_healthy
 ```
 
+먼저 병합된 Compose 설정을 검증하고 백그라운드로 실행한 뒤 상태를 확인합니다.
+
+```bash
+docker compose config --quiet
+docker compose up --build --detach
+docker compose ps
+```
+
+```text
+NAME                  SERVICE   STATUS
+sample-project-db-1   db        Up (healthy)
+sample-project-web-1  web       Up
+```
+
+`config --quiet`가 아무 출력 없이 상태 코드 0으로 끝나면 문법과 변수 치환이 유효합니다. `web`이 계속 재시작한다면 `docker compose logs web`에서 DB URL, 마이그레이션, import 오류를 먼저 확인합니다. 실제 컨테이너 이름은 프로젝트 폴더에 따라 달라집니다.
+
 ## 상태 확인과 마이그레이션 분리
 
 로드 밸런서가 프로세스의 생존 여부를 확인할 수 있도록 가벼운 헬스 엔드포인트를 둡니다. DB 스키마 변경은 API 워커가 동시에 실행하지 않도록 배포 단계에서 `alembic upgrade head`를 한 번만 실행합니다. 준비 상태 점검에 외부 의존성을 넣을 때는 짧은 타임아웃을 적용합니다.
@@ -76,3 +118,13 @@ def healthz() -> dict[str, str]:
 # 배포 파이프라인 또는 별도 일회성 작업에서 실행합니다.
 # $ alembic upgrade head
 ```
+
+```bash
+curl --fail --silent http://localhost:8000/healthz
+```
+
+```json
+{"status":"ok"}
+```
+
+`--fail`을 사용하면 4xx·5xx 응답이 성공처럼 처리되지 않습니다. 생존 확인은 이벤트 루프와 HTTP 처리 여부만 빠르게 검사하고, 트래픽을 받을 준비 상태를 별도로 판단해야 한다면 `/readyz`에서 DB 연결 등을 짧은 타임아웃으로 확인합니다.

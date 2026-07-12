@@ -2,51 +2,80 @@
 title: "Part 2. 중급: 리비전 생성 및 적용"
 ---
 
-## 리비전 자동 생성 (Auto Generate)
+## autogenerate 결과를 초안으로 검토하기
 
-DB 모델 코드와 실제 DB 상태를 비교하여 변경된 사항을 적용할 파이썬 마이그레이션 스크립트를 만들어냅니다.
+모델을 바꾼 뒤 `--autogenerate`를 사용하면 Alembic이 현재 DB 스키마와 `target_metadata`를 비교해 리비전 초안을 만듭니다. 메시지는 파일명이 아니라 변경 의도를 짧게 표현합니다.
 
 ```bash
-# 모델 클래스를 수정한 뒤 아래 명령어로 변경사항 스크립트(.py) 추가
-# -m 플래그로 해당 작업의 이름을 붙입니다.
-alembic revision --autogenerate -m "Add email column to users table"
-
-# 성공하면 alembic/versions/ 폴더 내에 임의의 해시값이 붙은 파일이 새로 생성됩니다.
+alembic revision --autogenerate -m "add email to users"
 ```
 
-## 데이터베이스 적용 (Upgrade)
+```text
+INFO  [alembic.autogenerate.compare] Detected added column 'users.email'
+Generating .../alembic/versions/3f1a2b_add_email_to_users.py ...  done
+```
 
-생성된 최신 마이그레이션 스크립트를 실제로 데이터베이스에 반영하여 구조를 업데이트합니다.
+생성된 파일에서 `upgrade()`와 `downgrade()`를 모두 읽습니다. 리비전 ID는 실행마다 달라지며 아래 코드는 대표적인 결과입니다.
+
+```python
+def upgrade() -> None:
+    op.add_column(
+        'users',
+        sa.Column('email', sa.String(length=255), nullable=True),
+    )
+
+def downgrade() -> None:
+    op.drop_column('users', 'email')
+```
+
+자동 생성은 컬럼 이름 변경을 기존 컬럼 삭제와 새 컬럼 생성으로 오해할 수 있고, 데이터 변환 의도는 알지 못합니다. 기존 행이 있는 테이블에 NOT NULL 컬럼을 추가할 때는 nullable 컬럼 추가 → 값 채우기 → NOT NULL 적용처럼 여러 단계로 나눕니다.
+
+## upgrade로 적용하고 현재 리비전 확인하기
+
+`upgrade head`는 현재 DB 리비전에서 최신 head까지 필요한 리비전을 순서대로 실행합니다. 적용 전에는 백업, 잠금 시간, 대형 테이블 변경 비용을 검토합니다.
 
 ```bash
-# 최신 버전(head)까지 누락된 모든 마이그레이션을 데이터베이스에 반영
 alembic upgrade head
-
-# 특정 리비전(해시) 또는 한 단계만 반영하려면 (+1)
-alembic upgrade +1
-alembic upgrade 8b3c4d5e6f7g
-```
-
-## 이전 상태로 롤백 (Downgrade)
-
-구조를 잘못 바꿨거나 오류가 발생했을 때, 이전 리비전의 상태로 되돌리고 싶을 때 역재생(downgrade 함수)을 실행합니다.
-
-```bash
-# 한 단계 안전하게 이전 버전으로 롤백
-alembic downgrade -1
-
-# 특정 단일 리비전(해시) 시점으로 롤백 (해당 시점 이후 적용분이 취소됨)
-alembic downgrade 8b3c4d5e6f7g
-```
-
-## 히스토리 이력 및 상태 추적
-
-프로젝트에 누적된 리비전 목록이나, 현재 적용 중인 데이터베이스의 작업 버전을 확인할 수 있습니다.
-
-```bash
-# 모든 마이그레이션 이력(위부터 최신) 나열 및 확인
-alembic history --verbose
-
-# 현재 데이터베이스에 반영되어 적용된 최신 리비전 해시값 확인
 alembic current
 ```
+
+```text
+INFO  [alembic.runtime.migration] Running upgrade -> 3f1a2b, add email to users
+3f1a2b (head)
+```
+
+두 번째 줄이 기대한 리비전과 일치해야 배포 코드와 DB 스키마가 같은 상태입니다. 여러 애플리케이션 워커가 동시에 마이그레이션을 실행하지 않도록 배포 파이프라인의 일회성 단계에서 한 번만 수행합니다.
+
+## downgrade의 데이터 손실 가능성 판단하기
+
+`downgrade -1`은 현재 리비전의 `downgrade()`를 실행해 한 단계 내립니다. 위 예제에서는 `email` 컬럼을 삭제하므로 저장된 이메일도 함께 사라집니다. 코드 롤백이 필요하다고 해서 DB도 무조건 downgrade해야 하는 것은 아닙니다.
+
+```bash
+alembic downgrade -1
+alembic current
+```
+
+```text
+INFO  [alembic.runtime.migration] Running downgrade 3f1a2b -> , add email to users
+```
+
+초기 리비전 이전으로 내렸다면 `current`가 출력할 리비전이 없습니다. 운영에서는 먼저 이전 애플리케이션이 새 스키마와 호환되는지 확인하고, 파괴적인 downgrade 대신 후속 수정 리비전을 만드는 방식을 우선 검토합니다. downgrade도 빈 테스트 DB와 운영 데이터 사본에서 실제 실행해 봅니다.
+
+## history와 heads로 리비전 그래프 읽기
+
+리비전은 단순 파일 이름 순서가 아니라 `revision`과 `down_revision`이 연결된 그래프입니다. `history`는 경로를, `heads`는 최신 끝점을 보여 줍니다.
+
+```bash
+alembic history --verbose
+alembic heads
+```
+
+```text
+Rev: 3f1a2b (head)
+Parent: <base>
+Path: .../3f1a2b_add_email_to_users.py
+
+3f1a2b (head)
+```
+
+협업 중 서로 다른 리비전에서 새 파일을 만들면 head가 둘 이상 생길 수 있습니다. 이때 한쪽 파일의 `down_revision`을 임의로 고치지 말고 `alembic merge heads -m 'merge branches'`로 병합 리비전을 만든 뒤 두 경로가 모두 보존되는지 확인합니다.

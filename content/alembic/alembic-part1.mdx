@@ -2,51 +2,91 @@
 title: "Part 1. 초급: 설치 및 초기 설정"
 ---
 
-## Alembic이란?
+## Alembic이 관리하는 스키마 변경 이해하기
 
-Alembic은 SQLAlchemy 생태계의 데이터베이스 마이그레이션 도구입니다. 코드의 변경사항(컬럼 추가, 테이블 생성 등)을 파이썬 스크립트 형태로 추출/생성하여 "이력(리비전) 관리" 처럼 데이터베이스의 버전을 관리할 수 있게 돕습니다. 마치 코드베이스를 관리하는 Git과 같으며, 데이터베이스 변경 작업을 협업 시 매우 안전하게 동기화하고 적용/롤백 할 수 있는 강력한 기능이 있습니다.
+Alembic은 SQLAlchemy 모델과 데이터베이스 스키마의 변경 이력을 Python 리비전 파일로 관리합니다. 예를 들어 `users.email` 컬럼을 추가하면 개발자마다 수동으로 `ALTER TABLE`을 실행하는 대신, 같은 리비전을 개발·테스트·운영 데이터베이스에 순서대로 적용합니다.
 
-## 설치 및 초기화 (Init)
+Alembic이 다루는 중심 대상은 테이블·컬럼·인덱스 같은 **스키마**입니다. 기존 행의 값을 채우는 데이터 마이그레이션은 리비전에 명시적으로 작성해야 하며, 모델 코드를 바꾸는 것만으로 운영 DB가 자동 갱신되지는 않습니다. 리비전 파일을 Git으로 공유하고 배포 과정에서 `upgrade`를 실행하는 흐름을 기억합니다.
 
-Alembic을 설치하고 프로젝트에 마이그레이션 적용을 위한 폴더 및 설정 파일을 생성합니다.
+## 설치 후 init 결과물의 역할 파악하기
+
+프로젝트 가상환경에 Alembic을 설치하고 초기화합니다. 폴더 이름은 관례적으로 `alembic`을 사용하지만 다른 이름도 가능합니다.
 
 ```bash
-# pip 설치
-pip install alembic
-
-# 현재 디렉토리에 'alembic' 폴더와 'alembic.ini' 환경 설정 파일 생성
+python -m pip install alembic
 alembic init alembic
 ```
 
-## alembic.ini 파일 설정
+명령을 실행하면 다음 구조가 생깁니다. 콘솔의 절대 경로와 안내 문구는 실행 위치에 따라 달라질 수 있습니다.
 
-데이터베이스 연결을 위해 alembic.ini 파일에서 sqlalchemy.url을 프로젝트 환경에 맞춰 수정합니다.
+```text
+Creating directory .../alembic
+Creating directory .../alembic/versions
+Generating .../alembic.ini
+Generating .../alembic/env.py
+Generating .../alembic/script.py.mako
+Please edit configuration/connection/logging settings in alembic.ini before proceeding.
+```
+
+```text
+.
+├─alembic.ini
+└─alembic/
+  ├─env.py
+  ├─script.py.mako
+  └─versions/
+```
+
+`alembic.ini`는 명령과 로깅의 기본 설정, `env.py`는 DB 연결과 모델 메타데이터를 준비하는 실행 환경, `versions/`는 앞으로 생성할 리비전 파일을 담습니다. 생성 직후에는 `versions/`가 비어 있는 것이 정상입니다.
+
+## 연결 URL을 환경 변수에서 안전하게 주입하기
+
+`alembic.ini`에 실제 비밀번호를 커밋하지 않습니다. 파일에는 개발자가 바꿔야 한다는 자리표시자만 두고, `env.py`에서 배포 환경의 `DATABASE_URL`을 읽어 설정을 덮어씁니다.
 
 ```ini
-# alembic.ini 파일 (기본 생성)
-# sqlalchemy.url = driver://user:pass@localhost/dbname
-
-# 👇 실제 연결할 DB URL로 변경합니다. (또는 env.py에서 환경변수 덮어쓰기 권장)
-sqlalchemy.url = postgresql://admin:secret@localhost:5432/mydb
+# alembic.ini
+sqlalchemy.url = driver://placeholder
 ```
-
-## env.py 설정 (모델 인식)
-
-Alembic이 우리가 정의한 테이블 모델의 변경사항을 감지할 수 있도록, 대상 메타데이터(target_metadata)를 연결합니다.
 
 ```python
-# alembic/env.py 파일 수정
+# alembic/env.py
+import os
 
-from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# 1. 사용할 Base(또는 SQLModel)가 정의된 파일 임포트
-from app.models import Base
+config = context.config
+database_url = os.environ.get('DATABASE_URL')
+if not database_url:
+    raise RuntimeError('DATABASE_URL 환경 변수가 필요합니다.')
 
-# 2. Alembic이 모델의 변화를 추적할 수 있도록 target_metadata를 설정
-target_metadata = Base.metadata
-
-# 나머지 코드는 그대로 유지
-# ...
+# ConfigParser에서 URL의 % 문자가 보간 기호로 해석되지 않게 이스케이프합니다.
+config.set_main_option('sqlalchemy.url', database_url.replace('%', '%%'))
 ```
+
+```bash
+DATABASE_URL='postgresql+psycopg://app:secret@localhost:5432/app' alembic current
+```
+
+연결이 성공하고 아직 리비전을 적용하지 않은 새 DB라면 출력할 현재 리비전이 없습니다. 연결 실패는 드라이버 누락, 호스트·포트, 인증 정보 순서로 확인합니다. 셸 기록에 비밀번호가 남을 수 있으므로 실제 운영에서는 CI 시크릿이나 플랫폼의 비밀 주입 기능을 사용합니다.
+
+## env.py에 모델 메타데이터 연결하기
+
+`--autogenerate`는 DB 스키마와 `target_metadata`를 비교합니다. Declarative Base를 쓰는 프로젝트라면 `Base.metadata`, SQLModel이라면 `SQLModel.metadata`를 연결합니다. 모델 모듈을 가져오지 않으면 메타데이터에 테이블이 등록되지 않아 빈 리비전이 생길 수 있습니다.
+
+```python
+# alembic/env.py
+from app.db import Base
+from app import models  # 모든 매핑 클래스가 등록되도록 가져옵니다.
+
+target_metadata = Base.metadata
+```
+
+```python
+# SQLModel 프로젝트의 대안
+from sqlmodel import SQLModel
+from app import models
+
+target_metadata = SQLModel.metadata
+```
+
+초기 설정 뒤 모델 하나를 만든 다음 `alembic revision --autogenerate -m 'create users'`를 실행합니다. 생성된 `upgrade()`에 `op.create_table(...)`이 있고 `downgrade()`에 반대 작업이 있는지 직접 검토해야 합니다. 자동 생성은 초안 작성 도구이며 컬럼 이름 변경을 삭제 후 재생성으로 오해하는 등 의도를 완전히 알 수 없습니다.

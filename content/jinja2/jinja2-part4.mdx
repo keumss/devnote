@@ -74,5 +74,12 @@ template_env = Environment(
 )
 
 # 개발·테스트에서 누락된 변수를 즉시 발견합니다.
-template_env.get_template('post_detail.html').render(post={'title': '예시'})
+template = template_env.from_string('{{ post.author_name }}: {{ post.title }}')
+template.render(post={'title': '예시'})
 ```
+
+```text
+jinja2.exceptions.UndefinedError: 'dict object' has no attribute 'author_name'
+```
+
+기본 Undefined 동작은 누락된 값이 빈 문자열처럼 보여 오류가 화면에 숨어들 수 있습니다. `StrictUndefined`는 `author_name`이 빠진 지점에서 즉시 실패하므로 테스트에서 뷰 모델과 템플릿의 계약을 고칠 수 있습니다. 운영 오류 응답에는 이 상세 메시지를 노출하지 않고 요청 ID와 함께 서버 로그에 기록합니다.

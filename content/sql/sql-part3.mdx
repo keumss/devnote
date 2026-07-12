@@ -2,78 +2,169 @@
 title: "Part 3. 고급: 프로그래밍 및 최적화"
 ---
 
-## 프로시저 / 함수 (Function & Procedure)
+## 함수로 반복 계산을 데이터베이스에 캡슐화하기
 
-반복되는 비즈니스 로직을 DB 내부에 저장해둡니다. 파라미터(인자)를 받고 제어문도 쓸 수 있습니다. (Postgres는 Function을 더 널리 씁니다)
+여러 쿼리에서 같은 계산을 반복하고 DB 안에서 일관되게 적용해야 할 때 함수를 만들 수 있습니다. 단순 조회 한 번이면 SQL 표현식을 그대로 쓰는 편이 읽기 쉽고, 함수가 애플리케이션 규칙을 과도하게 숨기지 않는지 먼저 판단합니다.
 
 ```sql
-CREATE OR REPLACE FUNCTION get_discount(price NUMERIC)
-RETURNS NUMERIC AS $$
-BEGIN
-  IF price > 1000 THEN
-    RETURN price * 0.9; -- 10% 할인
-  ELSE
-    RETURN price;
-  END IF;
-END;
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION discounted_price(price NUMERIC)
+RETURNS NUMERIC
+LANGUAGE SQL
+IMMUTABLE
+AS $$
+  SELECT CASE
+    WHEN price > 1000 THEN ROUND(price * 0.9, 2)
+    ELSE price
+  END
+$$;
+
+SELECT discounted_price(1500.00) AS final_price;
 ```
 
-## 날짜 및 시간 다루기
-
-날짜 데이터에 더하고 빼거나 특정 포맷으로 변환합니다.
-
-```sql
--- 현재 시간 기준 한달 후 계산하기
-SELECT CURRENT_TIMESTAMP + INTERVAL '1 month';
-
--- 특정 단위만 추출 (ex: 연도)
-SELECT EXTRACT(YEAR FROM created_at) FROM users;
+```text
+ final_price
+-------------
+     1350.00
 ```
 
-## 검색 속도 올리기 (INDEX)
+같은 입력에 항상 같은 결과를 내고 DB를 읽지 않으므로 `IMMUTABLE`로 표시했습니다. 테이블을 조회하거나 현재 시각을 사용하는 함수를 잘못 `IMMUTABLE`로 선언하면 쿼리 최적화 과정에서 잘못된 결과가 재사용될 수 있습니다. 함수 변경도 애플리케이션 코드와 함께 마이그레이션으로 관리합니다.
 
-책의 목차처럼 인덱스를 만들어 WHERE 조건 등에 의한 색인 속도를 비약적으로 높입니다.
+## 날짜 타입과 시간대가 결과에 미치는 영향 이해하기
+
+`DATE`, `TIMESTAMP`, `TIMESTAMPTZ`는 의미가 다릅니다. 날짜만 필요한 생일에는 `DATE`, 세계의 한 순간을 저장하는 이벤트에는 보통 `TIMESTAMPTZ`가 맞습니다. 고정 입력으로 계산하면 함수의 효과를 재현하기 쉽습니다.
 
 ```sql
--- 유저네임 컬럼에 B-Tree 인덱스 생성
-CREATE INDEX idx_users_username ON users(username);
-
--- 쿼리가 인덱스를 타는지 실행계획 확인
-EXPLAIN ANALYZE SELECT * FROM users WHERE username = 'John';
+SELECT
+  DATE '2026-03-15' + INTERVAL '1 month' AS next_month,
+  DATE_TRUNC('month', TIMESTAMP '2026-03-15 14:30:00') AS month_start,
+  EXTRACT(YEAR FROM DATE '2026-03-15') AS year;
 ```
 
-## 전문 검색 (Full Text Search)
-
-LIKE %검색어% 로는 느린 긴 텍스트 검색을 더 빠르고 유연하게 구현합니다.
-
-```sql
--- 'apple' 이라는 단어가 포함된 텍스트 찾기
-SELECT * FROM articles
-WHERE to_tsvector('english', body) @@ to_tsquery('apple');
+```text
+     next_month      |     month_start     | year
+---------------------+---------------------+------
+ 2026-04-15 00:00:00 | 2026-03-01 00:00:00 | 2026
 ```
 
-## 안전한 거래 (TRANSACTION)
+`CURRENT_TIMESTAMP`는 트랜잭션 시작 시각을 반환하므로 같은 트랜잭션 안에서는 일정합니다. `TIMESTAMPTZ`의 표시값은 세션 시간대에 따라 달라질 수 있으므로 저장은 UTC 기준으로 해석하고 사용자 지역 시간 변환은 경계에서 명시합니다.
 
-여러 쿼리 작업이 모두 성공해야만 반영(COMMIT)하고, 중간에 실패하면 기존으로 되돌립니다(ROLLBACK). 돈 다룰 때 필수입니다.
+## 인덱스와 실행 계획을 함께 검증하기
+
+인덱스는 조건에 맞는 일부 행을 빠르게 찾는 대신 쓰기 비용과 저장 공간을 추가합니다. 실제 조회 조건과 정렬에 맞춰 만들고 `EXPLAIN (ANALYZE, BUFFERS)`로 운영과 비슷한 데이터 분포에서 확인합니다.
 
 ```sql
+CREATE UNIQUE INDEX idx_users_username ON users (username);
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, username
+FROM users
+WHERE username = 'alice';
+```
+
+충분히 큰 테이블에서 선택도가 높다면 계획에 다음과 같은 핵심 줄이 나타납니다. 비용·시간·버퍼 수치는 데이터와 서버마다 다릅니다.
+
+```text
+Index Scan using idx_users_username on users
+  Index Cond: (username = 'alice'::text)
+Planning Time: ... ms
+Execution Time: ... ms
+```
+
+작은 테이블에서는 전체를 읽는 `Seq Scan`이 더 싸다고 판단할 수 있으며 이는 오류가 아닙니다. 함수로 컬럼을 감싸거나 타입이 맞지 않으면 인덱스를 사용하지 못할 수 있고, 거의 모든 행을 반환하는 조건에는 인덱스 효과가 작습니다. 사용하지 않는 인덱스를 무작정 늘리지 않습니다.
+
+## 전문 검색 문서와 GIN 인덱스 구성하기
+
+`LIKE '%단어%'`는 앞부분이 고정되지 않아 일반 B-tree 인덱스를 활용하기 어렵습니다. PostgreSQL 전문 검색은 텍스트를 검색 토큰인 `tsvector`로 바꾸고 질의를 `tsquery`로 바꿔 형태가 변형된 단어도 찾을 수 있게 합니다.
+
+```sql
+ALTER TABLE articles
+ADD COLUMN search_document TSVECTOR
+GENERATED ALWAYS AS (
+  TO_TSVECTOR(
+    'simple',
+    COALESCE(title, '') || ' ' || COALESCE(body, '')
+  )
+) STORED;
+
+CREATE INDEX idx_articles_search
+ON articles USING GIN (search_document);
+
+SELECT title
+FROM articles
+WHERE search_document @@ PLAINTO_TSQUERY('simple', 'apple pie');
+```
+
+```text
+       title
+--------------------
+ Apple pie recipe
+```
+
+문서와 질의에 같은 텍스트 검색 구성을 써야 합니다. `plainto_tsquery`는 사용자가 입력한 일반 문장을 안전하게 검색식으로 바꾸며, `to_tsquery`는 `&`, `|` 같은 문법을 직접 다룰 때 사용합니다. 한국어처럼 기본 분석기가 충분하지 않은 언어는 별도의 형태소 분석 전략을 평가해야 합니다.
+
+## 트랜잭션으로 송금의 원자성 지키기
+
+트랜잭션은 여러 변경을 하나의 성공·실패 단위로 묶습니다. 다음 예제는 계좌 1의 잔액이 500, 계좌 2의 잔액이 200인 상태에서 100을 옮깁니다. 음수 잔액을 막는 제약도 함께 둡니다.
+
+```sql
+ALTER TABLE accounts
+ADD CONSTRAINT accounts_balance_nonnegative CHECK (balance >= 0);
+
 BEGIN;
 
-UPDATE accounts SET balance = balance - 100 WHERE id = 1; -- 출금
-UPDATE accounts SET balance = balance + 100 WHERE id = 2; -- 입금
+SELECT id, balance
+FROM accounts
+WHERE id IN (1, 2)
+ORDER BY id
+FOR UPDATE;
 
-COMMIT; -- 모두 문제없으면 확정
--- 문제가 생겼을경우 ROLLBACK;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+
+COMMIT;
+
+SELECT id, balance FROM accounts WHERE id IN (1, 2) ORDER BY id;
 ```
 
-## 자동화 (TRIGGER)
+```text
+ id | balance
+----+---------
+  1 |  400.00
+  2 |  300.00
+```
 
-특정 테이블에 데이터 변경(INSERT, UPDATE, DELETE)이 생길 때, 자동으로 미리 지정된 함수를 실행합니다.
+`FOR UPDATE`는 두 행을 잠가 동시에 실행되는 송금이 오래된 잔액을 기준으로 계산하지 않게 합니다. 잔액 제약이나 UPDATE 중 하나가 실패하면 트랜잭션은 실패 상태가 되고 `ROLLBACK`해야 합니다. 애플리케이션은 교착 상태나 직렬화 실패처럼 재시도 가능한 오류를 제한된 횟수로 처리해야 합니다.
+
+## 트리거의 숨은 실행 흐름을 테스트하기
+
+트리거는 INSERT·UPDATE·DELETE 전후에 함수를 자동 실행합니다. 감사 필드처럼 모든 쓰기 경로에서 반드시 적용할 규칙에는 유용하지만, 호출 코드에서 보이지 않으므로 이름과 테스트를 명확히 해야 합니다.
 
 ```sql
-CREATE TRIGGER update_modified_time
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER users_set_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
+
+UPDATE users
+SET username = 'alice-updated'
+WHERE id = 1
+RETURNING id, username, updated_at;
 ```
+
+```text
+ id |    username     |          updated_at
+----+-----------------+-------------------------------
+  1 | alice-updated   | 2026-07-13 10:15:32.412+09
+```
+
+`updated_at`은 UPDATE 문에 직접 넣지 않았지만 트리거가 채웁니다. 시각은 실행마다 달라집니다. 대량 변경에서는 트리거도 행마다 실행되므로 비용을 측정하고, 트리거 함수와 트리거 자체를 삭제하는 downgrade 순서까지 마이그레이션에 작성합니다.

@@ -4,24 +4,28 @@ title: "Part 1. 기초: 연결과 기본 쿼리"
 
 ## SQLAlchemy란?
 
-SQLAlchemy는 파이썬에서 가장 안정적이고 널리 쓰이는 ORM(Object Relational Mapping) 도구입니다. 데이터베이스 테이블을 파이썬 클래스로 매핑하고, 파이썬 객체를 통해 데이터를 조작할 수 있게 해줍니다. 원시 SQL을 직접 작성할 때 발생하는 의존성, 재사용성 문제를 해결하며, 쿼리 결과를 편리한 객체 형태로 관리하기 때문에 강력한 데이터 접근 추상화를 제공합니다. 장기적인 유지보수가 중요한 상용 제품 서비스에 필수로 적용되는 기술입니다.
+SQLAlchemy는 SQL을 구성하는 Core와 테이블을 Python 클래스로 매핑하는 ORM을 제공하는 데이터 접근 도구입니다. ORM은 SQL을 없애는 기술이 아니라 객체 변경을 INSERT·UPDATE로 변환하고 결과 행을 객체로 조립하는 계층입니다. 생성되는 SQL과 트랜잭션 경계를 이해해야 성능 문제와 예상하지 못한 쓰기를 찾을 수 있습니다.
 
 ## 엔진 및 세션 (Engine & Session)
 
 데이터베이스 통신을 담당하는 Engine과 쿼리를 실행하는 Session을 설정합니다.
 
 ```python
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-# 데이터베이스 연결 주소 설정 (echo=True는 실행 SQL 출력)
-engine = create_engine('postgresql://user:password@localhost/mydb', echo=True)
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
+engine = create_engine(database_url, echo=False)
 
 # 세션 컨텍스트 매니저를 통해 안전하게 연결
 with Session(engine) as session:
     # 데이터베이스 작업 수행
     pass
 ```
+
+로컬 기본값은 바로 실행 가능한 SQLite 파일이고, 운영에서는 `DATABASE_URL`로 PostgreSQL 같은 실제 연결을 주입합니다. 비밀번호가 든 URL을 코드에 커밋하지 않습니다. `echo=True`는 학습 중 SQL을 확인하는 데 유용하지만 바인딩 값에 민감 정보가 포함될 수 있어 운영 로그에서는 주의합니다.
 
 ## 테이블 모델 선언 (Declarative Base)
 
@@ -39,11 +43,13 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(30), nullable=False)
-    age: Mapped[int | None] # Optional field
+    age: Mapped[int | None] = mapped_column(nullable=True)
 
 # DB에 테이블 생성 (개발 환경에서 주로 사용)
 Base.metadata.create_all(engine)
 ```
+
+`create_all()`은 아직 없는 테이블을 만들지만 기존 컬럼의 이름·타입을 변경하지 않습니다. 학습과 짧은 테스트에는 편리하고, 운영 스키마 변경에는 Alembic 리비전을 사용합니다.
 
 ## 데이터 생성 (Insert & Bulk Insert)
 
@@ -52,18 +58,28 @@ Base.metadata.create_all(engine)
 ```python
 with Session(engine) as session:
     # 단일 객체 추가
-    user1 = User(name="Alice", age=25)
+    user1 = User(name='Alice', age=25)
     session.add(user1)
 
     # 여러 객체 일괄 추가
     users = [
-        User(name="Bob", age=30),
-        User(name="Charlie", age=35)
+        User(name='Bob', age=30),
+        User(name='Charlie', age=35),
     ]
     session.add_all(users)
 
-    session.commit() # 트랜잭션 확정
+    session.commit()  # 트랜잭션 확정
+    session.refresh(user1)
+    print(user1.id, user1.name)
 ```
+
+새 DB에서 처음 실행했다면 DB가 만든 기본 키가 객체에 반영됩니다.
+
+```text
+1 Alice
+```
+
+`add_all()`은 한 트랜잭션에 객체를 추가하지만 반드시 하나의 SQL 문으로 합쳐진다는 뜻은 아닙니다. 중간에 하나라도 실패하면 `rollback()`하고 실패 원인을 처리한 뒤 새 트랜잭션을 시작합니다.
 
 ## 기본 데이터 조회 (Select, Where, Order By)
 
@@ -82,3 +98,11 @@ with Session(engine) as session:
     for u in users:
         print(u.name, u.age)
 ```
+
+```text
+Charlie 35
+Bob 30
+Alice 25
+```
+
+`scalars()`는 `select(User)` 결과에서 ORM 객체 열만 꺼냅니다. 결과 전체가 필요하지 않다면 `.all()`로 모두 메모리에 올리지 말고 페이지네이션이나 스트리밍을 검토합니다.
