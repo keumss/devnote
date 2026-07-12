@@ -119,14 +119,14 @@ export default function NotePage() {
               </div>
               
               {/* Note navigation */}
-              <div className="mt-16 pt-8 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
+              <div className="mt-16 grid grid-cols-1 gap-3 border-t border-slate-200 pt-8 dark:border-slate-800 sm:grid-cols-2 sm:gap-4">
                 {prevNoteInfo ? (
                   <NavigationButton 
                     direction="prev"
                     info={prevNoteInfo}
                     onClick={() => navigate(getNotePath(prevNoteInfo.sectionId, prevNoteInfo.note.id))}
                   />
-                ) : <div />}
+                ) : null}
                 
                 {nextNoteInfo ? (
                   <NavigationButton 
@@ -134,7 +134,7 @@ export default function NotePage() {
                     info={nextNoteInfo}
                     onClick={() => navigate(getNotePath(nextNoteInfo.sectionId, nextNoteInfo.note.id))}
                   />
-                ) : <div />}
+                ) : null}
               </div>
 
               {/* Navigation Footer */}

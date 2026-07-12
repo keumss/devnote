@@ -1,4 +1,5 @@
 import { ChevronRight, ChevronLeft } from 'lucide-react';
+import { motion } from 'motion/react';
 import type { Note } from '../content';
 
 type NoteInfo = {
@@ -15,28 +16,32 @@ interface NavigationButtonProps {
 
 export default function NavigationButton({ direction, info, onClick }: NavigationButtonProps) {
   const isPrev = direction === 'prev';
-  
+
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onClick}
-      className={`group relative flex flex-col ${isPrev ? 'items-start text-left' : 'items-end text-right'} max-w-[45%]`}
+      aria-label={`${isPrev ? '이전' : '다음'} 노트로 이동: ${info.note.title}`}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.99 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 26 }}
+      className={`group flex min-h-32 w-full flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-4 outline-none transition-[border-color,background-color,box-shadow,color] duration-200 hover:border-indigo-300 hover:bg-indigo-50/70 hover:shadow-md focus-visible:border-indigo-500 focus-visible:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-slate-800 dark:bg-slate-900/40 dark:hover:border-indigo-400/60 dark:hover:bg-indigo-500/10 dark:hover:shadow-indigo-950/20 dark:focus-visible:border-indigo-400 dark:focus-visible:bg-indigo-500/10 dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-slate-950 ${
+        isPrev
+          ? 'items-start text-left sm:justify-self-start'
+          : 'items-end text-right sm:col-start-2 sm:justify-self-end'
+      }`}
     >
-      <span className="text-base sm:text-lg font-semibold text-slate-600 dark:text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors flex items-center gap-1 sm:gap-2 py-2">
-        {isPrev && <ChevronLeft size={22} className="transition-transform group-hover:-translate-x-1" />}
+      <span className="flex items-center gap-1.5 text-xs font-bold tracking-[0.14em] text-slate-500 transition-colors duration-200 group-hover:text-indigo-700 group-focus-visible:text-indigo-700 dark:text-slate-400 dark:group-hover:text-indigo-300 dark:group-focus-visible:text-indigo-300">
+        {isPrev && <ChevronLeft size={16} strokeWidth={2.5} className="transition-transform duration-200 group-hover:-translate-x-1 group-focus-visible:-translate-x-1" />}
         {isPrev ? '이전' : '다음'}
-        {!isPrev && <ChevronRight size={22} className="transition-transform group-hover:translate-x-1" />}
+        {!isPrev && <ChevronRight size={16} strokeWidth={2.5} className="transition-transform duration-200 group-hover:translate-x-1 group-focus-visible:translate-x-1" />}
       </span>
-      {/* Tooltip for desktop */}
-      <div className={`absolute bottom-full ${isPrev ? 'left-0' : 'right-0'} mb-1 opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none bg-slate-800 dark:bg-white text-white dark:text-slate-900 text-sm font-medium rounded-lg px-4 py-2 whitespace-nowrap z-10 shadow-lg transform translate-y-1 group-hover:translate-y-0 hidden sm:block`}>
-        <div className={`text-xs text-slate-400 dark:text-slate-500 mb-0.5 font-normal ${!isPrev && 'text-right'}`}>{info.sectionTitle}</div>
-        <div>{info.note.title}</div>
+      <div className="mt-5 w-full">
+        <span className="block text-xs font-semibold text-slate-400 dark:text-slate-500">{info.sectionTitle}</span>
+        <span className="mt-1.5 block text-sm font-bold leading-snug text-slate-800 transition-colors duration-200 group-hover:text-indigo-800 group-focus-visible:text-indigo-800 dark:text-slate-100 dark:group-hover:text-indigo-200 dark:group-focus-visible:text-indigo-200 sm:text-base">
+          {info.note.title}
+        </span>
       </div>
-      {/* Always visible title for mobile */}
-      <div className={`text-sm text-slate-500 dark:text-slate-400 truncate w-full sm:hidden mt-1 ${!isPrev && 'text-right'}`}>
-        <span className="block text-[11px] text-slate-400 dark:text-slate-500 mb-0.5">{info.sectionTitle}</span>
-        <span className="block truncate">{info.note.title}</span>
-      </div>
-    </button>
+    </motion.button>
   );
 }
