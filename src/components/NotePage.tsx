@@ -46,7 +46,7 @@ const allNotes = navData.flatMap(section => (
   }))
 ));
 
-export default function CourseViewer() {
+export default function NotePage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { sectionId: paramSectionId, noteId: paramNoteId } = useParams();

@@ -2,7 +2,7 @@ import React, { Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 
 const IndexPage = React.lazy(() => import('./components/IndexPage'));
-const CourseViewer = React.lazy(() => import('./components/CourseViewer'));
+const NotePage = React.lazy(() => import('./components/NotePage'));
 
 // Simple loading fallback
 const PageLoader = () => (
@@ -16,7 +16,7 @@ export default function App() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/" element={<IndexPage />} />
-        <Route path="/:sectionId/:noteId" element={<CourseViewer />} />
+        <Route path="/:sectionId/:noteId" element={<NotePage />} />
         {/* Catch-all route */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
