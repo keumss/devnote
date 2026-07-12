@@ -1,4 +1,4 @@
-import { BookOpenText, Github, Moon, Sun, Search, Menu } from 'lucide-react';
+import { BookOpenText, Moon, Sun, Search, Menu } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 interface HeaderProps {
@@ -44,7 +44,7 @@ export default function Header({
               <h1 className="text-[1.15rem] font-bold tracking-[-0.04em] text-slate-950 dark:text-white">
                 Dev<span className="text-indigo-600 dark:text-indigo-400">Note</span>
               </h1>
-              <p className="mt-1.5 text-[10px] font-semibold tracking-[0.08em] text-slate-500 dark:text-slate-400">
+              <p className="mt-1.5 text-[10px] font-semibold tracking-[0.14em] text-slate-500 dark:text-slate-400">
                 개발 학습 노트
               </p>
             </div>
@@ -68,26 +68,15 @@ export default function Header({
            </button>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0">
-          <a
-            href="https://github.com/keumss/devnote"
-            target="_blank"
-            rel="noreferrer"
-            className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-            aria-label="DevNote GitHub 저장소 열기"
-          >
-            <Github size={18} strokeWidth={2.25} />
-          </a>
-          <button
-            type="button"
-            onClick={toggleDark}
-            className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
-            aria-label={isDark ? '라이트 모드 사용' : '다크 모드 사용'}
-            aria-pressed={isDark}
-          >
-            {isDark ? <Sun size={18} strokeWidth={2.5} /> : <Moon size={18} strokeWidth={2.5} />}
-          </button>
-        </div>
+        <button 
+          type="button"
+          onClick={toggleDark}
+          className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shrink-0"
+          aria-label={isDark ? '라이트 모드 사용' : '다크 모드 사용'}
+          aria-pressed={isDark}
+        >
+          {isDark ? <Sun size={18} strokeWidth={2.5} /> : <Moon size={18} strokeWidth={2.5} />}
+        </button>
       </div>
     </header>
   );
