@@ -10,6 +10,7 @@ title: "Part 3. 고급: 전파, 컨텍스트, 성능과 동시성"
 import logging
 
 root = logging.getLogger()
+root.setLevel(logging.INFO)
 root.addHandler(logging.StreamHandler())
 
 checkout_logger = logging.getLogger('shop.checkout')
@@ -65,7 +66,7 @@ logger.addHandler(handler)
 
 ## 큐로 느린 출력 작업을 분리하기
 
-표준 핸들러는 스레드에서 안전하게 동작하도록 잠금을 사용하지만, 파일·네트워크 출력이 요청 처리를 지연시킬 수 있습니다. `QueueHandler`는 레코드를 큐에 넣고, 별도 스레드의 `QueueListener`가 실제 핸들러로 전달하게 하여 요청 경로를 가볍게 합니다.
+표준 핸들러는 스레드에서 안전하게 동작하도록 잠금을 사용하지만, 파일·네트워크 출력이 요청 처리를 지연시킬 수 있습니다. `QueueHandler`는 레코드를 큐에 넣고, 별도 스레드의 `QueueListener`가 실제 핸들러로 전달하게 하여 요청 경로를 가볍게 합니다. Python 3.12에서는 리스너의 시작과 종료를 `start()`와 `stop()`으로 직접 관리합니다.
 
 ```python
 import logging
@@ -86,5 +87,4 @@ finally:
     listener.stop()  # 종료 전에 큐에 남은 로그를 비웁니다.
 ```
 
-비동기화는 로그 유실·종료 순서·큐 포화 전략까지 함께 설계해야 합니다. 특히 다중 프로세스 환경은 프로세스 간에 공유 가능한 큐와 별도 리스너 프로세스를 사용합니다.
-
+Python 3.14에서 추가된 `with QueueListener(...)` 문법은 Python 3.12에서 사용할 수 없습니다. 3.12에서는 위처럼 `try`/`finally`에서 `stop()`을 반드시 호출합니다. 비동기화는 로그 유실·종료 순서·큐 포화 전략까지 함께 설계해야 합니다. 특히 다중 프로세스 환경은 `queue.SimpleQueue` 대신 `multiprocessing.Queue`와 별도 리스너 프로세스를 사용합니다.
