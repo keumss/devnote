@@ -1,8 +1,8 @@
 import Fuse from 'fuse.js';
 import {
-  getContentLocation,
+  getNoteLocation,
   navData,
-  type CheatSheetItem,
+  type Topic,
   type SearchResult,
   type StructuredData,
 } from './content';
@@ -18,7 +18,7 @@ const contentStructuredData = import.meta.glob<StructuredData>(
   },
 );
 
-function getItems(filePath: string, structuredData: StructuredData): CheatSheetItem[] {
+function getTopics(filePath: string, structuredData: StructuredData): Topic[] {
   if (!Array.isArray(structuredData?.headings) || !Array.isArray(structuredData.contents)) {
     throw new Error(`Structured search data is invalid for ${filePath}.`);
   }
@@ -54,41 +54,41 @@ function getItems(filePath: string, structuredData: StructuredData): CheatSheetI
     });
 }
 
-const categoryMetadata = new Map(
+const noteMetadata = new Map(
   navData.flatMap(section => (
-    section.categories.map(category => [
-      `${section.id}/${category.id}`,
-      { section, category },
+    section.notes.map(note => [
+      `${section.id}/${note.id}`,
+      { section, note },
     ] as const)
   )),
 );
 
 const searchDocuments: SearchResult[] = [];
 for (const [filePath, structuredData] of Object.entries(contentStructuredData)) {
-  const { sectionId, documentId } = getContentLocation(filePath);
-  const metadata = categoryMetadata.get(`${sectionId}/${documentId}`);
+  const { sectionId, noteId } = getNoteLocation(filePath);
+  const metadata = noteMetadata.get(`${sectionId}/${noteId}`);
   if (!metadata) {
     throw new Error(`Search metadata is missing for ${filePath}.`);
   }
 
-  for (const item of getItems(filePath, structuredData)) {
+  for (const topic of getTopics(filePath, structuredData)) {
     searchDocuments.push({
       sectionId,
       sectionTitle: metadata.section.title,
-      categoryId: documentId,
-      categoryTitle: metadata.category.displayTitle,
-      item,
+      noteId,
+      noteTitle: metadata.note.displayTitle,
+      topic,
     });
   }
 }
 
 const searchIndex = new Fuse<SearchResult>(searchDocuments, {
   keys: [
-    { name: 'item.title', weight: 0.4 },
-    { name: 'categoryTitle', weight: 0.2 },
+    { name: 'topic.title', weight: 0.4 },
+    { name: 'noteTitle', weight: 0.2 },
     { name: 'sectionTitle', weight: 0.15 },
-    { name: 'item.description', weight: 0.15 },
-    { name: 'item.content', weight: 0.1 },
+    { name: 'topic.description', weight: 0.15 },
+    { name: 'topic.content', weight: 0.1 },
   ],
   threshold: 0.35,
   ignoreLocation: true,

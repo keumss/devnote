@@ -7,7 +7,7 @@ function Heading({ children, className, ...props }: ComponentProps<'h2'>) {
   return (
     <h2
       {...props}
-      className={`lesson-heading scroll-mt-24 text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 ${className ?? ''}`}
+      className={`topic-heading scroll-mt-24 text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 ${className ?? ''}`}
     >
       {children}
     </h2>

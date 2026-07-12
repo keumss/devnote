@@ -38,7 +38,7 @@ export default function Header({
             </div>
             <div className="hidden sm:block text-left">
               <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">DevNote</h1>
-              <p className="text-[10px] uppercase tracking-wider font-semibold text-indigo-600 dark:text-indigo-400 leading-tight">Knowledge Base</p>
+              <p className="text-[10px] tracking-wider font-semibold text-indigo-600 dark:text-indigo-400 leading-tight">개발 학습 노트</p>
             </div>
           </Link>
         </div>

@@ -7,9 +7,9 @@ import { navData } from '../content';
 import { mdxComponents } from './MdxContent';
 import { BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCategoryPath, getHashTarget, resolveCategory } from '../navigation';
+import { getNotePath, getHashTarget, resolveNote } from '../navigation';
 
-function ScrollToContent({ hash, navigationKey }: { hash: string; navigationKey: string }) {
+function ScrollToTopic({ hash, navigationKey }: { hash: string; navigationKey: string }) {
   useEffect(() => {
     const targetId = getHashTarget(hash);
     if (!targetId) {
@@ -28,9 +28,9 @@ function ScrollToContent({ hash, navigationKey }: { hash: string; navigationKey:
   return null;
 }
 
-function ContentLoader() {
+function NoteLoader() {
   return (
-    <div className="space-y-4 py-4" role="status" aria-label="문서 불러오는 중">
+    <div className="space-y-4 py-4" role="status" aria-label="노트 불러오는 중">
       <div className="h-7 w-2/3 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
       <div className="h-4 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
       <div className="h-4 w-5/6 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
@@ -38,46 +38,46 @@ function ContentLoader() {
   );
 }
 
-const allCategories = navData.flatMap(section => (
-  section.categories.map(category => ({
+const allNotes = navData.flatMap(section => (
+  section.notes.map(note => ({
     sectionId: section.id,
     sectionTitle: section.title,
-    category,
+    note,
   }))
 ));
 
 export default function CourseViewer() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { sectionId: paramSectionId, categoryId: paramCategoryId } = useParams();
+  const { sectionId: paramSectionId, noteId: paramNoteId } = useParams();
 
-  const resolvedCategory = resolveCategory(navData, paramSectionId, paramCategoryId);
-  if (!resolvedCategory) {
+  const resolvedNote = resolveNote(navData, paramSectionId, paramNoteId);
+  if (!resolvedNote) {
     return <Navigate to="/" replace />;
   }
 
-  const { section: activeSection, category: activeCategory, isExact } = resolvedCategory;
+  const { section: activeSection, note: activeNote, isExact } = resolvedNote;
   
   const activeSectionId = activeSection.id;
-  const activeCategoryId = activeCategory.id;
+  const activeNoteId = activeNote.id;
 
-  const currentCategoryIndex = allCategories.findIndex(categoryInfo => (
-    categoryInfo.sectionId === activeSectionId && categoryInfo.category.id === activeCategoryId
+  const currentNoteIndex = allNotes.findIndex(noteInfo => (
+    noteInfo.sectionId === activeSectionId && noteInfo.note.id === activeNoteId
   ));
-  const prevCategoryInfo = currentCategoryIndex > 0 ? allCategories[currentCategoryIndex - 1] : null;
-  const nextCategoryInfo = currentCategoryIndex < allCategories.length - 1 ? allCategories[currentCategoryIndex + 1] : null;
+  const prevNoteInfo = currentNoteIndex > 0 ? allNotes[currentNoteIndex - 1] : null;
+  const nextNoteInfo = currentNoteIndex < allNotes.length - 1 ? allNotes[currentNoteIndex + 1] : null;
 
   if (!isExact) {
     return (
       <Navigate
-        to={getCategoryPath(activeSectionId, activeCategoryId)}
+        to={getNotePath(activeSectionId, activeNoteId)}
         replace
       />
     );
   }
 
   return (
-    <Layout activeSectionId={activeSectionId} activeCategoryId={activeCategoryId}>
+    <Layout activeSectionId={activeSectionId} activeNoteId={activeNoteId}>
       <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-sm bg-white dark:bg-[#090b10] transition-colors duration-200">
         
         {/* Desktop Left Sidebar Navigation */}
@@ -85,17 +85,17 @@ export default function CourseViewer() {
           <div className="sticky top-16 pt-8 px-6 pb-12 max-h-[calc(100vh-4rem)] overflow-y-auto custom-scrollbar">
             <div className="flex items-center gap-2 mb-6 px-1 text-slate-800 dark:text-slate-200 font-semibold text-sm uppercase tracking-wider">
               <BookOpen size={16} />
-              <span>Curriculum</span>
+              <span>학습 노트</span>
             </div>
-            <SidebarNav activeSectionId={activeSectionId} activeCategoryId={activeCategoryId} />
+            <SidebarNav activeSectionId={activeSectionId} activeNoteId={activeNoteId} />
           </div>
         </aside>
 
-        {/* Main Learning Content Area */}
+        {/* Main note content */}
         <main className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div 
-              key={activeCategory.id}
+              key={activeNote.id}
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
@@ -107,39 +107,39 @@ export default function CourseViewer() {
                   {activeSection.title}
                 </span>
                 <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-50 tracking-tight leading-tight">
-                  {activeCategory.title}
+                  {activeNote.title}
                 </h2>
               </div>
 
-              <div className="lesson-content">
-                <Suspense fallback={<ContentLoader />}>
-                  <activeCategory.Content components={mdxComponents} />
-                  <ScrollToContent hash={location.hash} navigationKey={location.key} />
+              <div className="note-content">
+                <Suspense fallback={<NoteLoader />}>
+                  <activeNote.Component components={mdxComponents} />
+                  <ScrollToTopic hash={location.hash} navigationKey={location.key} />
                 </Suspense>
               </div>
               
-              {/* Page Navigation */}
+              {/* Note navigation */}
               <div className="mt-16 pt-8 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center">
-                {prevCategoryInfo ? (
+                {prevNoteInfo ? (
                   <NavigationButton 
                     direction="prev"
-                    info={prevCategoryInfo}
-                    onClick={() => navigate(getCategoryPath(prevCategoryInfo.sectionId, prevCategoryInfo.category.id))}
+                    info={prevNoteInfo}
+                    onClick={() => navigate(getNotePath(prevNoteInfo.sectionId, prevNoteInfo.note.id))}
                   />
                 ) : <div />}
                 
-                {nextCategoryInfo ? (
+                {nextNoteInfo ? (
                   <NavigationButton 
                     direction="next"
-                    info={nextCategoryInfo}
-                    onClick={() => navigate(getCategoryPath(nextCategoryInfo.sectionId, nextCategoryInfo.category.id))}
+                    info={nextNoteInfo}
+                    onClick={() => navigate(getNotePath(nextNoteInfo.sectionId, nextNoteInfo.note.id))}
                   />
                 ) : <div />}
               </div>
 
               {/* Navigation Footer */}
               <div className="mt-16 pt-8 flex justify-center items-center text-sm text-slate-400 dark:text-slate-500 pb-8">
-                 <p>© DevNote - Knowledge Base</p>
+                 <p>© DevNote · 개발 학습 노트</p>
               </div>
             </motion.div>
           </AnimatePresence>

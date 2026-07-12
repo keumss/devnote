@@ -16,11 +16,10 @@ export default function App() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/" element={<IndexPage />} />
-        <Route path="/:sectionId/:categoryId" element={<CourseViewer />} />
+        <Route path="/:sectionId/:noteId" element={<CourseViewer />} />
         {/* Catch-all route */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   );
 }
-

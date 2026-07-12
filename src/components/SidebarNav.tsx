@@ -1,22 +1,22 @@
 import { useState, useEffect, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { navData, type CheatSheetCategory, type NavSection } from '../content';
+import { navData, type Note, type Section } from '../content';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getCategoryPath } from '../navigation';
+import { getNotePath } from '../navigation';
 
 interface SidebarNavProps {
   activeSectionId?: string;
-  activeCategoryId?: string;
+  activeNoteId?: string;
   onNavigate?: () => void;
 }
 
-const NavCategoryItem = memo(({ 
-  category, 
+const NavNoteItem = memo(({
+  note,
   isActive, 
   onClick 
 }: { 
-  category: CheatSheetCategory,
+  note: Note,
   isActive: boolean, 
   onClick: () => void 
 }) => {
@@ -37,7 +37,7 @@ const NavCategoryItem = memo(({
           />
         )}
         <span className={`text-sm leading-snug relative z-10 transition-all duration-200`}>
-          {category.displayTitle}
+          {note.displayTitle}
         </span>
         {isActive && (
           <ChevronRight size={14} className="text-indigo-500 min-w-4 relative z-10" />
@@ -50,13 +50,13 @@ const NavCategoryItem = memo(({
 const NavSectionItem = memo(({ 
   section, 
   isExpanded, 
-  activeCategoryId, 
+  activeNoteId,
   onToggle, 
   onNavigate 
 }: { 
-  section: NavSection,
+  section: Section,
   isExpanded: boolean, 
-  activeCategoryId?: string, 
+  activeNoteId?: string,
   onToggle: () => void, 
   onNavigate?: () => void 
 }) => {
@@ -86,13 +86,13 @@ const NavSectionItem = memo(({
             className="overflow-hidden"
           >
             <ul className="space-y-1 pb-2">
-              {section.categories.map((category) => (
-                <NavCategoryItem
-                  key={category.id}
-                  category={category}
-                  isActive={activeCategoryId === category.id}
+              {section.notes.map((note) => (
+                <NavNoteItem
+                  key={note.id}
+                  note={note}
+                  isActive={activeNoteId === note.id}
                   onClick={() => {
-                    navigate(getCategoryPath(section.id, category.id));
+                    navigate(getNotePath(section.id, note.id));
                     if (onNavigate) onNavigate();
                   }}
                 />
@@ -105,7 +105,7 @@ const NavSectionItem = memo(({
   );
 });
 
-export default function SidebarNav({ activeSectionId, activeCategoryId, onNavigate }: SidebarNavProps) {
+export default function SidebarNav({ activeSectionId, activeNoteId, onNavigate }: SidebarNavProps) {
   const [expandedSectionId, setExpandedSectionId] = useState<string | null>(activeSectionId || null);
 
   useEffect(() => {
@@ -121,7 +121,7 @@ export default function SidebarNav({ activeSectionId, activeCategoryId, onNaviga
           key={section.id}
           section={section}
           isExpanded={expandedSectionId === section.id}
-          activeCategoryId={activeCategoryId}
+          activeNoteId={activeNoteId}
           onToggle={() => {
             setExpandedSectionId(prev => prev === section.id ? null : section.id);
           }}

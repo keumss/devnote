@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { searchContent } from '../search';
 
 export function useSearch(
-  onSelectResult: (sectionId: string, categoryId: string, itemId: string) => void,
+  onSelectResult: (sectionId: string, noteId: string, topicId: string) => void,
   onBeforeOpen?: () => void,
 ) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,8 +26,8 @@ export function useSearch(
     return searchContent(normalizedQuery);
   }, [searchQuery]);
 
-  const handleSelectSearchResult = useCallback((sectionId: string, categoryId: string, itemId: string) => {
-    onSelectResult(sectionId, categoryId, itemId);
+  const handleSelectSearchResult = useCallback((sectionId: string, noteId: string, topicId: string) => {
+    onSelectResult(sectionId, noteId, topicId);
     setIsSearchModalOpen(false);
     setSearchQuery('');
   }, [onSelectResult]);

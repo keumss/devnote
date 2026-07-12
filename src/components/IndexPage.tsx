@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { BookOpen, ChevronRight } from 'lucide-react';
 import { motion } from 'motion/react';
 import Layout from './Layout';
-import { getCategoryPath } from '../navigation';
+import { getNotePath } from '../navigation';
 
 export default function IndexPage() {
   useEffect(() => {
@@ -27,10 +27,10 @@ export default function IndexPage() {
                 <BookOpen className="w-5 h-5" strokeWidth={2.5} />
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight mb-3">
-                Knowledge Directory
+                학습 노트 목록
               </h1>
               <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-xl mx-auto">
-                Explore the complete index of topics, cheat sheets, and guidelines. Select a category below to dive in.
+                섹션별 학습 노트와 노트 안의 주제를 탐색하세요.
               </p>
             </motion.div>
           </div>
@@ -51,19 +51,19 @@ export default function IndexPage() {
                       {section.title}
                     </h2>
                     <span className="flex-shrink-0 ml-3 inline-flex items-center justify-center h-5 px-2 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                      {section.categories.length}
+                      {section.notes.length}
                     </span>
                   </div>
                   
                   <div className="flex flex-col gap-1">
-                    {section.categories.map((category) => (
+                    {section.notes.map((note) => (
                       <Link
-                        key={category.id}
-                        to={getCategoryPath(section.id, category.id)}
+                        key={note.id}
+                        to={getNotePath(section.id, note.id)}
                         className="group flex items-center justify-between py-2.5 px-3 -mx-3 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
                       >
                         <span className="text-sm font-medium text-slate-600 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors line-clamp-1">
-                          {category.displayTitle}
+                          {note.displayTitle}
                         </span>
                         <ChevronRight className="w-3.5 h-3.5 text-slate-300 dark:text-slate-600 group-hover:text-indigo-500 transition-transform group-hover:translate-x-0.5 shrink-0 ml-2 opacity-0 group-hover:opacity-100" />
                       </Link>

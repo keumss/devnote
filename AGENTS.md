@@ -4,7 +4,7 @@
 
 DevNote is a static React 19 and TypeScript application built with Vite. Code lives in `src/`. `src/main.tsx` initializes hash-based routing, while `src/App.tsx` defines routes. Reusable UI belongs in `src/components/`, hooks in `src/hooks/`, and the Fumadocs-backed content loader in `src/content.ts`. Global styles live in `src/index.css`; root configuration controls the build.
 
-Curriculum content lives in category-level Markdown/MDX files under `content/<section>/`. A document's parent directory determines its section, its frontmatter defines the page title, and filenames determine natural numeric page order. Each section's `meta.json` defines its display title, while `content/meta.json` defines section order. `source.config.ts` configures Fumadocs MDX and validates its standard page and meta schemas. The generated `.source/` directory is build output and must not be committed.
+Learning notes live as Markdown/MDX files under `content/<section>/`. A section is a technology-level folder, a note is one MDX file, and a topic is a level-two (`##`) heading within a note. A note's parent directory determines its section, its frontmatter defines the note title, and filenames determine natural numeric note order. Each section's `meta.json` defines its display title, while `content/meta.json` defines section order. The `pages` field in that file is a Fumadocs schema field and is the sole exception to this vocabulary. Use “page” only for an application screen or route. `source.config.ts` configures Fumadocs MDX and validates its standard page and meta schemas. The generated `.source/` directory is build output and must not be committed.
 
 There is no test or public asset directory. Add colocated tests as `ComponentName.test.tsx` or broader tests under `src/__tests__/`. Put future static assets in `public/`.
 
@@ -24,7 +24,7 @@ Before submitting changes, run `npm run lint && npm test && npm run build`.
 
 Use TypeScript, ES modules, React function components, and two-space indentation. Follow the existing semicolon and single-quote style. Name component files in PascalCase (`SearchModal.tsx`), hooks in camelCase with a `use` prefix (`useDarkMode.ts`), and variables/functions in camelCase. Move reusable stateful logic into hooks. Preserve existing Tailwind and dark-mode patterns.
 
-For curriculum changes, add or edit `.md`/`.mdx` files instead of embedding content in TypeScript. Keep page frontmatter limited to page-specific metadata such as `title`; do not repeat section or ordering data in documents. Use level-two headings (`##`) for searchable learning items and fenced code blocks with a language identifier. Navigation and search data are generated from filenames and metadata files, so do not maintain a separate content index.
+For learning-note changes, add or edit `.md`/`.mdx` files instead of embedding content in TypeScript. Keep note frontmatter limited to note-specific metadata such as `title`; do not repeat section or ordering data in notes. Use level-two headings (`##`) for searchable topics and fenced code blocks with a language identifier. Navigation and search data are generated from filenames and metadata files, so do not maintain a separate content index.
 
 No automatic formatter or ESLint configuration is present. Keep diffs focused and use `npm run lint` as the required static check.
 

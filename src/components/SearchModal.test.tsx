@@ -5,9 +5,9 @@ import SearchModal from './SearchModal';
 const searchResults = [{
   sectionId: 'sql',
   sectionTitle: 'SQL',
-  categoryId: 'sql-part1',
-  categoryTitle: 'Part 1: 기초',
-  item: {
+  noteId: 'sql-part1',
+  noteTitle: 'Part 1: 기초',
+  topic: {
     id: 'select',
     title: 'SELECT',
     description: '데이터 조회',

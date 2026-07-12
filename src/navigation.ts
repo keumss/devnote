@@ -1,9 +1,9 @@
-export function getCategoryPath(sectionId: string, categoryId: string) {
-  return `/${encodeURIComponent(sectionId)}/${encodeURIComponent(categoryId)}`;
+export function getNotePath(sectionId: string, noteId: string) {
+  return `/${encodeURIComponent(sectionId)}/${encodeURIComponent(noteId)}`;
 }
 
-export function getItemHash(itemId: string) {
-  return `#${encodeURIComponent(itemId)}`;
+export function getTopicHash(topicId: string) {
+  return `#${encodeURIComponent(topicId)}`;
 }
 
 export function getHashTarget(hash: string) {
@@ -19,37 +19,37 @@ export function getHashTarget(hash: string) {
   }
 }
 
-interface NavigableCategory {
+interface NavigableNote {
   id: string;
 }
 
 interface NavigableSection {
   id: string;
-  categories: readonly NavigableCategory[];
+  notes: readonly NavigableNote[];
 }
 
-export function resolveCategory<TSection extends NavigableSection>(
+export function resolveNote<TSection extends NavigableSection>(
   sections: readonly TSection[],
   sectionId: string | undefined,
-  categoryId: string | undefined,
+  noteId: string | undefined,
 ): {
   section: TSection;
-  category: TSection['categories'][number];
+  note: TSection['notes'][number];
   isExact: boolean;
 } | null {
   const requestedSection = sections.find(section => section.id === sectionId);
   const section = requestedSection ?? sections[0];
-  const requestedCategory = requestedSection?.categories.find(category => category.id === categoryId) as
-    | TSection['categories'][number]
+  const requestedNote = requestedSection?.notes.find(note => note.id === noteId) as
+    | TSection['notes'][number]
     | undefined;
-  const fallbackCategory = section?.categories[0] as TSection['categories'][number] | undefined;
-  const category = requestedCategory ?? fallbackCategory;
+  const fallbackNote = section?.notes[0] as TSection['notes'][number] | undefined;
+  const note = requestedNote ?? fallbackNote;
 
-  if (!section || !category) return null;
+  if (!section || !note) return null;
 
   return {
     section,
-    category,
-    isExact: Boolean(requestedSection && requestedCategory),
+    note,
+    isExact: Boolean(requestedSection && requestedNote),
   };
 }

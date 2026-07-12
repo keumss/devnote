@@ -7,10 +7,10 @@ interface MobileNavDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   activeSectionId?: string;
-  activeCategoryId?: string;
+  activeNoteId?: string;
 }
 
-export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, activeCategoryId }: MobileNavDrawerProps) {
+export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, activeNoteId }: MobileNavDrawerProps) {
   const drawerRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
@@ -87,7 +87,7 @@ export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, acti
               <div className="flex items-center justify-between gap-2 mb-6 px-1">
                 <div className="flex items-center gap-2 text-slate-800 dark:text-slate-200 font-semibold text-sm uppercase tracking-wider">
                   <BookOpen size={16} />
-                  <span id="mobile-navigation-title">Curriculum</span>
+                  <span id="mobile-navigation-title">학습 노트</span>
                 </div>
                 <button
                   ref={closeButtonRef}
@@ -101,7 +101,7 @@ export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, acti
               </div>
               <SidebarNav 
                 activeSectionId={activeSectionId} 
-                activeCategoryId={activeCategoryId} 
+                activeNoteId={activeNoteId}
                 onNavigate={onClose}
               />
             </div>

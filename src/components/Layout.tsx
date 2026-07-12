@@ -6,23 +6,23 @@ import MobileNavDrawer from './MobileNavDrawer';
 import SearchModal from './SearchModal';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSearch } from '../hooks/useSearch';
-import { getCategoryPath, getItemHash } from '../navigation';
+import { getNotePath, getTopicHash } from '../navigation';
 
 interface LayoutProps {
   children: React.ReactNode;
   activeSectionId?: string;
-  activeCategoryId?: string;
+  activeNoteId?: string;
 }
 
-export default function Layout({ children, activeSectionId, activeCategoryId }: LayoutProps) {
+export default function Layout({ children, activeSectionId, activeNoteId }: LayoutProps) {
   const { isDark, toggle } = useDarkMode();
   const navigate = useNavigate();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
-  const handleSelectResult = useCallback((sectionId: string, categoryId: string, itemId: string) => {
+  const handleSelectResult = useCallback((sectionId: string, noteId: string, topicId: string) => {
     navigate({
-      pathname: getCategoryPath(sectionId, categoryId),
-      hash: getItemHash(itemId),
+      pathname: getNotePath(sectionId, noteId),
+      hash: getTopicHash(topicId),
     });
   }, [navigate]);
 
@@ -82,7 +82,7 @@ export default function Layout({ children, activeSectionId, activeCategoryId }: 
           isOpen={isMobileNavOpen}
           onClose={closeMobileNav}
           activeSectionId={activeSectionId}
-          activeCategoryId={activeCategoryId}
+          activeNoteId={activeNoteId}
         />
 
         <div className="flex-1 flex flex-col">

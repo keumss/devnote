@@ -2,7 +2,7 @@ import { lazy } from 'react';
 import type { ComponentType, LazyExoticComponent } from 'react';
 import type { MDXProps } from 'mdx/types';
 
-export interface ContentFrontmatter {
+export interface NoteFrontmatter {
   title: string;
 }
 
@@ -22,54 +22,54 @@ export interface StructuredData {
   }>;
 }
 
-interface ContentModule {
+interface NoteModule {
   default: ComponentType<MDXProps>;
-  frontmatter: ContentFrontmatter;
+  frontmatter: NoteFrontmatter;
   structuredData: StructuredData;
 }
 
-type ContentLoader = () => Promise<ContentModule>;
+type NoteLoader = () => Promise<NoteModule>;
 
-export type MdxContentComponent = LazyExoticComponent<ComponentType<MDXProps>>;
+export type NoteContentComponent = LazyExoticComponent<ComponentType<MDXProps>>;
 
-export interface CheatSheetItem {
+export interface Topic {
   id: string;
   title: string;
   description: string;
   content: string;
 }
 
-export interface CheatSheetCategory {
+export interface Note {
   id: string;
   title: string;
   displayTitle: string;
-  Content: MdxContentComponent;
+  Component: NoteContentComponent;
 }
 
-export interface NavSection {
+export interface Section {
   id: string;
   title: string;
-  categories: CheatSheetCategory[];
+  notes: Note[];
 }
 
 export interface SearchResult {
   sectionId: string;
   sectionTitle: string;
-  categoryId: string;
-  categoryTitle: string;
-  item: CheatSheetItem;
+  noteId: string;
+  noteTitle: string;
+  topic: Topic;
 }
 
 // Use a distinct module query for metadata so Rollup can tree-shake the MDX
 // renderer from the eager imports while retaining separate lazy render chunks.
-const contentLoaders = import.meta.glob<ContentModule>(
+const noteLoaders = import.meta.glob<NoteModule>(
   '/content/**/*.{md,mdx}',
   {
     query: { collection: 'docs' },
   },
 );
 
-const contentFrontmatters = import.meta.glob<ContentFrontmatter>(
+const noteFrontmatters = import.meta.glob<NoteFrontmatter>(
   '/content/**/*.{md,mdx}',
   {
     eager: true,
@@ -96,19 +96,19 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-export function getContentLocation(filePath: string) {
+export function getNoteLocation(filePath: string) {
   const relativePath = filePath.replace('/content/', '');
   const pathParts = relativePath.split('/');
   const fileName = pathParts.pop();
   const sectionId = pathParts.pop();
 
   if (!fileName || !sectionId || pathParts.length > 0) {
-    throw new Error(`Content must be placed directly under a section folder: ${filePath}`);
+    throw new Error(`Notes must be placed directly under a section folder: ${filePath}`);
   }
 
   return {
     sectionId,
-    documentId: fileName.replace(/\.(md|mdx)$/, ''),
+    noteId: fileName.replace(/\.(md|mdx)$/, ''),
   };
 }
 
@@ -155,11 +155,11 @@ function getSectionTitle(sectionId: string) {
   return sectionMeta.title.trim();
 }
 
-function validateContentFiles(sectionOrder: string[]) {
-  const contentPaths = Object.keys(contentLoaders);
-  const documentIds = new Set<string>();
-  const contentSections = new Set(
-    contentPaths.map((filePath) => getContentLocation(filePath).sectionId),
+function validateNoteFiles(sectionOrder: string[]) {
+  const notePaths = Object.keys(noteLoaders);
+  const noteIds = new Set<string>();
+  const noteSections = new Set(
+    notePaths.map((filePath) => getNoteLocation(filePath).sectionId),
   );
   const metadataSections = new Set<string>();
 
@@ -170,32 +170,32 @@ function validateContentFiles(sectionOrder: string[]) {
     }
   }
 
-  for (const filePath of contentPaths) {
-    const { sectionId, documentId } = getContentLocation(filePath);
-    const documentKey = `${sectionId}/${documentId}`;
-    if (documentIds.has(documentKey)) {
-      throw new Error(`Duplicate content document id: ${documentKey}.`);
+  for (const filePath of notePaths) {
+    const { sectionId, noteId } = getNoteLocation(filePath);
+    const noteKey = `${sectionId}/${noteId}`;
+    if (noteIds.has(noteKey)) {
+      throw new Error(`Duplicate note id: ${noteKey}.`);
     }
-    documentIds.add(documentKey);
+    noteIds.add(noteKey);
 
-    const frontmatter = contentFrontmatters[filePath];
+    const frontmatter = noteFrontmatters[filePath];
     if (!isNonEmptyString(frontmatter?.title)) {
       throw new Error(`Frontmatter in ${filePath} must define a title.`);
     }
   }
 
   for (const sectionId of sectionOrder) {
-    if (!contentSections.has(sectionId)) {
-      throw new Error(`Section "${sectionId}" is listed in content/meta.json but has no content.`);
+    if (!noteSections.has(sectionId)) {
+      throw new Error(`Section "${sectionId}" is listed in content/meta.json but has no notes.`);
     }
     if (!metadataSections.has(sectionId)) {
       throw new Error(`Section "${sectionId}" is missing content/${sectionId}/meta.json.`);
     }
   }
 
-  for (const sectionId of contentSections) {
+  for (const sectionId of noteSections) {
     if (!sectionOrder.includes(sectionId)) {
-      throw new Error(`Content section "${sectionId}" is missing from content/meta.json.`);
+      throw new Error(`Section "${sectionId}" with notes is missing from content/meta.json.`);
     }
   }
 
@@ -206,46 +206,46 @@ function validateContentFiles(sectionOrder: string[]) {
   }
 }
 
-export function formatCategoryTitle(title: string) {
+export function formatNoteNavigationTitle(title: string) {
   const prefix = title.split(':', 1)[0].trim();
   return prefix || title.trim();
 }
 
-function createLazyContent(loadContent: ContentLoader): MdxContentComponent {
+function createLazyNoteContent(loadNote: NoteLoader): NoteContentComponent {
   return lazy(async () => {
-    const contentModule = await loadContent();
-    return { default: contentModule.default };
+    const noteModule = await loadNote();
+    return { default: noteModule.default };
   });
 }
 
 const sectionOrder = getRootSectionOrder();
-validateContentFiles(sectionOrder);
+validateNoteFiles(sectionOrder);
 
 const sectionOrderMap = new Map(
   sectionOrder.map((sectionId, index) => [sectionId, index]),
 );
-const sectionMap = new Map<string, NavSection>();
+const sectionMap = new Map<string, Section>();
 
-for (const [filePath, loadContent] of Object.entries(contentLoaders)) {
-  const frontmatter = contentFrontmatters[filePath];
-  const { sectionId, documentId } = getContentLocation(filePath);
+for (const [filePath, loadNote] of Object.entries(noteLoaders)) {
+  const frontmatter = noteFrontmatters[filePath];
+  const { sectionId, noteId } = getNoteLocation(filePath);
   const section = sectionMap.get(sectionId) ?? {
     id: sectionId,
     title: getSectionTitle(sectionId),
-    categories: [],
+    notes: [],
   };
   const title = frontmatter.title.trim();
 
-  section.categories.push({
-    id: documentId,
+  section.notes.push({
+    id: noteId,
     title,
-    displayTitle: formatCategoryTitle(title),
-    Content: createLazyContent(loadContent),
+    displayTitle: formatNoteNavigationTitle(title),
+    Component: createLazyNoteContent(loadNote),
   });
   sectionMap.set(section.id, section);
 }
 
-export const navData: NavSection[] = [...sectionMap.values()]
+export const navData: Section[] = [...sectionMap.values()]
   .sort((a, b) => {
     const aIndex = sectionOrderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
     const bIndex = sectionOrderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
@@ -253,5 +253,5 @@ export const navData: NavSection[] = [...sectionMap.values()]
   })
   .map((section) => ({
     ...section,
-    categories: section.categories.sort((a, b) => naturalCollator.compare(a.id, b.id)),
+    notes: section.notes.sort((a, b) => naturalCollator.compare(a.id, b.id)),
   }));

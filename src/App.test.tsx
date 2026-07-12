@@ -4,14 +4,14 @@ import { HashRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
-describe('documentation search navigation', () => {
+describe('note search navigation', () => {
   beforeEach(() => {
     window.history.replaceState(null, '', '/#/');
     window.scrollTo = vi.fn();
     Element.prototype.scrollIntoView = vi.fn();
   });
 
-  it('opens the selected document and scrolls to its heading', async () => {
+  it('opens the selected note and scrolls to its topic', async () => {
     const { findByLabelText, findByRole, getByLabelText } = render(
       <StrictMode>
         <HashRouter>
