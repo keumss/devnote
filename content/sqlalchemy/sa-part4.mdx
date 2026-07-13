@@ -1,100 +1,157 @@
 ---
-title: "Part 4. 고급 및 실전: 성능, 비동기, 트랜잭션 경계"
+title: 'Part 4. 실전: 성능, 안전한 SQL과 오류 처리'
 ---
 
-## 즉시 로딩으로 N+1 문제 해결 (Eager Loading)
+## selectinload로 N+1 쿼리 줄이기
 
-컬렉션을 접근할 때마다 쿼리가 발생하는 N+1 문제를 방지하기 위해 쿼리 단계에서 연관 데이터를 한 번에 가져옵니다.
+사용자 목록을 읽은 뒤 각 `posts`에 접근하면 사용자마다 SELECT가 추가되는 N+1 문제가 생길 수 있습니다. 1:N 컬렉션은 `selectinload()`로 미리 읽으면 기본 조회와 관계 조회, 두 번의 SQL로 처리할 수 있습니다.
 
 ```python
-from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
-with Session(engine) as session:
-    # selectinload는 별도 SELECT의 IN 조건으로 컬렉션을 로딩하므로 1:N에 대체로 적합합니다.
-    # joinedload는 단일 JOIN으로 스칼라 관계(N:1, 1:1)를 가져올 때 자주 사용합니다.
-    stmt = select(User).options(selectinload(User.posts))
+from setup import SessionLocal, User, reset_database
 
-    users = session.scalars(stmt).all()
-    for u in users:
-        # DB에 추가 접근(쿼리) 없이 하위 데이터(posts) 사용 가능!
-        print(u.name, [p.title for p in u.posts])
+
+reset_database()
+
+with SessionLocal() as session:
+    users = session.scalars(
+        select(User)
+        .options(selectinload(User.posts))
+        .order_by(User.id)
+    ).all()
+
+    for user in users:
+        print(user.name, len(user.posts))
 ```
 
-## SQL 주입 안전한 원시 쿼리 (Raw SQL)
+```text
+Alice 2
+Bob 2
+Charlie 0
+```
 
-ORM으로 표현하기 힘들거나 극한의 튜닝이 필요한 쿼리를 파라미터 바인딩과 함께 안전히 실행합니다.
+N:1이나 1:1은 `joinedload()`로 한 SQL에 가져오는 방식도 유용합니다. 1:N 컬렉션에 `joinedload()`를 사용하면 부모 행이 중복되므로 결과에 `.unique()`가 필요합니다.
+
+## text와 바인딩으로 원시 SQL 안전하게 실행하기
+
+ORM으로 표현하기 어려운 SQL도 `text()`로 실행할 수 있습니다. 사용자 입력을 문자열에 직접 합치지 말고 이름 있는 파라미터로 바인딩해 SQL 주입을 막습니다.
 
 ```python
 from sqlalchemy import text
 
-with Session(engine) as session:
-    # 파라미터가 포함된 SQL
-    stmt = text("SELECT id, name FROM users WHERE age >= :min_age")
+from setup import SessionLocal
 
-    # 실행하면서 파라미터 딕셔너리 제공
-    results = session.execute(stmt, {"min_age": 20})
 
-    for row in results:
-        # row.id 처럼 키로 접근 가능
-        print(f"[{row.id}] {row.name}")
+stmt = text(
+    'SELECT name, age FROM users '
+    'WHERE age >= :min_age ORDER BY age'
+)
+
+with SessionLocal() as session:
+    for row in session.execute(stmt, {'min_age': 30}):
+        print(row.name, row.age)
 ```
 
-## FastAPI 환상의 짝꿍: 비동기 설정 (AsyncIO)
-
-FastAPI의 속도를 극대화하기 위해 완전한 비동기(non-blocking) DB 엔진과 세션을 사용합니다.
-
-```python
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-
-# 드라이버를 asyncpg (Postgres) 등으로 교체해야 함
-async_engine = create_async_engine('postgresql+asyncpg://user:pass@localhost/mydb')
-
-AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
-
-async def get_users():
-    async with AsyncSessionLocal() as session:
-        stmt = select(User)
-
-        # await를 이용해 결과를 비동기적으로 기다림
-        result = await session.execute(stmt)
-        return result.scalars().all()
+```text
+Bob 30
+Charlie 35
 ```
 
-## 오류 방어: 트랜잭션 수동 제어
+바인딩은 값에 사용하며 테이블명이나 컬럼명 같은 SQL 구조에는 사용할 수 없습니다. 동적 구조가 필요하면 허용 목록에서 선택하거나 SQLAlchemy 표현식으로 구성합니다.
 
-비즈니스 로직 중 예외가 발생할 경우, rollback()을 호출해 데이터가 꼬이는 것을 방지합니다.
+## 트랜잭션 경계와 rollback 검증하기
 
-```python
-with Session(engine) as session:
-    try:
-        session.add(User(name="Daniel", age=40))
-
-        # 여기서 DB 제약조건 위반 또는 서버 에러가 발생했다면?
-        # raise Exception("Oops!")
-
-        session.commit()
-    except Exception as e:
-        # 실패 시 전부 원상복구
-        session.rollback()
-        print(f"Transaction failed: {e}")
-```
-
-## 서비스 계층에서 트랜잭션 경계 만들기
-
-한 요청의 여러 쓰기 작업은 하나의 서비스 함수에서 성공하거나 함께 취소되어야 합니다. 라우터나 화면 코드에 `commit()`을 흩어놓지 말고, 작업 단위가 끝나는 지점에서 한 번만 확정하면 실패 처리를 테스트하기도 쉽습니다.
+한 작업의 여러 INSERT는 함께 성공하거나 함께 취소되어야 합니다. 서비스 함수는 commit을 직접 호출하지 않고 호출자가 작업 단위 전체를 `Session.begin()`으로 감싸게 합니다.
 
 ```python
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-def transfer_points(session: Session, sender: User, receiver: User, points: int) -> None:
-    if points <= 0 or sender.points < points:
-        raise ValueError('유효하지 않은 포인트 이체입니다.')
+from setup import Post, SessionLocal, User
 
-    # flush는 필요한 INSERT/UPDATE를 DB에 보내지만 아직 확정하지는 않습니다.
-    sender.points -= points
-    receiver.points += points
-    session.flush()
 
-    # 호출자가 성공 시점에 한 번만 commit하고, 예외 시 rollback합니다.
+def create_author_with_post(
+    session: Session,
+    name: str,
+    title: str,
+) -> None:
+    session.add(User(name=name, posts=[Post(title=title)]))
+
+
+try:
+    with SessionLocal.begin() as session:
+        # Alice는 이미 있으므로 users.name의 UNIQUE 제약이 실패한다.
+        create_author_with_post(session, 'Alice', '중복 게시물')
+except IntegrityError:
+    print('등록 실패')
+
+with SessionLocal() as session:
+    count = session.scalar(
+        select(func.count(Post.id))
+        .where(Post.title == '중복 게시물')
+    )
+    print('남은 게시물:', count)
 ```
+
+```text
+등록 실패
+남은 게시물: 0
+```
+
+예외가 블록 밖으로 전달되면 `Session.begin()`이 rollback합니다. 처리할 수 없는 예외를 출력만 하고 삼키지 말고 호출자가 실패를 알 수 있도록 다시 발생시킵니다. 테스트에서는 성공 결과뿐 아니라 중간 실패 뒤 데이터가 남지 않는지도 확인합니다.
+
+## AsyncSession을 task마다 분리하기
+
+비동기 드라이버는 DB 대기 중 다른 작업을 처리하게 하지만 쿼리를 자동으로 빠르게 만들지는 않습니다. `AsyncSession`은 하나의 변경 가능한 트랜잭션이므로 동시 task 사이에 공유하지 않습니다.
+
+```sh
+python -m pip install 'SQLAlchemy[asyncio]>=2.0,<2.1' aiosqlite
+```
+
+```python
+import asyncio
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.orm import selectinload
+
+from setup import User
+
+
+async_engine = create_async_engine(
+    'sqlite+aiosqlite:///sqlalchemy_lab.db'
+)
+AsyncSessionLocal = async_sessionmaker(
+    async_engine,
+    expire_on_commit=False,
+)
+
+
+async def list_users() -> list[tuple[str, int]]:
+    async with AsyncSessionLocal() as session:
+        users = await session.scalars(
+            select(User)
+            .options(selectinload(User.posts))
+            .order_by(User.id)
+        )
+        return [(user.name, len(user.posts)) for user in users]
+
+
+async def main() -> None:
+    try:
+        print(await list_users())
+    finally:
+        await async_engine.dispose()
+
+
+asyncio.run(main())
+```
+
+```text
+[('Alice', 2), ('Bob', 2), ('Charlie', 0)]
+```
+
+AsyncSession에서는 관계의 암시적 지연 로딩을 피하고 필요한 데이터를 eager loading이나 명시적 `refresh()`로 읽습니다. 운영에서는 Engine을 요청마다 만들지 말고 프로세스에서 공유하며, Session은 요청이나 작업 단위가 끝날 때 반드시 닫습니다.

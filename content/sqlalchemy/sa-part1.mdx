@@ -1,108 +1,147 @@
 ---
-title: "Part 1. 기초: 연결과 기본 쿼리"
+title: 'Part 1. 초급: 모델, 세션과 기본 CRUD'
 ---
 
-## SQLAlchemy란?
+## SQLAlchemy의 Core와 ORM 이해하기
 
-SQLAlchemy는 SQL을 구성하는 Core와 테이블을 Python 클래스로 매핑하는 ORM을 제공하는 데이터 접근 도구입니다. ORM은 SQL을 없애는 기술이 아니라 객체 변경을 INSERT·UPDATE로 변환하고 결과 행을 객체로 조립하는 계층입니다. 생성되는 SQL과 트랜잭션 경계를 이해해야 성능 문제와 예상하지 못한 쓰기를 찾을 수 있습니다.
+SQLAlchemy 2.0은 SQL 표현식을 만드는 Core와 테이블을 Python 클래스로 매핑하는 ORM을 제공합니다. ORM도 내부에서는 SQL을 실행하므로 생성되는 쿼리와 트랜잭션 경계를 이해해야 예상하지 못한 쓰기와 성능 문제를 찾을 수 있습니다.
 
-## 엔진 및 세션 (Engine & Session)
-
-데이터베이스 통신을 담당하는 Engine과 쿼리를 실행하는 Session을 설정합니다.
-
-```python
-import os
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
-
-database_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
-engine = create_engine(database_url, echo=False)
-
-# 세션 컨텍스트 매니저를 통해 안전하게 연결
-with Session(engine) as session:
-    # 데이터베이스 작업 수행
-    pass
+```sh
+python -m pip install 'SQLAlchemy>=2.0,<2.1'
 ```
 
-로컬 기본값은 바로 실행 가능한 SQLite 파일이고, 운영에서는 `DATABASE_URL`로 PostgreSQL 같은 실제 연결을 주입합니다. 비밀번호가 든 URL을 코드에 커밋하지 않습니다. `echo=True`는 학습 중 SQL을 확인하는 데 유용하지만 바인딩 값에 민감 정보가 포함될 수 있어 운영 로그에서는 주의합니다.
+이 섹션은 Python 3.12와 SQLAlchemy 2.0 스타일을 기준으로 합니다. 설치 로그와 패치 버전은 실행 시점에 따라 달라질 수 있습니다.
 
-## 테이블 모델 선언 (Declarative Base)
+## 공통 실습 모델과 Engine 준비하기
 
-타입 힌트(Mapped)를 활용하여 파이썬 클래스를 데이터베이스 테이블에 매핑합니다.
+네 노트에서 사용할 공통 코드를 `setup.py`에 저장합니다. Engine은 연결과 SQL 실행 기반을 공유하고, Session은 한 작업 단위에서만 만들고 닫습니다.
 
 ```python
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String
+from __future__ import annotations
+
+from sqlalchemy import ForeignKey, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+
 
 class Base(DeclarativeBase):
     pass
+
 
 class User(Base):
     __tablename__ = 'users'
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(30), nullable=False)
-    age: Mapped[int | None] = mapped_column(nullable=True)
+    name: Mapped[str] = mapped_column(String(30), unique=True)
+    age: Mapped[int | None]
+    posts: Mapped[list[Post]] = relationship(
+        back_populates='author',
+        cascade='all, delete-orphan',
+    )
 
-# DB에 테이블 생성 (개발 환경에서 주로 사용)
-Base.metadata.create_all(engine)
+
+class Post(Base):
+    __tablename__ = 'posts'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(100))
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    author: Mapped[User] = relationship(back_populates='posts')
+
+
+engine = create_engine('sqlite+pysqlite:///sqlalchemy_lab.db', echo=False)
+SessionLocal = sessionmaker(engine)
+
+
+def reset_database() -> None:
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    with SessionLocal.begin() as session:
+        session.add_all([
+            User(name='Alice', age=25, posts=[
+                Post(title='SQLAlchemy 시작'),
+                Post(title='관계 매핑'),
+            ]),
+            User(name='Bob', age=30, posts=[
+                Post(title='쿼리 패턴'),
+                Post(title='로딩 성능'),
+            ]),
+            User(name='Charlie', age=35),
+        ])
 ```
 
-`create_all()`은 아직 없는 테이블을 만들지만 기존 컬럼의 이름·타입을 변경하지 않습니다. 학습과 짧은 테스트에는 편리하고, 운영 스키마 변경에는 Alembic 리비전을 사용합니다.
+`reset_database()`는 예상 결과를 동일하게 만들기 위한 학습 전용 함수입니다. `drop_all()`은 데이터를 모두 지우므로 운영에서는 사용하지 않고, 스키마 변경은 Alembic으로 관리합니다.
 
-## 데이터 생성 (Insert & Bulk Insert)
+## Session.begin으로 객체 생성하기
 
-단일 객체를 추가하거나, add_all()을 사용하여 여러 개의 객체를 한 번에 삽입합니다.
+`add()`는 객체를 Session에 등록하고 `flush()`는 INSERT를 보내 생성된 기본 키를 객체에 반영합니다. `SessionLocal.begin()`은 블록이 성공하면 commit하고 예외가 발생하면 rollback합니다.
 
 ```python
-with Session(engine) as session:
-    # 단일 객체 추가
-    user1 = User(name='Alice', age=25)
-    session.add(user1)
+from setup import SessionLocal, User, reset_database
 
-    # 여러 객체 일괄 추가
-    users = [
-        User(name='Bob', age=30),
-        User(name='Charlie', age=35),
-    ]
-    session.add_all(users)
 
-    session.commit()  # 트랜잭션 확정
-    session.refresh(user1)
-    print(user1.id, user1.name)
+reset_database()
+
+with SessionLocal.begin() as session:
+    dana = User(name='Dana', age=28)
+    session.add(dana)
+    session.flush()
+    print(dana.id, dana.name)
 ```
-
-새 DB에서 처음 실행했다면 DB가 만든 기본 키가 객체에 반영됩니다.
 
 ```text
-1 Alice
+4 Dana
 ```
 
-`add_all()`은 한 트랜잭션에 객체를 추가하지만 반드시 하나의 SQL 문으로 합쳐진다는 뜻은 아닙니다. 중간에 하나라도 실패하면 `rollback()`하고 실패 원인을 처리한 뒤 새 트랜잭션을 시작합니다.
+flush는 SQL을 전송하지만 트랜잭션을 확정하지 않습니다. 블록 안에서 후속 작업이 실패하면 INSERT도 함께 취소됩니다.
 
-## 기본 데이터 조회 (Select, Where, Order By)
+## select와 scalars로 객체 조회하기
 
-select() 구문에 조건을 추가하고, 특정 기준에 따라 정렬된 결과를 가져옵니다.
+`select(User)`는 User 객체를 반환하는 문장을 만들고, `scalars()`는 결과 행에서 ORM 객체 열만 꺼냅니다. 결과 순서를 예측해야 하는 조회에는 `order_by()`를 지정합니다.
 
 ```python
 from sqlalchemy import select
 
-with Session(engine) as session:
-    # 20살 이상인 유저를 나이 내림차순으로 정렬
-    stmt = select(User).where(User.age >= 20).order_by(User.age.desc())
+from setup import SessionLocal, User
 
-    # scalars()를 통해 ORM 객체 스트림 획득 후 리스트 변환
-    users = session.scalars(stmt).all()
 
-    for u in users:
-        print(u.name, u.age)
+with SessionLocal() as session:
+    stmt = (
+        select(User)
+        .where(User.age >= 30)
+        .order_by(User.age.desc(), User.id)
+    )
+    for user in session.scalars(stmt):
+        print(user.name, user.age)
 ```
 
 ```text
 Charlie 35
 Bob 30
-Alice 25
 ```
 
-`scalars()`는 `select(User)` 결과에서 ORM 객체 열만 꺼냅니다. 결과 전체가 필요하지 않다면 `.all()`로 모두 메모리에 올리지 말고 페이지네이션이나 스트리밍을 검토합니다.
+## get과 one_or_none으로 조회 결과의 의미 표현하기
+
+기본 키 조회에는 Session의 identity map을 먼저 확인하는 `get()`을 사용합니다. 결과가 없을 수 있지만 둘 이상이면 데이터 전제 오류인 조회에는 `one_or_none()`이 적합합니다.
+
+```python
+from sqlalchemy import select
+
+from setup import SessionLocal, User
+
+
+with SessionLocal() as session:
+    alice = session.get(User, 1)
+    unknown = session.scalars(
+        select(User).where(User.name == 'Unknown')
+    ).one_or_none()
+
+    print(alice.name)
+    print(unknown)
+```
+
+```text
+Alice
+None
+```
+
+`first()`는 여러 결과 중 첫 행만 선택하므로 “정확히 하나”라는 조건을 검증하지 않습니다. 조회 의도에 맞는 결과 메서드를 선택하면 누락과 중복을 더 일찍 발견할 수 있습니다.

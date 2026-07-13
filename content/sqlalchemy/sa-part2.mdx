@@ -1,128 +1,128 @@
 ---
-title: "Part 2. 관계매핑: 데이터 엮기 및 수정/삭제"
+title: 'Part 2. 중급: 관계, 수정과 삭제'
 ---
 
-## 1:N 관계를 외래 키와 객체 속성으로 함께 매핑하기
+이 노트의 예제는 Part 1의 `setup.py`를 사용하며 위에서 아래로 실행합니다.
 
-외래 키는 DB가 참조 무결성을 지키고, `relationship()`은 Python 객체 사이를 탐색하게 합니다. 둘은 역할이 다르므로 관계 매핑에는 모두 필요합니다. 다음 예제에서 한 사용자는 여러 게시물을 가지며 각 게시물은 한 작성자를 가집니다.
+## 외래 키와 relationship 함께 사용하기
 
-```python
-from __future__ import annotations
-
-from sqlalchemy import ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-class User(Base):
-    __tablename__ = 'users'
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(30))
-    posts: Mapped[list[Post]] = relationship(
-        back_populates='author',
-        cascade='all, delete-orphan',
-    )
-
-class Post(Base):
-    __tablename__ = 'posts'
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    title: Mapped[str] = mapped_column(String(100))
-    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
-    author: Mapped[User] = relationship(back_populates='posts')
-```
+외래 키는 DB의 참조 무결성을 지키고, `relationship()`은 `user.posts`와 `post.author`로 객체 사이를 탐색하게 합니다. `selectinload()`를 사용하면 필요한 관계를 별도 SELECT로 미리 읽을 수 있습니다.
 
 ```python
-with Session(engine) as session:
-    alice = User(name='Alice')
-    alice.posts.append(Post(title='첫 SQLAlchemy 글'))
-    session.add(alice)
-    session.commit()
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
-    print(alice.posts[0].title)
-    print(alice.posts[0].author.name)
+from setup import SessionLocal, User, reset_database
+
+
+reset_database()
+
+with SessionLocal() as session:
+    alice = session.scalars(
+        select(User)
+        .where(User.name == 'Alice')
+        .options(selectinload(User.posts))
+    ).one()
+
+    for post in alice.posts:
+        print(post.title, '-', post.author.name)
 ```
 
 ```text
-첫 SQLAlchemy 글
-Alice
+SQLAlchemy 시작 - Alice
+관계 매핑 - Alice
 ```
 
-한쪽 컬렉션에 추가하면 `back_populates`가 반대쪽 `author`도 연결합니다. `delete-orphan`은 컬렉션에서 떨어져 부모가 없는 게시물을 삭제하므로 도메인 정책에 맞을 때만 사용합니다. 목록 화면에서 각 사용자의 `posts`를 반복 접근하면 N+1 쿼리가 생길 수 있어 이후 로딩 전략을 함께 배워야 합니다.
+`back_populates`는 한쪽 관계가 바뀔 때 반대쪽 객체 속성도 동기화합니다. 여러 사용자의 관계를 미리 로드하지 않고 반복 접근하면 Part 4에서 다룰 N+1 쿼리가 생길 수 있습니다.
 
-## 객체 변경 감지로 한 행 수정하기
+## Unit of Work로 한 객체 수정하기
 
-세션이 관리하는 객체의 속성을 바꾸면 SQLAlchemy가 변경을 추적하고 flush 시점에 UPDATE를 만듭니다. `commit()` 뒤 DB가 계산한 값이나 트리거 결과까지 확인하려면 `refresh()`로 다시 읽습니다.
+Session에서 조회한 객체의 속성을 바꾸면 Unit of Work가 변경을 추적합니다. 다시 `add()`하지 않아도 commit 직전 flush에서 UPDATE가 실행됩니다.
 
 ```python
 from sqlalchemy import select
 
-with Session(engine) as session:
+from setup import SessionLocal, User
+
+
+with SessionLocal.begin() as session:
     alice = session.scalars(
         select(User).where(User.name == 'Alice')
     ).one()
+    alice.age = 26
 
-    print(f'변경 전: {alice.name}')
-    alice.name = 'Alicia'
-    session.commit()
-    session.refresh(alice)
-    print(f'변경 후: {alice.name}')
+with SessionLocal() as session:
+    print(session.get(User, 1).age)
 ```
 
 ```text
-변경 전: Alice
-변경 후: Alicia
+26
 ```
 
-`.one()`은 결과가 없거나 여러 개면 예외를 발생시켜 “정확히 한 사용자”라는 가정을 검증합니다. 요청 처리 중 예외가 발생하면 `rollback()`하고 세션을 종료해야 실패한 트랜잭션 상태를 다음 작업에 재사용하지 않습니다.
+DB 트리거나 ORM 밖의 SQL로 바뀐 값을 즉시 다시 읽어야 할 때는 `session.refresh(object)`를 사용합니다. flush가 실패한 Session을 계속 사용하려면 먼저 rollback해야 합니다.
 
-## delete와 cascade의 삭제 범위 확인하기
+## delete-orphan으로 관계에서 제거된 객체 삭제하기
 
-`session.delete()`는 전달한 ORM 객체를 삭제 대상으로 표시합니다. 위 관계의 `cascade='all, delete-orphan'` 때문에 사용자를 삭제하면 그 사용자가 소유한 게시물도 함께 삭제됩니다. 실행 전후 개수를 확인하면 삭제 범위를 테스트할 수 있습니다.
+Part 1의 `User.posts`에는 `cascade='all, delete-orphan'`이 있습니다. 부모 컬렉션에서 제거되어 소유자가 없어진 Post는 flush 때 삭제됩니다.
 
 ```python
-from sqlalchemy import func, select
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
-with Session(engine) as session:
-    alicia = session.scalars(
-        select(User).where(User.name == 'Alicia')
+from setup import Post, SessionLocal, User
+
+
+with SessionLocal.begin() as session:
+    alice = session.scalars(
+        select(User)
+        .where(User.name == 'Alice')
+        .options(selectinload(User.posts))
     ).one()
+    removed_post = alice.posts.pop()
+    removed_id = removed_post.id
 
-    before = session.scalar(select(func.count()).select_from(Post))
-    session.delete(alicia)
-    session.commit()
-    after = session.scalar(select(func.count()).select_from(Post))
-
-    print(before, after)
+with SessionLocal() as session:
+    print(session.get(Post, removed_id) is None)
 ```
-
-게시물이 한 개뿐이었다면 다음 결과가 나옵니다.
 
 ```text
-1 0
+True
 ```
 
-실수로 대량 삭제하지 않도록 삭제 조건과 cascade를 테스트합니다. DB의 `ON DELETE CASCADE`와 ORM cascade를 함께 쓸 때는 어느 계층이 책임지는지 정하고 `passive_deletes` 설정까지 일치시켜야 합니다.
+삭제 cascade는 데이터 수명 정책입니다. DB의 `ON DELETE CASCADE`도 사용한다면 ORM의 `cascade`와 `passive_deletes`가 같은 정책을 표현하도록 함께 설정합니다.
 
-## bulk UPDATE의 영향받은 행 수 검증하기
+## bulk UPDATE로 여러 행 수정하기
 
-여러 객체를 하나씩 읽어 수정할 필요가 없다면 SQL UPDATE 문을 직접 실행할 수 있습니다. 빠르지만 개별 객체 이벤트나 Python 수준 검증을 거치지 않으므로 단순하고 명확한 변경에 사용합니다.
+여러 객체를 읽지 않고 같은 규칙으로 바꾸려면 UPDATE 문을 직접 실행할 수 있습니다. 개별 객체 이벤트와 Python 수준 검증을 거치지 않으므로 단순한 변경에 사용합니다.
 
 ```python
-from sqlalchemy import update
+from sqlalchemy import select, update
 
-with Session(engine) as session:
+from setup import SessionLocal, User
+
+
+with SessionLocal.begin() as session:
     result = session.execute(
         update(User)
         .where(User.age >= 30)
         .values(age=User.age + 1)
     )
-    session.commit()
+    print('매칭된 행:', result.rowcount)
 
-    print(f'수정된 사용자: {result.rowcount}명')
+with SessionLocal() as session:
+    rows = session.execute(
+        select(User.name, User.age)
+        .where(User.age >= 30)
+        .order_by(User.id)
+    )
+    for name, age in rows:
+        print(name, age)
 ```
 
 ```text
-수정된 사용자: 2명
+매칭된 행: 2
+Bob 31
+Charlie 36
 ```
 
-`rowcount`가 예상 범위를 벗어나면 조건이 너무 넓거나 데이터 전제가 달라진 신호입니다. 중요한 대량 변경은 먼저 같은 WHERE 조건으로 SELECT 개수를 확인하고 트랜잭션 안에서 실행하며, 운영에서는 백업과 롤백 계획을 준비합니다.
+`rowcount`는 실제 값이 달라진 행이 아니라 WHERE에 매칭된 행 수이며 드라이버에 따라 `-1`일 수 있습니다. 중요한 변경은 `RETURNING`이나 변경 후 SELECT로 확인합니다.
