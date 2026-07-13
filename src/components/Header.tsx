@@ -34,7 +34,7 @@ export default function Header({
           )}
           <Link
             to="/"
-            className="group flex items-center gap-2.5 sm:gap-3.5 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+            className="group flex items-center gap-2.5 sm:gap-3.5 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/50"
             aria-label="DevNote 홈으로 이동"
           >
             <div className="relative flex size-9 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 via-indigo-600 to-sky-500 text-white shadow-[0_8px_20px_-8px_rgba(79,70,229,0.8)] ring-1 ring-white/30 transition-transform duration-200 group-hover:-translate-y-0.5 group-hover:scale-105 dark:ring-white/10 sm:size-10 shrink-0">
