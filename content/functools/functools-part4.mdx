@@ -1,0 +1,151 @@
+---
+title: "Part 4. 실전: 주문 이벤트를 타입별로 정규화하고 조회 캐시하기"
+---
+
+## 입력 계약과 처리 순서를 먼저 정합니다
+
+이 예제는 외부 주문 이벤트를 타입별로 정규화하고, 상품 이름을 제한된 캐시로 조회해 표시 행을 만듭니다. 이벤트 타입은 지원하는 세 가지로 제한하고, 상품 조회는 읽기 전용이며 같은 ID에 같은 이름을 돌려준다는 계약을 둡니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Created:
+    order_id: str
+    product_id: str
+    quantity: int
+
+@dataclass(frozen=True)
+class Cancelled:
+    order_id: str
+    reason: str
+
+@dataclass(frozen=True)
+class OrderRow:
+    order_id: str
+    status: str
+    detail: str
+```
+
+이벤트를 받은 뒤 `normalize()`가 `OrderRow`로 바꾸고, 생성 이벤트에만 `product_name()`으로 외부 조회를 합니다. 알 수 없는 이벤트는 표시 행을 만들지 않고 바로 오류로 처리합니다.
+
+## singledispatch로 이벤트 타입별 규칙을 등록합니다
+
+조건문을 계속 늘리는 대신, `normalize()`의 구현을 이벤트 클래스별로 등록합니다. 기본 구현은 계약에 없는 타입을 거부합니다.
+
+```python
+from functools import singledispatch
+
+@singledispatch
+def normalize(event: object) -> OrderRow:
+    raise TypeError(f'unsupported event: {type(event).__name__}')
+
+@normalize.register
+def _(event: Created) -> OrderRow:
+    return OrderRow(
+        order_id=event.order_id,
+        status='created',
+        detail=f'{event.product_id} x {event.quantity}',
+    )
+
+@normalize.register
+def _(event: Cancelled) -> OrderRow:
+    return OrderRow(event.order_id, 'cancelled', event.reason)
+
+print(normalize(Cancelled('A-2', 'customer request')))
+```
+
+```text
+OrderRow(order_id='A-2', status='cancelled', detail='customer request')
+```
+
+새 이벤트를 지원할 때는 기존 `normalize()`를 수정하기보다 `@normalize.register` 구현과 테스트를 함께 추가합니다. 단, 이벤트 유형이 몇 개뿐이고 한 곳에서만 쓰인다면 단순 `match` 문이 더 명확할 수 있습니다.
+
+## lru_cache로 반복 조회만 줄입니다
+
+상품 이름은 이벤트마다 같은 ID가 반복될 수 있으므로 작은 LRU 캐시를 둡니다. 캐시할 함수는 외부에서 조회하는 읽기 경계 하나로 좁힙니다.
+
+```python
+from functools import lru_cache
+
+products = {'P-1': '노트', 'P-2': '펜'}
+
+@lru_cache(maxsize=128)
+def product_name(product_id: str) -> str:
+    print(f'load: {product_id}')
+    return products[product_id]
+
+def render_created(event: Created) -> OrderRow:
+    return OrderRow(
+        event.order_id,
+        'created',
+        f'{product_name(event.product_id)} x {event.quantity}',
+    )
+
+print(render_created(Created('A-1', 'P-1', 2)))
+print(render_created(Created('A-3', 'P-1', 1)))
+```
+
+```text
+load: P-1
+OrderRow(order_id='A-1', status='created', detail='노트 x 2')
+OrderRow(order_id='A-3', status='created', detail='노트 x 1')
+```
+
+두 번째 행에서는 조회 로그가 없습니다. 가격처럼 빠르게 바뀌는 값이나 권한에 따라 달라지는 결과는 같은 방식으로 캐시하지 않으며, 상품이 수정되면 변경 처리에서 `product_name.cache_clear()`로 무효화합니다.
+
+## 외부 조회 실패는 이벤트 문맥과 함께 전달합니다
+
+없는 상품 ID나 일시적 네트워크 오류를 결과처럼 숨기면 운영자가 원인을 찾기 어렵습니다. 예외에 주문 ID와 상품 ID를 더해 호출자가 재시도·격리 정책을 결정할 수 있게 합니다.
+
+```python
+def render_created(event: Created) -> OrderRow:
+    try:
+        name = product_name(event.product_id)
+    except KeyError as error:
+        message = f'order {event.order_id}: unknown product {event.product_id}'
+        raise ValueError(message) from error
+
+    return OrderRow(
+        event.order_id,
+        'created',
+        f'{name} x {event.quantity}',
+    )
+
+try:
+    render_created(Created('A-4', 'P-404', 1))
+except ValueError as error:
+    print(error)
+```
+
+```text
+order A-4: unknown product P-404
+```
+
+이 예제는 데이터 계약 위반인 `KeyError`만 변환합니다. 시간 초과처럼 재시도할 수 있는 오류는 호출 횟수, 대기, 멱등성을 정한 상위 경계에서 처리하고, 성공 여부가 불분명한 쓰기 작업은 무작정 재시도하지 않습니다.
+
+## 타입별 규칙과 캐시 무효화를 테스트합니다
+
+테스트는 각 디스패치 구현의 결과와 데이터 변경 후의 캐시 무효화를 따로 검증합니다. 테스트 사이에 전역 캐시가 남지 않도록 시작과 끝에 비웁니다.
+
+```python
+def test_normalize_cancelled() -> None:
+    row = normalize(Cancelled('A-2', 'customer request'))
+
+    assert row == OrderRow('A-2', 'cancelled', 'customer request')
+
+def test_product_name_is_invalidated() -> None:
+    product_name.cache_clear()
+    products['P-1'] = '노트'
+    assert product_name('P-1') == '노트'
+
+    products['P-1'] = '하드커버 노트'
+    product_name.cache_clear()
+
+    assert product_name('P-1') == '하드커버 노트'
+    product_name.cache_clear()
+```
+
+실제 테스트에서는 `products` 같은 전역 딕셔너리도 fixture로 되돌려 테스트 격리를 지킵니다. 캐시의 `cache_info()`가 기대보다 miss가 많다면 캐시 크기를 키우기 전에, 키가 너무 다양하거나 캐시하면 안 되는 데이터를 넣고 있지 않은지 먼저 확인합니다.
+
+Python 3.12의 세부 동작은 [functools 공식 문서](https://docs.python.org/3.12/library/functools.html)를 기준으로 확인합니다. 다른 Python 버전을 지원한다면 `cached_property`의 동시성 동작과 사용하는 API의 추가 버전을 그 버전 문서에서도 다시 확인합니다.

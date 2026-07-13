@@ -9,6 +9,7 @@
     "pathlib",
     "logging",
     "argparse",
-    "itertools"
+    "itertools",
+    "functools"
   ]
 }

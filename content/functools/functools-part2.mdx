@@ -1,0 +1,193 @@
+---
+title: "Part 2. 중급: 반복 계산과 입력 타입에 맞추기"
+---
+
+## cache는 언제 사용해야 하나요?
+
+같은 입력으로 같은 결과를 내는 비용 큰 계산을 한 프로세스 안에서 반복할 때 `@cache`를 사용합니다. 처음 계산한 결과를 인자로 찾을 수 있게 저장하고, 다음 호출은 계산 대신 저장된 값을 돌려줍니다.
+
+```python
+from functools import cache
+
+@cache
+def shipping_fee(zone: str) -> int:
+    print(f'calculate: {zone}')
+    return {'seoul': 3000, 'busan': 3500}[zone]
+
+print(shipping_fee('seoul'))
+print(shipping_fee('seoul'))
+```
+
+```text
+calculate: seoul
+3000
+3000
+```
+
+두 번째 호출에는 `calculate`가 출력되지 않습니다. `cache()`는 크기 제한이 없으므로 가능한 입력값이 작고 안정적인 경우에만 사용합니다.
+
+## 캐시 함수의 인자는 해시 가능해야 합니다
+
+캐시는 인자를 딕셔너리의 키로 사용합니다. 따라서 `list`, `dict`, `set`처럼 변경 가능한 값은 그대로 넣을 수 없습니다.
+
+```python
+from functools import cache
+
+@cache
+def order_total(amounts: tuple[int, ...]) -> int:
+    return sum(amounts)
+
+print(order_total((12000, 8000)))
+```
+
+```text
+20000
+```
+
+목록 입력이 필요하면 함수 경계에서 `tuple(amounts)`로 바꾼 뒤 캐시 함수에 전달합니다. 호출 후 내용이 바뀔 수 있는 객체를 캐시 키나 결과로 쓰면, 저장된 값의 의미도 흐려집니다.
+
+## lru_cache로 캐시 크기를 제한하기
+
+오래 실행되는 프로그램에서 입력 종류가 계속 늘 수 있다면 `@lru_cache(maxsize=...)`를 씁니다. 가장 오래 사용하지 않은 항목부터 제거하므로, 최근 요청이 다시 올 가능성이 높은 조회에 적합합니다.
+
+```python
+from functools import lru_cache
+
+@lru_cache(maxsize=2)
+def product_name(product_id: str) -> str:
+    print(f'load: {product_id}')
+    return {'P-1': '노트', 'P-2': '펜', 'P-3': '파우치'}[product_id]
+
+print(product_name('P-1'))
+print(product_name('P-2'))
+print(product_name('P-1'))
+print(product_name('P-3'))
+print(product_name.cache_info())
+```
+
+```text
+load: P-1
+노트
+load: P-2
+펜
+노트
+load: P-3
+파우치
+CacheInfo(hits=1, misses=3, maxsize=2, currsize=2)
+```
+
+`cache_info()`로 재사용 횟수를 확인해 크기를 조정합니다. `maxsize=None`은 `cache()`처럼 제한 없는 캐시가 됩니다.
+
+## 데이터가 바뀌면 cache_clear로 무효화하기
+
+캐시는 데이터 변경을 알아채지 못합니다. 상품 이름을 수정한 뒤 오래된 결과를 계속 쓰지 않으려면, 변경 작업과 같은 흐름에서 `cache_clear()`를 호출합니다.
+
+```python
+from functools import lru_cache
+
+products = {'P-1': '노트'}
+
+@lru_cache(maxsize=128)
+def product_name(product_id: str) -> str:
+    return products[product_id]
+
+print(product_name('P-1'))
+products['P-1'] = '하드커버 노트'
+product_name.cache_clear()
+print(product_name('P-1'))
+```
+
+```text
+노트
+하드커버 노트
+```
+
+캐시를 비우는 범위는 데이터 소유 경계에 맞춥니다. 여러 프로세스나 여러 서버의 캐시는 서로 공유되지 않으므로, 분산 환경의 일관성 문제를 `lru_cache()`만으로 해결할 수는 없습니다.
+
+## cached_property로 객체마다 한 번 계산하기
+
+객체가 만들어진 뒤 거의 바뀌지 않고, 속성 계산이 비쌀 때 `@cached_property`를 사용합니다. 첫 조회 때 계산한 값을 인스턴스 속성에 저장하고 이후에는 그 값을 읽습니다.
+
+```python
+from functools import cached_property
+
+class Order:
+    def __init__(self, amounts: list[int]) -> None:
+        self.amounts = amounts
+
+    @cached_property
+    def total(self) -> int:
+        print('calculate total')
+        return sum(self.amounts)
+
+order = Order([12000, 8000])
+print(order.total)
+print(order.total)
+```
+
+```text
+calculate total
+20000
+20000
+```
+
+`cached_property`는 함수 전체가 아니라 인스턴스별로 값을 저장합니다. 변경이 잦은 `amounts`에 이 예제를 그대로 쓰면 합계가 오래될 수 있으므로, 불변 데이터나 명시적 무효화가 가능한 값에 사용합니다.
+
+## cached_property 값은 del로 다시 계산하게 합니다
+
+계산을 다시 해야 한다면 저장된 속성을 삭제합니다. 다음 접근에서만 다시 실행되므로, 필요한 시점에 비용을 지불할 수 있습니다.
+
+```python
+from functools import cached_property
+
+class Order:
+    def __init__(self, amounts: list[int]) -> None:
+        self.amounts = amounts
+
+    @cached_property
+    def total(self) -> int:
+        return sum(self.amounts)
+
+order = Order([12000, 8000])
+print(order.total)
+order.amounts.append(5000)
+del order.total
+print(order.total)
+```
+
+```text
+20000
+25000
+```
+
+`cached_property`는 인스턴스에 쓸 수 있는 `__dict__`가 필요합니다. `__slots__`만 선언한 클래스처럼 인스턴스 딕셔너리가 없는 구조에는 사용할 수 없습니다.
+
+## singledispatch로 첫 번째 인자의 타입을 나누기
+
+외부에서 들어온 값을 타입별로 같은 목적의 문자열로 바꿀 때 `@singledispatch`를 사용합니다. 첫 번째 인자의 런타임 타입으로 구현을 고르고, 등록하지 않은 타입은 기본 함수가 처리합니다.
+
+```python
+from functools import singledispatch
+
+@singledispatch
+def format_value(value: object) -> str:
+    return str(value)
+
+@format_value.register
+def _(value: int) -> str:
+    return f'{value:,}원'
+
+@format_value.register
+def _(value: list) -> str:
+    return ', '.join(map(str, value))
+
+print(format_value(12000))
+print(format_value(['new', 'paid']))
+```
+
+```text
+12,000원
+new, paid
+```
+
+`singledispatch`는 두 번째 이후 인자나 값의 내용이 아니라 첫 번째 인자의 타입만 봅니다. `list[int]`와 `list[str]`를 런타임에 다르게 처리하는 용도가 아니며, 그런 입력 검증은 일반 코드에서 명시적으로 합니다.
