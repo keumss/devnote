@@ -1,12 +1,13 @@
 ---
-title: "Part 4. 중급: 일관된 CRUD API"
+title: "Part 4. 중급: CRUD 계약과 자동화 테스트"
 ---
 
-## 생성·수정·공개 모델의 책임 분리하기
+## 입력·수정·공개 모델과 저장소 분리하기
 
-클라이언트가 보내는 값, 부분 수정 값, 서버가 공개하는 값은 서로 다릅니다. 하나의 모델을 모두에 재사용하면 서버가 정해야 할 ID와 작성자를 클라이언트가 지정하거나 내부 필드가 응답에 노출될 수 있습니다.
+클라이언트 입력, 부분 수정, 공개 응답의 필드는 서로 다릅니다. 서버가 정하는 ID·작성자·생성 시각은 입력 모델에서 제외합니다.
 
 ```python
+# app/models.py
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,7 +25,6 @@ class PostUpdate(BaseModel):
 
 class PostPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-
     id: int
     title: str
     content: str
@@ -32,15 +32,14 @@ class PostPublic(BaseModel):
     created_at: datetime
 ```
 
-`PostCreate`에는 `id`, `author`, `created_at`이 없습니다. 이 값들은 인증 결과와 서버 상태에서 만들며, 클라이언트 입력을 그대로 신뢰하지 않습니다.
-
-## 학습용 인메모리 저장소의 계약 만들기
-
-라우터와 저장 방식을 분리하면 HTTP 처리와 데이터 저장을 각각 테스트할 수 있습니다. 다음 저장소는 FastAPI 학습을 위한 최소 구현이며 서버 재시작 시 데이터가 사라집니다.
+학습용 저장소는 서버 재시작 시 사라지고 여러 워커 사이에 공유되지 않습니다. 운영에서는 같은 메서드 계약을 SQLModel 저장소로 교체하고 DB UNIQUE 제약과 트랜잭션을 사용합니다.
 
 ```python
+# app/repository.py
 from dataclasses import dataclass
 from datetime import datetime, timezone
+
+from app.models import PostCreate
 
 
 @dataclass
@@ -61,19 +60,21 @@ class PostRepository:
         self._posts: dict[int, PostRecord] = {}
         self._next_id = 1
 
-    def add(self, data: PostCreate, author: str) -> PostRecord:
-        if any(
-            post.title.casefold() == data.title.casefold()
-            for post in self._posts.values()
-        ):
-            raise DuplicateTitleError(data.title)
+    def title_exists(self, title: str, exclude_id: int | None = None) -> bool:
+        return any(
+            item.id != exclude_id and item.title.casefold() == title.casefold()
+            for item in self._posts.values()
+        )
 
+    def add(self, data: PostCreate, author: str) -> PostRecord:
+        if self.title_exists(data.title):
+            raise DuplicateTitleError(data.title)
         post = PostRecord(
-            id=self._next_id,
-            title=data.title,
-            content=data.content,
-            author=author,
-            created_at=datetime.now(timezone.utc),
+            self._next_id,
+            data.title,
+            data.content,
+            author,
+            datetime.now(timezone.utc),
         )
         self._posts[post.id] = post
         self._next_id += 1
@@ -83,27 +84,27 @@ class PostRepository:
         return self._posts.get(post_id)
 
     def all(self) -> list[PostRecord]:
-        return sorted(self._posts.values(), key=lambda post: post.id)
+        return sorted(self._posts.values(), key=lambda item: item.id)
 
     def delete(self, post_id: int) -> None:
         del self._posts[post_id]
-
-
-repository = PostRepository()
 ```
 
-여러 워커의 메모리는 공유되지 않으므로 이 저장소를 운영에 사용하면 요청을 처리한 워커에 따라 데이터가 달라집니다. 운영에서는 SQLModel 같은 데이터 계층과 공유 DB를 사용하되 라우터의 HTTP 계약은 유지합니다.
+## 생성·목록·검색·상세 조회 구현하기
 
-## 생성과 제한된 목록 조회 구현하기
-
-생성 성공에는 201을 사용하고 목록에는 검증된 `offset`과 `limit`을 적용합니다. 이 단계에서는 인증을 배우기 전이므로 서버가 정한 `demo-user`를 작성자로 사용하며 Part 5에서 현재 사용자 의존성으로 교체합니다.
+저장소를 의존성으로 제공하면 테스트에서 교체할 수 있습니다. 고정된 `/search`는 `/{post_id}`보다 먼저 등록합니다.
 
 ```python
+# app/api/posts.py
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.models import PostCreate, PostPublic, PostUpdate
+from app.repository import DuplicateTitleError, PostRecord, PostRepository
+
 router = APIRouter(prefix="/posts", tags=["posts"])
+repository = PostRepository()
 
 
 def get_repository() -> PostRepository:
@@ -113,10 +114,17 @@ def get_repository() -> PostRepository:
 Repo = Annotated[PostRepository, Depends(get_repository)]
 
 
+def get_post_or_404(post_id: int, repository: PostRepository) -> PostRecord:
+    post = repository.get(post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Post not found")
+    return post
+
+
 @router.post("", response_model=PostPublic, status_code=status.HTTP_201_CREATED)
-def create_post(post: PostCreate, repository: Repo) -> PostRecord:
+def create_post(data: PostCreate, repository: Repo) -> PostRecord:
     try:
-        return repository.add(post, author="demo-user")
+        return repository.add(data, author="demo-user")
     except DuplicateTitleError as exc:
         raise HTTPException(status_code=409, detail="Title already exists") from exc
 
@@ -128,101 +136,112 @@ def read_posts(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> list[PostRecord]:
     return repository.all()[offset : offset + limit]
-```
 
-```bash
-curl --silent --request POST http://127.0.0.1:8000/posts \
-  --header 'Content-Type: application/json' \
-  --data '{"title":"첫 글","content":"FastAPI CRUD"}'
-```
 
-```json
-{"id":1,"title":"첫 글","content":"FastAPI CRUD","author":"demo-user","created_at":"2026-07-13T12:00:00Z"}
-```
-
-`created_at`은 요청 시점에 따라 달라집니다. 같은 제목을 다시 생성하면 저장소의 `DuplicateTitleError`를 409 응답으로 바꿉니다. 운영에서는 요청 전 조회만 믿지 말고 DB의 UNIQUE 제약과 충돌 처리를 함께 사용합니다.
-
-## 검색을 동적 상세 경로보다 먼저 등록하기
-
-검색은 고정 경로이므로 `/{post_id}`보다 앞에 선언합니다. 검색어가 없거나 지나치게 길면 함수 실행 전에 422로 거절합니다.
-
-```python
 @router.get("/search", response_model=list[PostPublic])
 def search_posts(
     repository: Repo,
-    q: Annotated[str, Query(min_length=1, max_length=100)],
+    q: Annotated[str, Query(min_length=1)],
 ) -> list[PostRecord]:
     keyword = q.casefold()
-    return [
-        post
-        for post in repository.all()
-        if keyword in post.title.casefold() or keyword in post.content.casefold()
-    ]
+    return [item for item in repository.all() if keyword in item.title.casefold()]
 
 
 @router.get("/{post_id}", response_model=PostPublic)
 def read_post(post_id: int, repository: Repo) -> PostRecord:
-    post = repository.get(post_id)
-    if post is None:
-        raise HTTPException(status_code=404, detail="Post not found")
-    return post
+    return get_post_or_404(post_id, repository)
 ```
 
-```bash
-curl --silent "http://127.0.0.1:8000/posts/search?q=crud"
-```
+생성은 201과 공개 모델을 반환합니다. 검색 결과가 없으면 빈 배열, 특정 ID가 없으면 404를 반환합니다.
 
-```json
-[{"id":1,"title":"첫 글","content":"FastAPI CRUD","author":"demo-user","created_at":"2026-07-13T12:00:00Z"}]
-```
+## PATCH와 DELETE의 경계 조건 처리하기
 
-`created_at`은 생성 시점에 따라 달라집니다. 목록에 일치하는 글이 없으면 오류가 아니라 빈 배열 `[]`을 반환합니다. 특정 ID 조회 결과가 없을 때만 404를 사용합니다.
-
-## PATCH에서 생략과 null을 구분해 수정하기
-
-`exclude_unset=True`는 클라이언트가 실제로 보낸 필드만 반환합니다. 이 API에서는 제목과 본문을 `null`로 지우는 것을 허용하지 않으므로 명시적인 `null`은 422로 거절합니다.
-
-```python
-@router.patch("/{post_id}", response_model=PostPublic)
-def update_post(
-    post_id: int,
-    update: PostUpdate,
-    repository: Repo,
-) -> PostRecord:
-    post = repository.get(post_id)
-    if post is None:
-        raise HTTPException(status_code=404, detail="Post not found")
-
-    changes = update.model_dump(exclude_unset=True)
-    if not changes:
-        return post
-    if any(value is None for value in changes.values()):
-        raise HTTPException(
-            status_code=422,
-            detail="title and content cannot be null",
-        )
-
-    for field, value in changes.items():
-        setattr(post, field, value)
-    return post
-```
-
-빈 문자열은 `PostUpdate`의 `min_length`에서 먼저 거절됩니다. 필드가 생략되었는지, `null`인지, 빈 문자열인지 각각 다른 입력이라는 점을 테스트로 고정합니다.
-
-## 삭제 결과와 오류 상태를 명확히 반환하기
-
-삭제가 성공하면 본문 없는 204를 반환합니다. 이미 없어진 리소스를 다시 삭제하면 성공처럼 숨기지 않고 404를 반환하도록 계약을 정합니다.
+`exclude_unset=True`는 실제로 보낸 필드만 남깁니다. 이 API는 명시적인 `null`을 허용하지 않으며 빈 PATCH는 현재 리소스를 그대로 반환합니다.
 
 ```python
 from fastapi import Response
 
 
-@router.delete("/{post_id}", status_code=204)
+@router.patch("/{post_id}", response_model=PostPublic)
+def update_post(post_id: int, update: PostUpdate, repository: Repo) -> PostRecord:
+    post = get_post_or_404(post_id, repository)
+    changes = update.model_dump(exclude_unset=True)
+    if any(value is None for value in changes.values()):
+        raise HTTPException(status_code=422, detail="Fields cannot be null")
+    title = changes.get("title")
+    if title and repository.title_exists(title, exclude_id=post.id):
+        raise HTTPException(status_code=409, detail="Title already exists")
+    for field, value in changes.items():
+        setattr(post, field, value)
+    return post
+
+
+@router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(post_id: int, repository: Repo) -> Response:
-    if repository.get(post_id) is None:
-        raise HTTPException(status_code=404, detail="Post not found")
+    get_post_or_404(post_id, repository)
     repository.delete(post_id)
-    return Response(status_code=204)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 ```
 
-201·204·404·422 같은 상태 코드는 클라이언트의 분기 기준입니다. 성공 응답 본문에 `{"ok": false}`를 넣는 방식보다 HTTP 상태와 응답 모델로 결과를 표현해야 자동 문서와 테스트도 같은 계약을 사용합니다.
+빈 문자열은 모델의 `min_length`에서 422가 됩니다. 성공한 DELETE는 본문 없는 204를 반환합니다.
+
+## 404·409·422 오류의 책임 구분하기
+
+```text
+404  요청한 게시물이 없음
+409  현재 저장 상태와 제목이 충돌함
+422  경로·쿼리·본문 검증 규칙을 위반함
+```
+
+잘못된 ID 타입과 페이지 범위는 FastAPI가 경로 실행 전에 422로 처리합니다. 저장소 오류는 라우터가 HTTP 상태로 바꿉니다. 저장 기술을 교체해도 이 공개 계약은 유지합니다.
+
+## TestClient와 dependency_overrides로 격리하기
+
+`TestClient`는 실제 포트를 열지 않습니다. context manager는 lifespan을 실행하며, 테스트마다 새 저장소를 주입하면 실행 순서에 의존하지 않습니다.
+
+```python
+# tests/conftest.py
+from collections.abc import Iterator
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.api.posts import get_repository
+from app.main import app
+from app.repository import PostRepository
+
+
+@pytest.fixture
+def client() -> Iterator[TestClient]:
+    test_repository = PostRepository()
+    app.dependency_overrides[get_repository] = lambda: test_repository
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.clear()
+```
+
+override 키는 라우터가 사용한 원래 의존성 함수 객체여야 합니다. 테스트가 끝나면 반드시 지워 다음 테스트로 상태가 새지 않게 합니다.
+
+## 정상·검증·충돌·누락 시나리오 테스트하기
+
+내부 구현보다 상태 코드와 공개 JSON을 검사합니다.
+
+```python
+def test_post_contract(client) -> None:
+    created = client.post(
+        "/posts",
+        json={"title": "테스트", "content": "계약 확인"},
+    )
+    assert created.status_code == 201
+    post_id = created.json()["id"]
+
+    assert client.get("/posts/search", params={"q": "테스트"}).status_code == 200
+    assert client.patch(f"/posts/{post_id}", json={"title": None}).status_code == 422
+    assert client.get("/posts", params={"limit": 101}).status_code == 422
+    assert client.delete(f"/posts/{post_id}").status_code == 204
+    assert client.get(f"/posts/{post_id}").status_code == 404
+```
+
+같은 제목을 두 번 생성했을 때 409도 추가합니다. Part 5에서는 401·403, Part 6에서는 업로드 실패 후 정리를 이 테스트 흐름에 연결합니다.
