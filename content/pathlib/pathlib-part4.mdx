@@ -1,0 +1,270 @@
+---
+title: "Part 4. 실전: 테스트하고 운영할 수 있는 노트 인벤토리"
+---
+
+## 경로 계산, 탐색, 출력을 분리하기
+
+실전 파일 도구는 경로 입력을 받는 코드, 파일 트리를 탐색하는 코드, 결과를 렌더링하고 쓰는 코드를 분리해야 합니다. 각 함수가 `Path`를 주고받으면 내부에서 문자열 경로를 다시 해석할 필요가 없고, 테스트에서 임시 디렉터리를 그대로 전달할 수 있습니다.
+
+이번 예제는 지정한 루트 아래의 Markdown 파일을 찾아 상대 경로와 바이트 크기를 보고서로 만듭니다. `.git`, `.venv`, `__pycache__`는 처음부터 순회하지 않고, 결과는 운영체제와 탐색 순서에 관계없이 정렬합니다.
+
+```python
+from dataclasses import dataclass
+from pathlib import Path
+
+@dataclass(frozen=True)
+class Entry:
+    path: Path
+    size: int
+
+def collect_entries(root: Path) -> list[Entry]:
+    ...
+
+def render_report(entries: list[Entry]) -> str:
+    ...
+
+def write_report(output: Path, report: str) -> None:
+    ...
+```
+
+`Entry.path`에는 루트 기준 상대 경로를 저장합니다. 절대 경로를 보고서에 남기면 실행 환경의 사용자 이름과 디렉터리 구조가 노출되고 다른 머신에서 결과를 비교하기도 어렵습니다. 파일 크기는 `len(text)`가 아니라 `stat().st_size`로 읽어 인코딩과 무관한 실제 바이트 수를 기록합니다.
+
+## Path.walk로 노트 인벤토리 구현하기
+
+다음 `note_inventory.py`는 Python 3.12에서 실행할 수 있는 완성형 예제입니다. 순회 자체가 실패하거나 개별 파일의 메타데이터를 읽지 못하면 불완전한 보고서를 만들지 않고 상태 코드 1로 종료합니다.
+
+```python
+# note_inventory.py
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+
+@dataclass(frozen=True)
+class Entry:
+    path: Path
+    size: int
+
+def stop_on_walk_error(error: OSError) -> None:
+    raise error
+
+def collect_entries(root: Path) -> list[Entry]:
+    resolved_root = root.resolve(strict=True)
+    if not resolved_root.is_dir():
+        raise NotADirectoryError(f'디렉터리가 아닙니다: {root}')
+
+    ignored = {'.git', '.venv', '__pycache__'}
+    entries: list[Entry] = []
+
+    for directory, dirnames, filenames in resolved_root.walk(
+        on_error=stop_on_walk_error,
+    ):
+        dirnames[:] = sorted(
+            name for name in dirnames if name not in ignored
+        )
+
+        for name in sorted(filenames):
+            path = directory / name
+            if path.suffix.lower() not in {'.md', '.mdx'}:
+                continue
+
+            try:
+                if not path.is_file():
+                    continue
+                size = path.stat().st_size
+            except OSError as error:
+                raise OSError(f'메타데이터 읽기 실패: {path}') from error
+
+            entries.append(Entry(
+                path=path.relative_to(resolved_root),
+                size=size,
+            ))
+
+    return sorted(entries, key=lambda entry: entry.path.as_posix())
+
+def render_report(entries: list[Entry]) -> str:
+    lines = [
+        f'files={len(entries)}',
+        f'bytes={sum(entry.size for entry in entries)}',
+    ]
+    lines.extend(
+        f'{entry.path.as_posix()}\t{entry.size}'
+        for entry in entries
+    )
+    return '\n'.join(lines) + '\n'
+
+def write_report(output: Path, report: str) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f'.{output.name}.tmp')
+
+    try:
+        temporary.write_text(report, encoding='utf-8')
+        temporary.replace(output)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description='Markdown 파일의 상대 경로와 크기를 기록합니다.',
+    )
+    parser.add_argument('root', type=Path)
+    parser.add_argument('-o', '--output', type=Path, required=True)
+    return parser
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    try:
+        entries = collect_entries(args.root)
+        write_report(args.output, render_report(entries))
+    except OSError as error:
+        print(f'note-inventory: {error}', file=sys.stderr)
+        return 1
+
+    print(f'{len(entries)}개 파일 기록: {args.output}')
+    return 0
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+`dirnames[:] = ...`는 새 목록을 변수에 대입하는 것이 아니라 `walk()`가 참조하는 기존 목록을 수정합니다. 이 때문에 제외한 디렉터리 아래에는 아예 들어가지 않습니다. 결과를 마지막에 다시 정렬해 디렉터리 방문 순서와 무관한 보고서를 만듭니다.
+
+다음 구조에서 `draft.txt`는 확장자 조건에 맞지 않아 제외됩니다.
+
+```text
+sample/
+├── guide/
+│   └── api.mdx       # "API\n", 4바이트
+├── draft.txt
+└── intro.md          # "Hello\n", 6바이트
+```
+
+```bash
+python note_inventory.py sample --output build/inventory.txt
+cat build/inventory.txt
+```
+
+```text
+2개 파일 기록: build/inventory.txt
+files=2
+bytes=10
+guide/api.mdx	4
+intro.md	6
+```
+
+## 임시 파일과 replace로 보고서 교체하기
+
+보고서 대상에 직접 `write_text()`를 호출하면 쓰기 도중 프로세스가 중단되어 기존의 정상 보고서까지 일부 내용으로 잘릴 수 있습니다. 예제는 같은 디렉터리의 임시 파일을 완전히 쓴 뒤 `replace()`로 대상을 교체합니다.
+
+```python
+def write_report(output: Path, report: str) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f'.{output.name}.tmp')
+
+    try:
+        temporary.write_text(report, encoding='utf-8')
+        temporary.replace(output)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
+```
+
+임시 파일을 대상과 같은 디렉터리에 두면 서로 다른 파일 시스템 사이의 이동 실패를 피하고 교체 가능성을 높입니다. `replace()`가 성공하면 기존 대상 파일은 덮어쓰며 새 대상 `Path`를 반환합니다. 파일 내용의 디스크 영속성까지 보장해야 하는 시스템은 `flush()`와 `fsync()` 정책도 별도로 설계해야 합니다.
+
+이 단순 구현은 같은 출력 경로에 인벤토리 프로세스 하나만 쓴다는 전제입니다. 여러 프로세스가 동시에 실행될 수 있다면 고유한 임시 파일을 만들고 잠금 또는 마지막 작성자 정책을 정해야 합니다. 실패 정리에서도 `PermissionError`까지 무조건 숨기면 원인을 놓칠 수 있으므로, 제품 코드에서는 본래 쓰기 오류와 정리 오류 중 무엇을 보고할지도 로그 정책으로 결정합니다.
+
+## pytest의 tmp_path로 실제 파일 동작 검증하기
+
+`tmp_path` 픽스처는 테스트마다 격리된 `Path`를 제공합니다. 모의 객체로 모든 파일 메서드를 흉내 내기보다 작은 실제 디렉터리 트리를 만들면 경로 조합, 정렬, 인코딩, 파일 크기를 함께 검증할 수 있습니다.
+
+```python
+# test_note_inventory.py
+from pathlib import Path
+
+from note_inventory import collect_entries, main, render_report
+
+def test_collects_markdown_in_stable_order(tmp_path: Path) -> None:
+    guide = tmp_path / 'guide'
+    guide.mkdir()
+    (guide / 'api.mdx').write_text('API\n', encoding='utf-8')
+    (tmp_path / 'intro.md').write_text('Hello\n', encoding='utf-8')
+    (tmp_path / 'draft.txt').write_text('skip', encoding='utf-8')
+
+    report = render_report(collect_entries(tmp_path))
+
+    assert report == (
+        'files=2\n'
+        'bytes=10\n'
+        'guide/api.mdx\t4\n'
+        'intro.md\t6\n'
+    )
+
+def test_ignores_configured_directories(tmp_path: Path) -> None:
+    cache = tmp_path / '__pycache__'
+    cache.mkdir()
+    (cache / 'hidden.md').write_text('hidden', encoding='utf-8')
+
+    assert collect_entries(tmp_path) == []
+
+def test_main_writes_report(tmp_path: Path, capsys) -> None:
+    root = tmp_path / 'notes'
+    root.mkdir()
+    (root / 'one.md').write_text('one', encoding='utf-8')
+    output = tmp_path / 'build' / 'inventory.txt'
+
+    status = main([str(root), '--output', str(output)])
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert output.read_text(encoding='utf-8') == (
+        'files=1\nbytes=3\none.md\t3\n'
+    )
+    assert captured.err == ''
+
+def test_rejects_missing_root(tmp_path: Path, capsys) -> None:
+    output = tmp_path / 'inventory.txt'
+
+    status = main([str(tmp_path / 'missing'), '-o', str(output)])
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert not output.exists()
+    assert 'note-inventory:' in captured.err
+```
+
+타입 힌트의 `Path`는 pytest가 값을 변환하게 하는 장치가 아니라 함수 계약을 설명합니다. `tmp_path` 자체가 이미 `Path`이므로 애플리케이션과 테스트가 같은 경로 API를 사용합니다.
+
+심볼릭 링크 정책이 중요하다면 지원하는 환경에서 루트 밖을 가리키는 링크와 깨진 링크도 추가합니다. Windows CI에서는 심볼릭 링크 권한 차이를 고려해 기능 탐지 후 건너뛰거나 별도 권한 설정을 문서화합니다.
+
+## 운영 실패와 경계 입력 점검하기
+
+배포 전에는 정상 트리뿐 아니라 없는 루트, 파일인 루트, 읽기 권한이 없는 디렉터리, 깨진 심볼릭 링크, 매우 깊은 트리, 이미 존재하는 보고서를 확인합니다. 오류 메시지는 표준 오류, 성공 결과는 표준 출력으로 분리하고 자동화가 종료 상태를 검사할 수 있게 합니다.
+
+```bash
+set -eu
+
+python note_inventory.py sample -o build/inventory.txt >/dev/null
+test -s build/inventory.txt
+
+set +e
+python note_inventory.py missing -o build/inventory.txt >/dev/null 2>error.txt
+status=$?
+set -e
+
+test "$status" -eq 1
+test -s error.txt
+```
+
+모든 검사가 통과하면 이 스크립트는 출력 없이 상태 코드 0으로 끝납니다.
+
+문제가 생기면 다음 경계를 순서대로 확인합니다.
+
+- 실행 위치마다 결과가 다르면 상대 경로가 어느 현재 작업 디렉터리를 기준으로 만들어졌는지 확인합니다.
+- 결과 순서가 흔들리면 `iterdir()`, `glob()`, `walk()` 결과를 공개하기 전에 정렬했는지 확인합니다.
+- 일부 디렉터리가 조용히 빠지면 `walk(on_error=...)`의 정책과 접근 권한을 확인합니다.
+- 루트 밖 파일이 포함되면 심볼릭 링크를 따라가는 코드와 `resolve()` 이후의 포함 관계를 확인합니다.
+- 이전 보고서가 비면 대상에 직접 쓰는 대신 같은 디렉터리의 임시 파일을 완성한 뒤 교체하는지 확인합니다.
+
+파일 시스템은 애플리케이션 실행 중에도 바뀔 수 있습니다. 테스트는 결정적인 계약을 고정하지만 모든 경쟁 조건을 제거하지는 않습니다. 운영에서는 입력 디렉터리의 소유권과 변경 주체, 실패 시 재시도 가능 여부, 불완전한 결과를 허용하는지를 함께 정해야 안전한 `pathlib` 코드가 됩니다.
