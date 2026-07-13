@@ -1,76 +1,132 @@
 ---
-title: "Part 1. 초급: 명령줄 인터페이스와 첫 파서"
+title: "Part 1. 초급: 명령줄 토큰과 첫 파서"
 ---
 
-## argparse가 해결하는 명령줄 입력 문제
+## argparse가 명령줄 인터페이스에 필요한 이유
 
-`argparse`는 Python 3.12 표준 라이브러리에서 명령줄 인자를 읽고 검증하는 도구입니다. 프로그램이 필요한 입력을 선언하면 사용법(`--help`)과 오류 메시지를 자동으로 만들고, `sys.argv`의 문자열을 읽기 쉬운 값으로 바꿔 줍니다. 이 섹션에서는 단일 명령 프로그램에서 시작해 하위 명령, 테스트 가능한 설계, 운영 시 주의점까지 다룹니다.
+`argparse`는 Python 3.12 표준 라이브러리의 명령줄 인자 파서입니다. 프로그램이 받을 위치 인자, 옵션, 플래그를 선언하면 입력을 검증하고 `--help`와 사용법 오류를 자동으로 만듭니다. 직접 `sys.argv`의 인덱스를 읽는 코드보다 입력 계약이 한곳에 드러나고, 빠진 값이나 잘못된 타입을 일관되게 거부할 수 있습니다.
 
-```bash
-python backup.py --help
-python backup.py ./data --destination ./archive
+이 섹션에서는 단일 명령의 작은 파서부터 여러 하위 명령, 테스트 가능한 실행 구조, 파일 처리 오류와 종료 상태까지 Python 3.12를 기준으로 다룹니다. 핵심 흐름은 다음과 같습니다.
+
+1. 셸이 명령줄을 문자열 토큰 목록으로 나눕니다.
+2. `ArgumentParser`가 토큰을 소비하고 변환·검증합니다.
+3. `parse_args()`가 결과를 `Namespace`로 반환합니다.
+4. 애플리케이션이 검증된 값으로 실제 작업을 수행합니다.
+
+파싱은 입력 문법을 확인하는 단계이지, 파일을 쓰거나 네트워크에 연결하는 실행 단계가 아닙니다. 이 경계를 지키면 도움말, 오류 처리, 테스트가 단순해집니다.
+
+## 셸이 만든 토큰과 sys.argv 이해하기
+
+Python은 사용자가 입력한 명령줄 원문이 아니라 셸이 이미 나눈 토큰을 받습니다. `sys.argv[0]`은 실행한 스크립트 이름이고, 실제 인자는 `sys.argv[1:]`입니다.
+
+```python
+# show_args.py
+import sys
+
+print(sys.argv)
 ```
 
-셸은 공백으로 구분한 인자를 프로그램에 전달합니다. 따라서 경로에 공백이 있다면 셸에서 따옴표로 감싸야 하며, `argparse`는 이미 나뉜 인자 목록을 해석한다는 점을 이해하는 것이 출발점입니다.
+```bash
+python show_args.py "quarter report.md" --tag "red blue"
+```
 
-## ArgumentParser와 parse_args로 입력 받기
+```text
+['show_args.py', 'quarter report.md', '--tag', 'red blue']
+```
 
-`ArgumentParser`에 인자의 규칙을 추가한 다음 `parse_args()`를 호출합니다. 반환값은 각 인자를 속성으로 가진 `argparse.Namespace`입니다. 인자 없이 `parse_args()`를 호출하면 현재 프로세스의 `sys.argv[1:]`을 읽으므로, 일반적인 실행 파일에서는 별도 전달이 필요 없습니다.
+따옴표는 셸이 공백을 포함한 값을 하나의 토큰으로 묶는 문법이며 Python에 전달되지 않습니다. 따라서 공백이 든 경로를 지원하기 위해 `argparse`에서 따로 문자열을 합치면 안 됩니다. 셸마다 변수 확장과 따옴표 규칙이 다를 수 있으므로 애플리케이션은 전달받은 토큰을 기준으로 동작해야 합니다.
+
+테스트에서는 `"--tag red blue".split()`처럼 실제 명령줄 문자열을 임의로 나누지 말고 `['--tag', 'red blue']`처럼 토큰 목록을 직접 만듭니다. `str.split()`은 셸의 따옴표 규칙을 재현하지 못합니다.
+
+## ArgumentParser와 parse_args로 첫 입력 받기
+
+파서를 만들고 `add_argument()`로 입력 규칙을 등록한 뒤 `parse_args()`를 호출합니다. 인자 없이 호출하면 자동으로 `sys.argv[1:]`을 사용합니다.
 
 ```python
 # greet.py
 import argparse
 
-parser = argparse.ArgumentParser(description='이름을 받아 인사합니다.')
+parser = argparse.ArgumentParser(
+    prog='greet',
+    description='이름을 받아 인사합니다.',
+)
 parser.add_argument('name', help='인사할 이름')
+parser.add_argument('--times', type=int, default=1, help='인사할 횟수')
 args = parser.parse_args()
 
-print(f'안녕하세요, {args.name}!')
+for _ in range(args.times):
+    print(f'안녕하세요, {args.name}!')
 ```
 
 ```bash
-python greet.py Minji
-# 안녕하세요, Minji!
+python greet.py Minji --times 2
 ```
 
-`description`은 도움말의 사용법 아래에 나타납니다. 실제 배포 명령과 도움말의 프로그램 이름을 일치시키고 싶다면 `ArgumentParser(prog='greet')`처럼 `prog`를 명시할 수 있습니다.
+```text
+안녕하세요, Minji!
+안녕하세요, Minji!
+```
 
-## 위치 인자와 선택 인자를 구분하기
+`Namespace`의 `args.name`과 `args.times`에는 각각 `str`과 `int`가 저장됩니다. `--times many`처럼 변환할 수 없는 입력이나 빠진 `name`은 본문 실행 전에 사용법 오류가 됩니다. `-h`와 `--help`는 별도로 등록하지 않아도 자동으로 제공됩니다.
 
-이름만 적은 `add_argument('path')`는 위치 인자입니다. 순서로 의미가 정해지므로 파일 경로처럼 반드시 필요한 핵심 입력에 적합합니다. `-o`, `--output`처럼 대시로 시작하는 선택 인자는 순서와 무관하며, 기본값이 있거나 부가 동작을 조절할 때 사용합니다.
+`prog`는 도움말과 오류에 표시할 실행 이름입니다. 배포 후 사용자가 `greet`로 실행할 예정이라면 명시하는 것이 예제와 테스트를 안정적으로 만듭니다. 호출 방식에 맞는 이름을 자동으로 표시하는 편이 좋다면 생략합니다.
+
+## 위치 인자와 옵션의 역할 구분하기
+
+대시 없이 등록한 `source`는 순서로 의미가 정해지는 위치 인자입니다. 작업 대상처럼 명령의 핵심이면서 보통 반드시 필요한 값에 적합합니다. `-o`, `--output`은 이름으로 의미를 찾는 옵션입니다. 순서와 무관하고 생략 가능한 설정이나 동작 변경에 적합합니다.
 
 ```python
 import argparse
 
-parser = argparse.ArgumentParser(prog='copy')
-parser.add_argument('source', help='복사할 원본 파일')
-parser.add_argument('-o', '--output', default='copied.txt', help='결과 파일')
-args = parser.parse_args()
+parser = argparse.ArgumentParser(prog='copy-note')
+parser.add_argument('source', help='복사할 원본 노트')
+parser.add_argument('-o', '--output', default='copy.md', help='결과 경로')
 
-print(f'{args.source} -> {args.output}')
+args = parser.parse_args(['draft.md', '--output', 'published.md'])
+print(args)
 ```
 
-```bash
-python copy.py report.txt --output backup.txt
-python copy.py report.txt  # output은 copied.txt
+```text
+Namespace(source='draft.md', output='published.md')
 ```
 
-긴 옵션과 짧은 옵션을 함께 제공하면 `args.output`처럼 긴 이름에서 하이픈을 밑줄로 바꾼 속성으로 접근합니다. 값을 받는 선택 인자를 꼭 지정해야 한다면 `required=True`를 쓸 수 있지만, 사용자에게 더 자연스러운 위치 인자가 아닌지 먼저 검토합니다.
+긴 옵션의 `--output-dir`는 기본적으로 `args.output_dir`에 저장됩니다. 속성 이름을 바꾸는 `dest`도 있지만, 공개 옵션과 내부 이름이 달라져 읽기 어려울 수 있으므로 호환성 유지처럼 분명한 이유가 있을 때만 사용합니다.
 
-## 플래그와 기본값으로 동작 선택하기
+옵션에도 `required=True`를 붙일 수 있지만 사용자는 일반적으로 옵션을 생략 가능하다고 기대합니다. 항상 필요한 핵심 값이면 위치 인자가 더 자연스러운지 먼저 검토하고, 자동화에서 이름을 명시하는 편이 안전한 값이라면 필수 옵션을 선택합니다.
 
-값을 따로 받지 않는 켜기/끄기 옵션에는 `action='store_true'`를 사용합니다. 옵션이 없을 때 `False`, 있을 때 `True`가 저장됩니다. 반대로 `store_false`는 기본값이 `True`인 기능을 끌 때 쓸 수 있습니다.
+## 플래그와 옵션 종료 표시를 예측 가능하게 쓰기
+
+별도 값을 받지 않고 기능을 켜는 플래그에는 `action='store_true'`를 사용합니다. 옵션이 없으면 `False`, 있으면 `True`가 저장됩니다.
 
 ```python
 import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument('filename')
-parser.add_argument('-v', '--verbose', action='store_true', help='상세 정보를 출력')
-args = parser.parse_args()
+parser = argparse.ArgumentParser(prog='render')
+parser.add_argument('source')
+parser.add_argument('-v', '--verbose', action='store_true', help='처리 과정을 표시')
 
-if args.verbose:
-    print(f'파일을 읽습니다: {args.filename}')
+quiet = parser.parse_args(['note.md'])
+verbose = parser.parse_args(['note.md', '--verbose'])
+print(quiet.verbose, verbose.verbose)
 ```
 
-플래그 이름은 사용자가 읽었을 때 결과를 예측할 수 있게 짓습니다. 기본적으로 조용한 명령에는 `--verbose`가, 위험한 동작을 명시적으로 활성화할 때는 `--force`가 좋은 선택입니다. 같은 동작을 뜻하는 부정 플래그를 여러 개 만들기보다 기본값과 도움말을 명확히 하는 편이 낫습니다.
+```text
+False True
+```
+
+대시로 시작하는 파일명처럼 옵션으로 오해할 수 있는 위치 값을 전달할 때는 `--`로 옵션 해석을 끝냅니다. `--` 뒤의 토큰은 등록된 옵션과 이름이 같아도 위치 값으로 처리됩니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(prog='inspect-file')
+parser.add_argument('files', nargs='+')
+args = parser.parse_args(['--', '--draft.md', '-notes.txt'])
+print(args.files)
+```
+
+```text
+['--draft.md', '-notes.txt']
+```
+
+`--verbose=true`처럼 플래그에 문자열 값을 주는 형태는 `store_true`와 맞지 않습니다. 켜기와 끄기를 모두 명시해야 하는 설정은 다음 노트의 `BooleanOptionalAction`으로 표현합니다.

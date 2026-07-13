@@ -1,116 +1,167 @@
 ---
-title: "Part 2. 중급: 타입, 개수, 선택지로 입력 검증"
+title: "Part 2. 중급: 변환, 개수, 액션으로 입력 문법 만들기"
 ---
 
-## type으로 문자열을 의미 있는 값으로 바꾸기
+## type과 choices로 변환과 허용값 검사하기
 
-명령줄에서 받은 값은 처음에는 문자열입니다. `type=int`처럼 변환 함수를 지정하면 파싱 단계에서 값이 바뀌고, 변환할 수 없는 입력은 일관된 오류로 처리됩니다. 포트, 재시도 횟수, 비율처럼 프로그램이 숫자로 계산할 값에는 반드시 타입을 지정합니다.
-
-```python
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--port', type=int, default=8000, help='1~65535 범위의 포트')
-args = parser.parse_args()
-
-print(args.port + 1)
-```
-
-```bash
-python serve.py
-# 8001
-
-python serve.py --port not-a-number
-# serve.py: error: argument --port: invalid int value: 'not-a-number'
-```
-
-첫 실행은 기본값 `8000`도 `int`로 유지되므로 덧셈 결과가 `8001`입니다. 두 번째 실행은 본문에 들어가기 전에 상태 코드 2로 종료됩니다. 프로그램에서 뒤늦게 `int(args.port)`를 호출하는 것보다 사용자에게 어느 옵션이 잘못됐는지 분명히 알려 줍니다.
-
-`type`에는 문자열 하나를 받아 값을 반환하는 호출 가능 객체도 넣을 수 있습니다. 그 함수에서 `argparse.ArgumentTypeError`, `TypeError`, 또는 `ValueError`를 발생시키면 사용자는 파서 형식의 오류 메시지를 받습니다.
-
-## 사용자 정의 변환 함수로 범위를 검사하기
-
-`type=int`은 정수 여부까지만 검사합니다. 범위나 도메인 규칙도 함께 확인해야 한다면 작은 변환 함수를 만듭니다. 오류 문구는 사용자가 고칠 행동을 알 수 있도록 값과 허용 조건을 설명합니다.
+명령줄 토큰은 처음에는 문자열입니다. `type`은 문자열 하나를 필요한 타입으로 변환하고, `choices`는 변환된 값이 허용 집합에 속하는지 검사합니다. 변환이 먼저 일어나므로 `type=int`와 함께 쓸 `choices`도 정수여야 합니다.
 
 ```python
 import argparse
 
-def port_number(value: str) -> int:
-    port = int(value)
-    if not 1 <= port <= 65535:
-        raise argparse.ArgumentTypeError('포트는 1부터 65535 사이여야 합니다.')
-    return port
+parser = argparse.ArgumentParser(prog='serve')
+parser.add_argument('--port', type=int, choices=range(8000, 8010), default=8000)
+parser.add_argument('--mode', choices=('development', 'production'), default='development')
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--port', type=port_number, default=8000)
-args = parser.parse_args()
-print(f'선택한 포트: {args.port}')
-```
-
-```bash
-python serve.py --port 443
-# 선택한 포트: 443
-
-python serve.py --port 70000
-# serve.py: error: argument --port: 포트는 1부터 65535 사이여야 합니다.
-```
-
-파일 경로를 `type=pathlib.Path`로 바꾸는 것도 편리하지만, 파일 존재 여부나 쓰기 권한은 파싱 직후가 아니라 실제 사용할 때 확인하는 편이 경쟁 상태를 줄이고 오류 처리 위치를 분명하게 합니다.
-
-## choices와 metavar로 유효한 입력을 드러내기
-
-정해진 모드나 형식에는 직접 `if`문을 쓰기보다 `choices`를 사용합니다. 도움말과 오류 메시지에 허용값이 자동으로 나타나며, 잘못된 값이 프로그램의 나중 단계까지 흘러가지 않습니다. `metavar`는 도움말에 표시할 값 이름만 바꿉니다.
-
-```python
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    '--format',
-    choices=('text', 'json'),
-    default='text',
-    metavar='FORMAT',
-    help='출력 형식 (기본값: text)',
-)
-args = parser.parse_args()
-print(args.format)
-```
-
-```bash
-python export.py --format json
-# json
-
-python export.py --format xml
-# export.py: error: argument --format: invalid choice: 'xml' (choose from 'text', 'json')
-```
-
-`metavar='FORMAT'`은 도움말의 자리표시자만 바꾸며 실제 허용값은 `choices`가 결정합니다. 오류에 허용값이 함께 나오므로 사용자가 도움말을 다시 열지 않고도 입력을 고칠 수 있습니다.
-
-선택지가 적고 안정적일 때 `choices`가 특히 적합합니다. 외부 시스템에서 계속 바뀌는 이름 목록을 시작 시점에 검증해야 한다면, 목록을 가져오는 비용과 네트워크 오류를 고려해 별도의 검증 단계로 분리합니다.
-
-## nargs와 append로 여러 값을 표현하기
-
-`nargs`는 한 인자가 소비할 값의 개수를 정합니다. `nargs='+'`는 하나 이상, `nargs='*'`는 0개 이상을 목록으로 받습니다. 같은 옵션을 여러 번 허용할 때는 `action='append'`를 사용하면 입력 순서대로 목록에 쌓입니다.
-
-```python
-import argparse
-
-parser = argparse.ArgumentParser()
-parser.add_argument('files', nargs='+', help='처리할 파일을 하나 이상 지정')
-parser.add_argument('--exclude', action='append', default=[], metavar='PATTERN')
-args = parser.parse_args()
-
-print(args.files)
-print(args.exclude)
-```
-
-```bash
-python scan.py a.py b.py --exclude '*.test.py' --exclude 'build/*'
+args = parser.parse_args(['--port', '8003', '--mode', 'production'])
+print(args.port, type(args.port).__name__, args.mode)
 ```
 
 ```text
-['a.py', 'b.py']
-['*.test.py', 'build/*']
+8003 int production
 ```
 
-가변 길이 위치 인자는 뒤에 다른 위치 인자를 두면 해석이 어려워질 수 있습니다. 목록 입력은 마지막 위치 인자로 배치하고, 빈 목록을 허용해야 하는지와 옵션을 반복할지 한 번에 여러 값을 받을지를 도움말에 분명히 적습니다.
+기본값과 `type`의 관계에는 주의해야 합니다. 문자열 기본값은 명령줄 값처럼 `type` 변환을 거치지만, 문자열이 아닌 기본값은 그대로 사용됩니다. `type=int, default=10.5`는 `10`이 아니라 `10.5`를 만듭니다. 타입이 일관되도록 변환이 끝난 값인 `default=8000`처럼 지정하는 편이 명확합니다.
+
+`type=bool`은 피합니다. `bool('false')`도 비어 있지 않은 문자열이므로 `True`입니다. 불리언은 `store_true`, `store_false`, `BooleanOptionalAction` 같은 액션으로 표현합니다.
+
+## 사용자 정의 type은 작고 순수하게 유지하기
+
+내장 타입만으로 표현할 수 없는 범위나 형식을 검사하려면 문자열 하나를 받아 값을 반환하는 함수를 만듭니다. 사용자가 고칠 수 있는 오류에는 `ArgumentTypeError`를 발생시킵니다.
+
+```python
+import argparse
+
+def positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('정수를 입력해야 합니다.') from error
+
+    if number < 1:
+        raise argparse.ArgumentTypeError('1 이상의 정수를 입력해야 합니다.')
+    return number
+
+parser = argparse.ArgumentParser(prog='retry')
+parser.add_argument('--attempts', type=positive_int, default=3)
+args = parser.parse_args(['--attempts', '5'])
+print(args.attempts)
+```
+
+```text
+5
+```
+
+`type` 함수에서는 문자열 변환과 값 자체의 제약만 검사합니다. 파일 존재 여부, 접근 권한, 네트워크 연결처럼 외부 상태에 의존하거나 자원 정리가 필요한 작업은 파싱 뒤에 수행합니다. 파싱 중 파일을 열면 뒤쪽 인자가 실패했을 때 이미 연 파일이나 생성한 파일을 정리하기 어려워집니다.
+
+경로를 `type=Path`로 바꾸는 것은 외부 작업이 없는 단순 변환이라 적합합니다. 반면 `type=lambda value: Path(value).read_text()`처럼 읽기까지 수행하면 도움말과 테스트가 실행 로직에 결합됩니다.
+
+## nargs로 소비할 토큰 수와 결과 모양 정하기
+
+`nargs`는 한 인자가 몇 개의 토큰을 소비할지 정합니다. 결과의 타입과 빈 입력 허용 여부도 함께 달라집니다.
+
+- 생략: 정확히 하나를 소비해 단일 값으로 저장합니다.
+- `?`: 0개 또는 1개를 소비해 단일 값으로 저장합니다.
+- `*`: 0개 이상을 소비해 목록으로 저장합니다.
+- `+`: 1개 이상을 소비해 목록으로 저장합니다.
+- 정수 `N`: 정확히 N개를 소비해 목록으로 저장합니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(prog='crop')
+parser.add_argument('images', nargs='+')
+parser.add_argument('--size', nargs=2, type=int, metavar=('WIDTH', 'HEIGHT'))
+
+args = parser.parse_args(['a.png', 'b.png', '--size', '640', '480'])
+print(args.images)
+print(args.size)
+```
+
+```text
+['a.png', 'b.png']
+[640, 480]
+```
+
+가변 길이 위치 인자는 가능한 한 마지막에 둡니다. 여러 가변 길이 위치 인자가 이어지면 어느 토큰을 어느 인자가 가져갈지 사용자가 예측하기 어렵습니다. `nargs='?'`를 옵션에 쓰면 옵션 자체가 없는 경우의 `default`와 옵션은 있지만 값이 없는 경우의 `const`까지 생기므로, 세 상태가 실제로 필요할 때만 사용합니다.
+
+## append와 extend로 반복 옵션 수집하기
+
+같은 옵션을 여러 번 받을 때는 `action='append'`가 호출 한 번의 값을 목록 항목 하나로 추가합니다. 한 호출에서 여러 값을 받고 모든 호출의 값을 평평한 목록으로 합치려면 `action='extend'`와 `nargs`를 함께 사용합니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(prog='search')
+parser.add_argument('--tag', action='append', default=[])
+parser.add_argument('--include', action='extend', nargs='+', default=[])
+
+args = parser.parse_args([
+    '--tag', 'python',
+    '--tag', 'cli',
+    '--include', 'src', 'tests',
+    '--include', 'scripts',
+])
+print(args.tag)
+print(args.include)
+```
+
+```text
+['python', 'cli']
+['src', 'tests', 'scripts']
+```
+
+`default=[]`은 파서가 값을 추가할 목록의 초기값을 분명히 합니다. 문자열 하나를 받는 옵션에 무심코 `extend`를 쓰면 문자열의 각 문자가 추가될 수 있으므로, `extend`에는 보통 `nargs='+'`나 `nargs='*'`를 함께 둡니다.
+
+쉼표로 연결한 하나의 문자열보다 옵션을 반복하는 형식이 셸 인용, 값 검증, 도움말에서 더 명확한 경우가 많습니다. 한 값 자체에 쉼표가 들어갈 수 있는지도 계약을 정할 때 고려합니다.
+
+## 불리언과 횟수를 내장 action으로 표현하기
+
+`action`은 옵션을 만났을 때 값을 저장하는 방식을 결정합니다. 기능을 켜는 플래그에는 `store_true`, 명시적인 켜기와 끄기를 모두 제공할 때는 `BooleanOptionalAction`, 반복 횟수에 의미가 있을 때는 `count`가 적합합니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(prog='build')
+parser.add_argument(
+    '--color',
+    action=argparse.BooleanOptionalAction,
+    default=True,
+    help='색상 출력을 사용하거나 사용하지 않음',
+)
+parser.add_argument('-v', '--verbose', action='count', default=0)
+
+args = parser.parse_args(['--no-color', '-vv'])
+print(args.color, args.verbose)
+```
+
+```text
+False 2
+```
+
+`BooleanOptionalAction`은 `--color`와 `--no-color`를 함께 만듭니다. Python 3.12에서는 이 액션에 `type`, `choices`, `metavar`를 전달하는 방식이 폐기 예정이므로 불리언 액션 자체에만 사용합니다. `count`는 기본값을 생략하면 옵션이 없을 때 `None`이므로 산술이나 레벨 선택에 쓸 때는 `default=0`을 명시합니다.
+
+사용자가 값을 직접 선택해야 한다면 `--level debug`처럼 `choices`를 쓰고, 반복할수록 강도가 커지는 관례가 자연스러울 때만 `-vv`를 사용합니다.
+
+## 도움말에 기본값, 단위, 예제를 드러내기
+
+도움말도 CLI의 공개 인터페이스입니다. `description`에는 명령의 목적, 각 `help`에는 동작과 단위, `epilog`에는 짧은 예제를 둡니다. `ArgumentDefaultsHelpFormatter`는 기본값이 있는 인자의 설명에 기본값을 자동으로 덧붙입니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser(
+    prog='serve',
+    description='정적 파일을 HTTP로 제공합니다.',
+    epilog='예: serve public --port 8080',
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+parser.add_argument('directory', metavar='DIR', help='제공할 디렉터리')
+network = parser.add_argument_group('네트워크')
+network.add_argument('--host', default='127.0.0.1', help='바인딩할 주소')
+network.add_argument('--port', type=int, default=8000, help='수신할 TCP 포트')
+```
+
+`metavar`는 도움말의 자리표시자만 바꾸며 `args.directory`라는 속성 이름은 유지합니다. 인자 그룹도 도움말의 시각적 분류만 바꾸고 파싱 규칙에는 영향을 주지 않습니다. `help` 문자열에는 `%(default)s`, `%(prog)s` 같은 서식을 쓸 수 있고, 리터럴 `%`는 `%%`로 적어야 합니다.
+
+자동 생성되는 `usage`는 실제 인자 규칙과 함께 바뀌므로 특별한 이유가 없다면 직접 작성하지 않습니다. 도움말에서만 감춘 옵션도 계속 사용할 수 있으므로, 제거된 기능처럼 오해하게 만드는 `help=argparse.SUPPRESS`는 호환성 전환 기간에 제한적으로 사용합니다.
