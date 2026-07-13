@@ -1,14 +1,12 @@
 ---
-title: "Part 1. 기초: 모델 경계와 세션"
+title: 'Part 1. 빠른 시작: 모델, 엔진과 기본 CRUD'
 ---
 
-## SQLModel이 줄여 주는 중복과 남겨야 하는 경계 이해하기
+## SQLModel의 역할과 학습 범위 이해하기
 
-SQLModel은 SQLAlchemy의 테이블 매핑과 Pydantic의 데이터 검증을 한 모델 계층에서 사용할 수 있게 합니다. `table=True`인 클래스는 DB 테이블에 대응하고, `table=True`가 없는 클래스는 요청·응답처럼 DB에 저장하지 않는 데이터 형식을 표현합니다.
+SQLModel은 SQLAlchemy의 테이블 매핑과 Pydantic의 타입 기반 데이터 모델을 같은 클래스 문법으로 사용할 수 있게 합니다. 앞선 SQLAlchemy 섹션에서 배운 엔진, 세션, 트랜잭션은 그대로 동작하며, SQLModel은 모델 선언과 타입이 명확한 조회 API를 더합니다.
 
-그렇다고 테이블 모델 하나를 입력과 응답에 그대로 쓰면 안 됩니다. 생성 입력에 DB 기본 키가 노출되거나, 테이블에만 필요한 비밀 필드가 응답에 포함될 수 있기 때문입니다. 공통 필드는 상속하되 생성 입력, 테이블, 공개 응답의 책임은 분리하는 것이 이 섹션의 기본 원칙입니다.
-
-이 노트는 Python 3.12와 SQLModel 0.0.38을 기준으로 합니다. 가상 환경에서 다음처럼 설치하고 버전을 확인할 수 있습니다.
+이 섹션은 Python 3.12와 SQLModel 0.0.38을 기준으로 합니다. 가상 환경에서 설치하고 버전을 확인합니다.
 
 ```sh
 python -m pip install 'sqlmodel==0.0.38'
@@ -19,48 +17,35 @@ python -c 'import sqlmodel; print(sqlmodel.__version__)'
 0.0.38
 ```
 
-## 생성 입력, 테이블, 공개 응답 모델 분리하기
+Part 1에서는 하나의 파일을 위에서 아래로 실행하며 테이블 생성부터 CRUD까지 빠르게 완성합니다. 입력·응답 모델 분리와 오류 처리는 Part 2에서 같은 흐름을 안전하게 확장합니다.
 
-공통 필드는 `HeroBase`에 두고, 각 경계에 필요한 필드만 하위 모델에 추가합니다. `HeroCreate`는 클라이언트가 보낼 필드만 받고, `HeroPublic`은 DB에서 생성된 `id`를 포함하되 `secret_name`은 제외합니다.
+## table과 Field로 최소 테이블 모델 선언하기
+
+`SQLModel`을 상속하고 `table=True`를 지정하면 클래스가 DB 테이블에 매핑됩니다. `Field()`는 기본 키, 인덱스처럼 DB 컬럼에 필요한 정보를 타입 힌트에 덧붙입니다.
 
 ```python
-from pydantic import ConfigDict
 from sqlmodel import Field, SQLModel
 
 
-class HeroBase(SQLModel):
-    name: str = Field(index=True, min_length=1, max_length=50)
+class Hero(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, max_length=50)
+    secret_name: str = Field(max_length=50)
     age: int | None = Field(default=None, ge=0)
 
 
-class Hero(HeroBase, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    secret_name: str = Field(min_length=1, max_length=50)
-
-
-class HeroCreate(HeroBase):
-    model_config = ConfigDict(extra='forbid')
-
-    secret_name: str = Field(min_length=1, max_length=50)
-
-
-class HeroPublic(HeroBase):
-    id: int
-
-
-payload = HeroCreate(name='Deadpond', secret_name='Dive Wilson')
-print(payload.model_dump())
+print(Hero.__tablename__)
 ```
 
 ```text
-{'name': 'Deadpond', 'age': None, 'secret_name': 'Dive Wilson'}
+hero
 ```
 
-`extra='forbid'`는 `id`처럼 생성 스키마에 없는 필드를 조용히 무시하지 않고 검증 오류로 처리합니다. `min_length`, `max_length`, `ge`는 애플리케이션 입력을 검증하지만 DB 제약을 대신하지 않으므로 운영 스키마의 `NOT NULL`, `UNIQUE`, `CHECK`도 별도로 설계해야 합니다.
+`id`는 INSERT 전에는 없고 DB가 생성한 뒤 채우므로 `int | None`입니다. `age`는 값이 없어도 되는 선택 필드입니다. `max_length`와 `ge` 같은 애플리케이션 검증이 DB의 `UNIQUE`, `CHECK` 제약을 자동으로 대신하지는 않습니다.
 
-## 인메모리 SQLite 엔진과 테이블 생성 확인하기
+## Engine과 metadata로 SQLite 테이블 만들기
 
-학습 예제는 실행할 때마다 초기화되는 인메모리 SQLite를 사용합니다. 모든 테이블 모델을 정의한 뒤 `SQLModel.metadata.create_all()`을 호출해야 메타데이터에 등록된 테이블이 생성됩니다.
+Engine은 DB 연결 설정을 관리하고, `SQLModel.metadata`는 지금까지 선언한 테이블 정보를 모읍니다. 모든 테이블 모델을 선언한 뒤 `create_all()`을 호출해야 등록된 테이블이 생성됩니다.
 
 ```python
 from sqlalchemy import inspect
@@ -78,30 +63,85 @@ print(inspect(engine).get_table_names())
 ['hero']
 ```
 
-`StaticPool`은 예제 전체가 같은 인메모리 DB 연결을 재사용하게 합니다. 파일 DB를 사용할 때는 `sqlite:///database.db`처럼 경로를 지정합니다. `create_all()`은 없는 테이블을 만드는 학습·테스트 용도에는 편하지만 기존 운영 컬럼을 안전하게 변경하지 않으므로, 운영 스키마 변경에는 Alembic 리비전을 사용합니다.
+인메모리 SQLite와 `StaticPool`을 사용해 예제 전체가 같은 연결을 재사용하게 했습니다. `create_all()`은 없는 테이블을 만드는 학습·테스트 도구이며, 이미 운영 중인 테이블의 컬럼을 변경할 때는 Alembic 리비전을 사용합니다.
 
-## Session.add와 refresh로 공개 가능한 생성 결과 확인하기
+## add, commit, refresh로 행 생성하기
 
-입력 모델을 테이블 객체로 검증·변환한 뒤 세션에 추가합니다. `commit()`은 트랜잭션을 확정하고, `refresh()`는 DB가 만든 기본 키 같은 값을 객체에 다시 읽어 옵니다. 마지막에는 공개 응답 모델로 변환해 비밀 필드가 제외되는지 확인합니다.
+`Session`은 조회와 쓰기를 하나의 트랜잭션 경계에서 관리합니다. 객체를 `add()`하고 `commit()`하면 INSERT가 확정되며, `refresh()`는 DB가 만든 기본 키처럼 새로 생긴 값을 다시 읽습니다.
 
 ```python
 from sqlmodel import Session
 
 
-hero_data = HeroCreate(name='Deadpond', secret_name='Dive Wilson')
-hero = Hero.model_validate(hero_data)
-
 with Session(engine) as session:
-    session.add(hero)
+    heroes = [
+        Hero(name='Deadpond', secret_name='Dive Wilson'),
+        Hero(name='Spider-Boy', secret_name='Pedro Parqueador', age=15),
+        Hero(name='Rusty-Man', secret_name='Tommy Sharp', age=48),
+    ]
+    session.add_all(heroes)
     session.commit()
-    session.refresh(hero)
+    session.refresh(heroes[0])
 
-    public_hero = HeroPublic.model_validate(hero)
-    print(public_hero.model_dump())
+    print(heroes[0].id, heroes[0].name)
 ```
 
 ```text
-{'name': 'Deadpond', 'age': None, 'id': 1}
+1 Deadpond
 ```
 
-세션 컨텍스트는 사용이 끝난 연결을 반환하지만, 실패한 트랜잭션을 계속 사용할 계획이라면 예외를 처리하면서 `session.rollback()`을 호출해야 합니다. `secret_name`은 테이블에는 남아 있지만 `HeroPublic`에 선언하지 않았으므로 공개 결과에는 포함되지 않습니다.
+세션 컨텍스트가 연결을 반환하는 것과 트랜잭션을 성공으로 확정하는 것은 별개입니다. 쓰기를 DB에 남기려면 `commit()`이 필요합니다.
+
+## select와 Session.exec로 원하는 행 조회하기
+
+SQLModel의 `select()`로 조회 문장을 만들고 `Session.exec()`로 실행합니다. 모델 하나를 선택하면 `.all()`은 `Hero` 객체 목록을 반환하므로 별도의 `scalars()` 호출 없이 속성에 바로 접근할 수 있습니다.
+
+```python
+from sqlmodel import select
+
+
+with Session(engine) as session:
+    statement = (
+        select(Hero)
+        .where(Hero.age >= 18)
+        .order_by(Hero.id)
+    )
+    adult_heroes = session.exec(statement).all()
+
+    print([(hero.id, hero.name) for hero in adult_heroes])
+```
+
+```text
+[(3, 'Rusty-Man')]
+```
+
+조건이 없는 `select(Hero)`는 모든 행을 읽습니다. 결과가 많아질 수 있는 실제 API에서는 정렬과 `limit()`을 함께 적용합니다.
+
+## 변경 감지와 delete로 수정·삭제 완료하기
+
+세션에서 조회한 객체의 속성을 바꾸면 SQLAlchemy의 변경 감지가 UPDATE를 준비합니다. 다시 `add()`하지 않아도 `commit()`할 때 변경이 반영됩니다. 삭제는 `delete()`한 뒤 같은 방식으로 커밋합니다.
+
+```python
+with Session(engine) as session:
+    spider_boy = session.exec(
+        select(Hero).where(Hero.name == 'Spider-Boy')
+    ).one()
+    spider_boy.name = 'Spider-Man'
+    spider_boy.age = 16
+
+    rusty_man = session.exec(
+        select(Hero).where(Hero.name == 'Rusty-Man')
+    ).one()
+    session.delete(rusty_man)
+    session.commit()
+
+with Session(engine) as session:
+    remaining = session.exec(select(Hero).order_by(Hero.id)).all()
+    print([(hero.name, hero.age) for hero in remaining])
+```
+
+```text
+[('Deadpond', None), ('Spider-Man', 16)]
+```
+
+서로 함께 성공해야 하는 수정과 삭제를 한 번의 `commit()`으로 묶었습니다. 중간 SQL이 실패하면 전체 트랜잭션을 rollback해야 하며, 그 흐름은 Part 2에서 DB 제약 오류와 함께 다룹니다.

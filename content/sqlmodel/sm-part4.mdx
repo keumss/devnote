@@ -1,36 +1,49 @@
 ---
-title: "Part 4. 실전: 안전한 FastAPI API와 테스트"
+title: 'Part 4. 실전: FastAPI CRUD와 테스트'
 ---
 
-## API 모델과 세션 의존성으로 경계 고정하기
+## API 모델과 요청 단위 Session 구성하기
 
-실전 API에서도 테이블 모델을 요청 본문으로 직접 받지 않습니다. 다음 `app.py`는 생성·수정·공개 모델을 분리하고, SQLite 연결과 세션 수명을 한곳에서 관리합니다. `HeroPublic`에 없는 `secret_name`은 응답 직렬화 단계에서 제외됩니다.
+실전 흐름에서는 SQLModel과 함께 FastAPI, 테스트 도구가 필요합니다. 새 가상 환경이라면 다음 의존성을 설치합니다.
+
+```sh
+python -m pip install 'sqlmodel==0.0.38' 'fastapi[standard]' pytest
+```
+
+다음 `app.py`는 생성·수정·공개 모델을 분리하고 SQLite 엔진과 요청 단위 세션을 구성합니다. `HeroPublic`에 없는 `secret_name`은 응답에 포함되지 않습니다.
 
 ```python
+# app.py
+import sqlite3
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, StringConstraints, field_validator
+from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, Session, SQLModel, create_engine
 
 
+NameText = Annotated[str, StringConstraints(min_length=1, max_length=50)]
+
+
 class HeroBase(SQLModel):
-    name: str = Field(min_length=1, max_length=50, index=True)
+    name: NameText = Field(index=True)
     age: int | None = Field(default=None, ge=0)
 
 
 class Hero(HeroBase, table=True):
+    __table_args__ = (UniqueConstraint('name', name='uq_hero_name'),)
+
     id: int | None = Field(default=None, primary_key=True)
-    name: str = Field(min_length=1, max_length=50, index=True, unique=True)
-    secret_name: str = Field(min_length=1, max_length=50)
+    secret_name: NameText
 
 
 class HeroCreate(HeroBase):
     model_config = ConfigDict(extra='forbid')
 
-    secret_name: str = Field(min_length=1, max_length=50)
+    secret_name: NameText
 
 
 class HeroPublic(HeroBase):
@@ -40,11 +53,16 @@ class HeroPublic(HeroBase):
 class HeroUpdate(SQLModel):
     model_config = ConfigDict(extra='forbid')
 
-    name: str | None = Field(default=None, min_length=1, max_length=50)
-    secret_name: str | None = Field(default=None, min_length=1, max_length=50)
+    name: NameText | None = None
+    secret_name: NameText | None = None
     age: int | None = Field(default=None, ge=0)
 
-    @field_validator('name', 'secret_name')
+    @field_validator(
+        'name',
+        'secret_name',
+        mode='before',
+        json_schema_input_type=NameText,
+    )
     @classmethod
     def required_fields_cannot_be_null(cls, value: str | None) -> str:
         if value is None:
@@ -76,11 +94,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 ```
 
-검증기는 필드 생략은 허용하지만 `name: null`과 `secret_name: null`은 거부합니다. `age: null`은 나이를 지우는 유효한 요청입니다. `create_all()`은 학습용 초기화이며 운영에서는 애플리케이션 시작과 별도로 Alembic 마이그레이션을 적용합니다.
+`yield` 의존성은 요청이 끝나면 세션과 연결을 반환합니다. `create_all()`은 예제를 바로 실행하기 위한 초기화일 뿐이며, 운영에서는 API 프로세스 시작과 별도로 Alembic 마이그레이션을 적용합니다.
 
-## 생성과 목록 조회에 응답 모델과 페이지 제한 적용하기
+## 생성과 목록 조회의 공개 계약 고정하기
 
-POST는 `HeroCreate`를 테이블 객체로 변환하고 생성 성공을 201로 반환합니다. 목록 조회는 최대 100개로 제한하고 기본 키로 정렬해 페이지 순서를 안정적으로 유지합니다. 중복 이름 같은 DB 제약 오류는 rollback 후 409로 변환합니다.
+POST는 검증된 `HeroCreate`를 테이블 객체로 변환하고 201을 반환합니다. 목록 조회는 기본 키로 정렬하고 `limit`을 최대 100으로 제한합니다. SQLite의 이름 고유 제약만 409로 변환하며, 다른 무결성 오류는 원인을 숨기지 않고 다시 발생시킵니다.
 
 ```python
 from fastapi import HTTPException, Query, status
@@ -88,12 +106,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 
-def commit_or_conflict(session: Session, detail: str) -> None:
+def commit_hero(session: Session) -> None:
     try:
         session.commit()
     except IntegrityError as error:
         session.rollback()
-        raise HTTPException(status_code=409, detail=detail) from error
+        is_name_conflict = (
+            isinstance(error.orig, sqlite3.IntegrityError)
+            and 'UNIQUE constraint failed: hero.name' in str(error.orig)
+        )
+        if is_name_conflict:
+            raise HTTPException(
+                status_code=409,
+                detail='Hero name already exists',
+            ) from error
+        raise
 
 
 @app.post(
@@ -104,7 +131,7 @@ def commit_or_conflict(session: Session, detail: str) -> None:
 def create_hero(hero_create: HeroCreate, session: SessionDep):
     hero = Hero.model_validate(hero_create)
     session.add(hero)
-    commit_or_conflict(session, 'Hero name already exists')
+    commit_hero(session)
     session.refresh(hero)
     return hero
 
@@ -119,11 +146,11 @@ def read_heroes(
     return session.exec(statement).all()
 ```
 
-`response_model=HeroPublic`은 반환 객체가 `Hero`여도 공개 필드만 추출합니다. 생성 입력에 `id` 같은 알 수 없는 필드가 들어오면 `extra='forbid'` 설정 때문에 422가 반환됩니다.
+`response_model`은 반환 객체가 `Hero`여도 `HeroPublic` 필드만 직렬화합니다. 이름 중복을 먼저 SELECT로 확인하는 것만으로는 동시 요청 경쟁을 막을 수 없으므로 DB 고유 제약과 `IntegrityError` 처리를 함께 유지합니다. PostgreSQL 같은 다른 DB로 바꾸면 문자열 대신 드라이버의 SQLSTATE와 제약 이름으로 충돌을 구분합니다.
 
-## PATCH와 DELETE의 누락·null·404 처리하기
+## PATCH와 DELETE에서 누락, null과 부재 구분하기
 
-PATCH에서는 `exclude_unset=True`로 클라이언트가 실제로 보낸 필드만 적용합니다. 따라서 `{}`는 아무것도 바꾸지 않고 `{"age": null}`은 나이를 지웁니다. 필수 DB 컬럼의 명시적 null은 앞선 검증기가 422로 막습니다.
+PATCH는 `exclude_unset=True`로 실제로 보낸 필드만 적용합니다. `{}`는 아무것도 바꾸지 않고 `{"age": null}`은 나이를 지우지만, 필수 문자열의 명시적 `null`은 422로 거부합니다. validator의 `json_schema_input_type`은 이 런타임 계약을 OpenAPI에도 동일하게 표현합니다.
 
 ```python
 from fastapi import Response
@@ -141,7 +168,7 @@ def update_hero(
 
     update_data = hero_update.model_dump(exclude_unset=True)
     hero.sqlmodel_update(update_data)
-    commit_or_conflict(session, 'Hero name already exists')
+    commit_hero(session)
     session.refresh(hero)
     return hero
 
@@ -155,13 +182,28 @@ def delete_hero(hero_id: int, session: SessionDep) -> Response:
     session.delete(hero)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+name_schema = app.openapi()['components']['schemas']['HeroUpdate'][
+    'properties'
+]['name']
+print(
+    name_schema.get('type'),
+    'anyOf' in name_schema,
+    name_schema.get('minLength'),
+    name_schema.get('maxLength'),
+)
 ```
 
-DELETE가 성공하면 본문이 없는 204를, 같은 ID를 다시 삭제하면 404를 반환합니다. 여러 테이블을 함께 변경한다면 모든 변경을 마친 뒤 한 번만 커밋해 원자성을 유지합니다.
+```text
+string False 1 50
+```
 
-## 의존성 교체와 인메모리 DB로 API 테스트하기
+DELETE 성공은 본문 없는 204, 없는 ID는 404입니다. 여러 테이블을 함께 변경한다면 모든 변경을 마친 뒤 한 번만 커밋해 원자성을 유지합니다.
 
-테스트는 운영 파일 DB 대신 테스트마다 새 인메모리 DB를 사용합니다. `StaticPool`은 FastAPI 테스트 요청이 다른 스레드에서 실행되어도 같은 인메모리 DB 연결을 보게 하고, dependency override는 모든 엔드포인트가 테스트 세션을 사용하게 합니다.
+## StaticPool과 의존성 교체로 API 계약 테스트하기
+
+테스트는 운영 파일 DB 대신 테스트마다 새 인메모리 DB를 사용합니다. `StaticPool`은 테스트 요청이 같은 인메모리 연결을 보게 하고, dependency override는 모든 엔드포인트가 테스트 세션을 사용하게 합니다.
 
 ```python
 # test_app.py
@@ -198,14 +240,18 @@ def client_fixture(session: Session, monkeypatch: pytest.MonkeyPatch):
     app.dependency_overrides.clear()
 
 
-def test_create_hides_secret_name(client: TestClient):
-    response = client.post(
+def create_hero(client: TestClient, name: str = 'Deadpond'):
+    return client.post(
         '/heroes',
-        json={'name': 'Deadpond', 'secret_name': 'Dive Wilson'},
+        json={'name': name, 'secret_name': f'{name} Secret', 'age': 15},
     )
 
+
+def test_create_hides_secret_name(client: TestClient):
+    response = create_hero(client)
+
     assert response.status_code == 201
-    assert response.json() == {'id': 1, 'name': 'Deadpond', 'age': None}
+    assert response.json() == {'id': 1, 'name': 'Deadpond', 'age': 15}
 
 
 def test_create_rejects_client_id(client: TestClient):
@@ -217,29 +263,54 @@ def test_create_rejects_client_id(client: TestClient):
     assert response.status_code == 422
 
 
-def test_patch_rejects_null_name(client: TestClient):
-    created = client.post(
-        '/heroes',
-        json={'name': 'Deadpond', 'secret_name': 'Dive Wilson'},
-    )
+def test_duplicate_name_returns_409_and_preserves_first(client: TestClient):
+    assert create_hero(client).status_code == 201
+    duplicate = create_hero(client)
 
-    response = client.patch(
-        f"/heroes/{created.json()['id']}",
-        json={'name': None},
-    )
+    assert duplicate.status_code == 409
+    assert client.get('/heroes').json() == [
+        {'id': 1, 'name': 'Deadpond', 'age': 15}
+    ]
 
-    assert response.status_code == 422
+
+def test_list_applies_order_offset_and_limit(client: TestClient):
+    assert create_hero(client, 'Deadpond').status_code == 201
+    assert create_hero(client, 'Spider-Boy').status_code == 201
+
+    response = client.get('/heroes', params={'offset': 1, 'limit': 1})
+
+    assert response.status_code == 200
+    assert [hero['name'] for hero in response.json()] == ['Spider-Boy']
+    assert client.get('/heroes', params={'limit': 0}).status_code == 422
+
+
+def test_patch_distinguishes_omitted_and_null(client: TestClient):
+    hero_id = create_hero(client).json()['id']
+
+    unchanged = client.patch(f'/heroes/{hero_id}', json={})
+    rejected = client.patch(f'/heroes/{hero_id}', json={'name': None})
+    cleared = client.patch(f'/heroes/{hero_id}', json={'age': None})
+
+    assert unchanged.json()['age'] == 15
+    assert rejected.status_code == 422
+    assert cleared.status_code == 200
+    assert cleared.json()['age'] is None
 
 
 def test_delete_then_returns_404(client: TestClient):
-    created = client.post(
-        '/heroes',
-        json={'name': 'Deadpond', 'secret_name': 'Dive Wilson'},
-    )
-    hero_id = created.json()['id']
+    hero_id = create_hero(client).json()['id']
 
     assert client.delete(f'/heroes/{hero_id}').status_code == 204
     assert client.delete(f'/heroes/{hero_id}').status_code == 404
+
+
+def test_patch_openapi_rejects_null_for_required_strings():
+    properties = app.openapi()['components']['schemas']['HeroUpdate']['properties']
+
+    assert properties['name']['type'] == 'string'
+    assert properties['secret_name']['type'] == 'string'
+    assert 'anyOf' not in properties['name']
+    assert 'anyOf' in properties['age']
 ```
 
 ```sh
@@ -247,27 +318,21 @@ pytest -q
 ```
 
 ```text
-4 passed
+7 passed
 ```
 
-실행 시간과 의존성 경고 줄은 환경에 따라 달라질 수 있으며 핵심 결과는 네 테스트가 모두 통과하는 것입니다. fixture가 끝날 때 override를 지우므로 다른 테스트로 전역 상태가 새지 않습니다. 여기에 중복 이름의 409, 페이지 경계, `age: null`, 관계 삭제 정책을 추가하면 검증·DB 제약·트랜잭션을 함께 회귀 테스트할 수 있습니다.
+실행 시간과 경고는 환경에 따라 달라질 수 있으며 핵심 결과는 일곱 계약 테스트가 모두 통과하는 것입니다. 각 테스트는 새 엔진과 세션을 사용하고 fixture가 끝날 때 override를 지워 전역 상태가 다음 테스트로 새지 않게 합니다.
 
-## 운영 장애를 입력·제약·쿼리 단계로 나눠 추적하기
+## 입력, 제약, 쿼리와 마이그레이션 순서로 장애 진단하기
 
-422는 요청 스키마 검증, 404는 대상 부재, 409는 현재 예제의 고유 제약 충돌을 뜻합니다. 서버 로그에는 사용자 비밀 값이나 전체 SQL 파라미터를 남기지 말고 요청 ID와 예외 종류처럼 문제를 연결할 최소 정보만 기록합니다.
+422는 요청 모델 검증, 404는 대상 부재, 409는 이 SQLite 예제의 이름 고유 제약 충돌입니다. 예상하지 않은 500을 409로 감추지 말고 먼저 예외 종류와 DB 제약 이름을 확인합니다. SQL을 확인할 때는 민감한 바인드 값이 로그에 남지 않도록 `hide_parameters=True`를 사용하거나 제한된 개발 환경에서만 `echo=True`를 켭니다.
 
-```python
-import logging
+모델과 운영 스키마가 다르면 애플리케이션 재시작이나 `create_all()`로 고치지 않습니다. Alembic을 구성한 프로젝트에서는 먼저 적용 상태와 코드의 최신 리비전을 비교합니다.
 
-
-logger = logging.getLogger(__name__)
-
-
-def log_database_failure(operation: str, error: Exception) -> None:
-    logger.exception(
-        'database operation failed',
-        extra={'operation': operation, 'error_type': type(error).__name__},
-    )
+```sh
+alembic current
+alembic heads
+alembic history
 ```
 
-개발 중에는 SQLAlchemy `echo=True`로 실제 쿼리를 확인할 수 있지만 운영에서는 민감한 바인드 값과 로그 양을 고려해 제한합니다. 느린 목록 조회는 실행 계획과 인덱스를 확인하고, N+1은 Part 3의 쿼리 계측과 로더 전략으로 해결하며, 스키마 불일치는 애플리케이션 재시작이 아니라 Alembic 리비전 상태부터 점검합니다.
+느린 목록 조회는 실행 계획과 인덱스를 확인하고, 관계 직렬화에서 반복 SELECT가 보이면 Part 3의 계측과 로더 옵션을 적용합니다. 입력 검증, DB 제약, 생성된 쿼리, 마이그레이션 상태 순으로 범위를 좁히면 서로 다른 장애를 같은 API 오류로 오인하지 않을 수 있습니다.

@@ -1,49 +1,119 @@
 ---
-title: "Part 2. 중급: 재현 가능한 CRUD와 트랜잭션"
+title: 'Part 2. 핵심 활용: 모델 경계, 조회와 트랜잭션'
 ---
 
-## CRUD 실습 모델과 초기 데이터 준비하기
+## 입력, 테이블, 공개 응답 모델 분리하기
 
-이 노트의 코드는 아래 준비 코드에 이어서 같은 파일에서 실행합니다. 인메모리 DB와 고정된 초기 데이터를 사용하므로 몇 번 실행해도 이전 실행 결과가 남지 않습니다. `name`의 `unique=True`는 이후 중복 데이터 오류 처리에도 사용합니다.
+테이블 모델 하나를 모든 경계에서 사용하면 클라이언트가 DB 기본 키를 보내거나 비밀 필드가 응답에 노출될 수 있습니다. 공통 필드는 `HeroBase`에 두고 생성 입력, 테이블, 공개 응답, 부분 수정의 책임을 분리합니다. 이 노트의 코드는 아래 준비 코드에 이어서 같은 파일에서 실행합니다.
 
 ```python
-from sqlmodel import Field, Session, SQLModel, create_engine, select
+from typing import Annotated
+
+from pydantic import ConfigDict, StringConstraints, field_validator
+from sqlmodel import Field, SQLModel
+
+
+NameText = Annotated[str, StringConstraints(min_length=1, max_length=50)]
+
+
+class HeroBase(SQLModel):
+    name: NameText
+    age: int | None = Field(default=None, ge=0)
+
+
+class Hero(HeroBase, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: NameText = Field(index=True, unique=True)
+    secret_name: NameText
+
+
+class HeroCreate(HeroBase):
+    model_config = ConfigDict(extra='forbid')
+
+    secret_name: NameText
+
+
+class HeroPublic(HeroBase):
+    id: int
+
+
+class HeroUpdate(SQLModel):
+    model_config = ConfigDict(extra='forbid')
+
+    name: NameText | None = None
+    secret_name: NameText | None = None
+    age: int | None = Field(default=None, ge=0)
+
+    @field_validator(
+        'name',
+        'secret_name',
+        mode='before',
+        json_schema_input_type=NameText,
+    )
+    @classmethod
+    def required_fields_cannot_be_null(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError('field cannot be null')
+        return value
+```
+
+`HeroCreate`에는 클라이언트가 보낼 필드만 있고, `HeroPublic`에는 DB가 만든 `id`가 있지만 `secret_name`은 없습니다. `HeroUpdate`는 모든 필드를 생략할 수 있지만, 테이블에서 필수인 두 문자열을 명시적으로 `null`로 바꾸지는 못하게 합니다.
+
+## table 생성자와 model_validate의 검증 경계 확인하기
+
+`table=True` 모델은 DB가 읽어 온 행을 표현하는 ORM 객체이므로 일반 데이터 모델 생성자와 검증 동작이 다릅니다. 외부 입력을 테이블 생성자에 바로 전달하지 말고 `HeroCreate`로 검증한 뒤 `Hero.model_validate()`로 변환합니다.
+
+```python
+from pydantic import ValidationError
+from sqlmodel import Session, create_engine
 from sqlmodel.pool import StaticPool
 
 
-class Hero(SQLModel, table=True):
-    id: int | None = Field(default=None, primary_key=True)
-    name: str = Field(index=True, unique=True, min_length=1, max_length=50)
-    secret_name: str = Field(min_length=1, max_length=50)
-    age: int | None = Field(default=None, ge=0)
+unsafe_hero = Hero(name='', secret_name='', age=-1)
+print(unsafe_hero.name == '', unsafe_hero.age)
 
+try:
+    HeroCreate(name='', secret_name='', age=-1)
+except ValidationError as error:
+    print('validation errors:', error.error_count())
 
 engine = create_engine('sqlite://', poolclass=StaticPool)
 SQLModel.metadata.create_all(engine)
 
-with Session(engine) as session:
-    session.add_all(
-        [
-            Hero(name='Deadpond', secret_name='Dive Wilson'),
-            Hero(name='Spider-Boy', secret_name='Pedro Parqueador', age=15),
-            Hero(name='Rusty-Man', secret_name='Tommy Sharp', age=48),
-        ]
-    )
-    session.commit()
+payloads = [
+    HeroCreate(name='Deadpond', secret_name='Dive Wilson'),
+    HeroCreate(name='Spider-Boy', secret_name='Pedro Parqueador', age=15),
+    HeroCreate(name='Rusty-Man', secret_name='Tommy Sharp', age=48),
+]
+heroes = [Hero.model_validate(payload) for payload in payloads]
 
-    names = session.exec(select(Hero.name).order_by(Hero.id)).all()
-    print(names)
+with Session(engine) as session:
+    session.add_all(heroes)
+    session.commit()
+    session.refresh(heroes[0])
+
+    public_hero = HeroPublic.model_validate(heroes[0])
+    print(public_hero.model_dump())
 ```
 
 ```text
-['Deadpond', 'Spider-Boy', 'Rusty-Man']
+True -1
+validation errors: 3
+{'name': 'Deadpond', 'age': None, 'id': 1}
 ```
 
-## first, one, get의 결과 계약 구분하기
+테이블 생성자가 값을 받아들였다는 사실은 입력이 유효하다는 뜻이 아닙니다. `extra='forbid'`는 생성 입력에 `id` 같은 알 수 없는 필드가 들어왔을 때도 조용히 무시하지 않고 검증 오류로 처리합니다. DB에는 별도로 `NOT NULL`, `UNIQUE`, `CHECK` 같은 제약을 설계해야 합니다.
 
-기본 키를 알고 있으면 `Session.get()`을 사용합니다. 조건 검색에서는 결과가 없어도 정상이라면 `first()`, 정확히 한 행이어야 한다면 `one()`을 사용합니다. `one()`은 결과가 없거나 여러 개면 예외를 발생시키므로 데이터 불변식을 확인할 때 적합합니다.
+## get, first, one과 exec 결과 모양 구분하기
+
+기본 키를 알고 있으면 `Session.get()`을 사용합니다. 조건 검색에서 결과가 없어도 정상이라면 `first()`, 정확히 한 행이어야 한다면 `one()`이 의도를 잘 표현합니다. `one()`은 결과가 없거나 여러 개면 예외를 발생시킵니다.
+
+모델 하나만 선택하면 `Session.exec()`는 모델 객체를 직접 돌려주지만, 여러 컬럼이나 엔터티를 선택하면 각 결과는 튜플 형태의 행이 됩니다.
 
 ```python
+from sqlmodel import select
+
+
 with Session(engine) as session:
     by_id = session.get(Hero, 1)
     maybe_hero = session.exec(
@@ -53,102 +123,124 @@ with Session(engine) as session:
         select(Hero).where(Hero.name == 'Spider-Boy')
     ).one()
 
+    single_model = session.exec(select(Hero).order_by(Hero.id)).first()
+    id_and_name = session.exec(
+        select(Hero.id, Hero.name).order_by(Hero.id)
+    ).first()
+
     print(by_id.name if by_id else None)
     print(maybe_hero)
     print(exactly_one.name)
+    print(type(single_model).__name__)
+    print(tuple(id_and_name) if id_and_name else None)
 ```
 
 ```text
 Deadpond
 None
 Spider-Boy
+Hero
+(1, 'Deadpond')
 ```
 
-`first()`는 여러 행이어도 첫 행만 반환하므로 유일성을 보장하지 않습니다. 이름처럼 고유해야 하는 값은 애플리케이션의 `.one()` 호출뿐 아니라 DB의 `UNIQUE` 제약으로도 보호합니다.
+`first()`는 여러 행 중 첫 행만 반환하므로 유일성을 검증하지 않습니다. 이름처럼 고유해야 하는 값은 `.one()` 호출뿐 아니라 DB의 `UNIQUE` 제약으로도 보호합니다.
 
-## 정렬과 상한이 있는 페이지네이션 만들기
+## 필터, 정렬과 상한이 있는 페이지 조회 만들기
 
-`offset()`과 `limit()`만 사용하면 DB가 행을 반환하는 순서가 보장되지 않아 요청 사이에 중복이나 누락이 생길 수 있습니다. 항상 고유한 컬럼을 포함한 정렬을 적용하고, API에서 받는 `limit`에는 상한을 둡니다.
+`offset()`과 `limit()`만 사용하면 DB의 반환 순서가 보장되지 않습니다. 항상 고유한 컬럼을 포함해 정렬하고, 외부에서 받은 `offset`과 `limit`은 허용 범위로 제한합니다.
 
 ```python
-def read_page(offset: int = 0, limit: int = 2) -> list[str]:
+def read_page(
+    min_age: int | None = None,
+    offset: int = 0,
+    limit: int = 20,
+) -> list[HeroPublic]:
+    safe_offset = max(offset, 0)
     safe_limit = min(max(limit, 1), 100)
+    statement = select(Hero).order_by(Hero.id)
+
+    if min_age is not None:
+        statement = statement.where(Hero.age >= min_age)
+
+    statement = statement.offset(safe_offset).limit(safe_limit)
     with Session(engine) as session:
-        statement = (
-            select(Hero)
-            .order_by(Hero.id)
-            .offset(max(offset, 0))
-            .limit(safe_limit)
-        )
-        return [hero.name for hero in session.exec(statement).all()]
+        heroes = session.exec(statement).all()
+        return [HeroPublic.model_validate(hero) for hero in heroes]
 
 
-print(read_page(offset=0, limit=2))
-print(read_page(offset=2, limit=2))
+print([hero.name for hero in read_page(limit=2)])
+print([hero.name for hero in read_page(min_age=15, limit=1000)])
 ```
 
 ```text
 ['Deadpond', 'Spider-Boy']
-['Rusty-Man']
+['Spider-Boy', 'Rusty-Man']
 ```
 
-큰 offset은 앞선 행을 계속 스캔할 수 있어 데이터가 많아지면 느려집니다. 규모가 커지면 마지막으로 본 `id` 이후를 조회하는 키셋 페이지네이션을 고려합니다.
+큰 offset은 앞선 행을 계속 건너뛰어야 하므로 데이터가 많아지면 느려질 수 있습니다. 그때는 앞선 SQLAlchemy 섹션의 키셋 페이지네이션을 같은 `select()` 문장에 적용합니다.
 
-## 변경 감지와 rollback으로 수정 실패 복구하기
+## exclude_unset과 sqlmodel_update로 PATCH 적용하기
 
-세션에서 조회한 객체는 영속 상태이므로 속성을 바꾸면 SQLAlchemy가 변경을 추적합니다. 다시 `add()`하지 않아도 `commit()` 때 필요한 `UPDATE`가 실행됩니다. DB 제약 오류가 나면 세션을 계속 쓰기 전에 반드시 rollback합니다.
+부분 수정에서는 보내지 않은 필드와 `null`로 보낸 필드를 구분해야 합니다. `model_dump(exclude_unset=True)`는 클라이언트가 실제로 보낸 필드만 추출하고, `sqlmodel_update()`는 그 값만 기존 테이블 객체에 반영합니다.
+
+```python
+empty_patch = HeroUpdate()
+clear_age = HeroUpdate(age=None)
+
+print(empty_patch.model_dump(exclude_unset=True))
+print(clear_age.model_dump(exclude_unset=True))
+
+with Session(engine) as session:
+    spider_boy = session.exec(
+        select(Hero).where(Hero.name == 'Spider-Boy')
+    ).one()
+    spider_boy.sqlmodel_update(clear_age.model_dump(exclude_unset=True))
+    session.commit()
+    session.refresh(spider_boy)
+    print(spider_boy.name, spider_boy.age)
+
+try:
+    HeroUpdate(name=None)
+except ValidationError as error:
+    print('null name errors:', error.error_count())
+```
+
+```text
+{}
+{'age': None}
+Spider-Boy None
+null name errors: 1
+```
+
+빈 객체는 아무 필드도 바꾸지 않고, `age=None`은 기존 나이를 지웁니다. 반면 DB에서 필수인 `name`과 `secret_name`의 명시적인 `null`은 입력 검증 단계에서 거부합니다.
+
+## IntegrityError를 rollback하고 세션 복구하기
+
+DB 제약은 동시에 들어온 요청 사이의 경쟁까지 최종적으로 보호합니다. `commit()`에서 무결성 오류가 발생하면 실패한 세션을 다시 사용하기 전에 반드시 `rollback()`해야 합니다.
 
 ```python
 from sqlalchemy.exc import IntegrityError
 
 
 with Session(engine) as session:
-    spider = session.exec(
+    spider_boy = session.exec(
         select(Hero).where(Hero.name == 'Spider-Boy')
     ).one()
-    spider.name = 'Spider-Man'
-    spider.age = 16
-    session.commit()
-    session.refresh(spider)
-    print(spider.name, spider.age)
+    spider_boy.name = 'Deadpond'
 
-    spider.name = 'Deadpond'
     try:
         session.commit()
     except IntegrityError:
         session.rollback()
         print('duplicate name rolled back')
 
-    print(session.get(Hero, spider.id).name)
+    restored = session.get(Hero, spider_boy.id)
+    print(restored.name if restored else None)
 ```
 
 ```text
-Spider-Man 16
 duplicate name rolled back
-Spider-Man
+Spider-Boy
 ```
 
-`rollback()`은 실패한 SQL만 취소하는 것이 아니라 현재 트랜잭션의 미확정 변경을 되돌립니다. 서로 함께 성공해야 하는 변경은 한 트랜잭션에 모으고, 중간에 불필요한 `commit()`을 넣지 않습니다.
-
-## 삭제 후 다시 조회해 결과 검증하기
-
-삭제 역시 `commit()` 전까지는 현재 트랜잭션의 변경입니다. 삭제할 행이 없을 수 있는 흐름에서는 먼저 `get()`이나 `first()`로 존재 여부를 확인합니다.
-
-```python
-with Session(engine) as session:
-    rusty_man = session.exec(
-        select(Hero).where(Hero.name == 'Rusty-Man')
-    ).one()
-    rusty_man_id = rusty_man.id
-
-    session.delete(rusty_man)
-    session.commit()
-
-    print(session.get(Hero, rusty_man_id))
-```
-
-```text
-None
-```
-
-관련 테이블이 있다면 단일 행 삭제만 보고 끝내지 말고 외래 키의 `CASCADE`, `SET NULL`, `RESTRICT` 중 어떤 정책이 도메인에 맞는지도 결정해야 합니다. 다음 Part에서 관계 로딩과 삭제 정책을 함께 다룹니다.
+`rollback()`은 실패한 SQL만이 아니라 현재 트랜잭션의 미확정 변경 전체를 되돌립니다. 서로 함께 성공해야 하는 변경은 한 트랜잭션에 모으고, 어떤 제약이 실패했는지 확인한 뒤 외부 오류로 변환합니다.
