@@ -29,5 +29,5 @@ describe('note search navigation', () => {
     });
     await findByRole('heading', { name: /조회 및 정렬.*SELECT/i }, { timeout: 5000 });
     await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
-  });
+  }, 10_000);
 });

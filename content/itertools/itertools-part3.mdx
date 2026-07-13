@@ -1,0 +1,113 @@
+---
+title: "Part 3. 고급: 조합 생성과 이터레이터의 비용 관리"
+---
+
+## product, permutations, combinations 중 무엇을 쓸까요?
+
+세 함수는 가능한 선택을 만드는데, **순서가 중요한지**와 **서로 다른 목록에서 하나씩 고르는지**가 다릅니다. 먼저 아래 작은 결과를 비교하면 선택하기 쉽습니다.
+
+```python
+from itertools import combinations, permutations, product
+
+members = ['A', 'B', 'C']
+
+print(list(product(['S', 'M'], ['black', 'white'])))
+print(list(permutations(members, 2)))
+print(list(combinations(members, 2)))
+```
+
+```text
+[('S', 'black'), ('S', 'white'), ('M', 'black'), ('M', 'white')]
+[('A', 'B'), ('A', 'C'), ('B', 'A'), ('B', 'C'), ('C', 'A'), ('C', 'B')]
+[('A', 'B'), ('A', 'C'), ('B', 'C')]
+```
+
+`product()`는 색상과 크기처럼 각 목록에서 하나씩 고르는 모든 경우입니다. `permutations()`는 `('A', 'B')`와 `('B', 'A')`를 다른 결과로 보는 순서 있는 선택이고, `combinations()`는 둘을 같은 팀으로 보는 순서 없는 선택입니다.
+
+같은 항목을 다시 고를 수 있는 메뉴 조합에는 `combinations_with_replacement()`을 사용합니다.
+
+```python
+from itertools import combinations_with_replacement
+
+print(list(combinations_with_replacement(['tea', 'coffee'], 2)))
+```
+
+```text
+[('tea', 'tea'), ('tea', 'coffee'), ('coffee', 'coffee')]
+```
+
+## 만들기 전에 결과 수부터 확인하기
+
+조합 함수는 한 결과씩 만들지만, 결과의 **총개수**는 빠르게 커집니다. 예를 들어 30명 중 5명을 고르는 경우는 14만 개가 넘습니다. 작업 전에 `math.comb()` 또는 `math.perm()`으로 규모를 확인합니다.
+
+```python
+from itertools import combinations, islice
+from math import comb
+
+members = list(range(30))
+print(comb(len(members), 5))
+print(list(islice(combinations(members, 5), 3)))
+```
+
+```text
+142506
+[(0, 1, 2, 3, 4), (0, 1, 2, 3, 5), (0, 1, 2, 3, 6)]
+```
+
+미리 보기처럼 일부만 필요하면 `islice()`로 개수를 제한합니다. 실제로 원하는 조합을 찾는 작업도 조건을 만족하면 즉시 멈추게 만듭니다. 지연 생성이라고 해도 `list(combinations(...))`는 모든 결과를 메모리에 올린다는 점은 변하지 않습니다.
+
+## tee는 느린 쪽을 위해 값을 보관합니다
+
+하나의 입력을 두 곳에서 읽어야 할 때 `tee()`로 두 이터레이터를 만들 수 있습니다. 한쪽이 먼저 많이 읽으면, 다른 쪽이 따라올 때까지 지난 값이 내부에 저장됩니다.
+
+```python
+from itertools import tee
+
+source = iter([10, 20, 30])
+left, right = tee(source)
+
+print(next(left))
+print(list(right))
+print(list(left))
+```
+
+```text
+10
+[10, 20, 30]
+[20, 30]
+```
+
+작은 입력에는 편리하지만, 한쪽만 오래 진행하는 큰 스트림에는 적합하지 않습니다. 두 결과가 모두 필요하다면 한 번의 반복문에서 함께 계산하는 편이 메모리를 예측하기 쉽습니다.
+
+```python
+numbers = (number for number in range(1, 6))
+count = 0
+total = 0
+
+for number in numbers:
+    count += 1
+    total += number
+
+print(count, total)
+```
+
+```text
+5 15
+```
+
+## cycle도 입력을 저장한 뒤 반복합니다
+
+`cycle()`은 짧은 목록을 계속 되풀이할 때 유용합니다. 다만 첫 번째 순회에서 입력값을 저장하므로 큰 파일이나 끝없는 생성기를 넣으면 메모리가 계속 커질 수 있습니다.
+
+```python
+from itertools import cycle, islice
+
+statuses = cycle(['대기', '진행', '완료'])
+print(list(islice(statuses, 7)))
+```
+
+```text
+['대기', '진행', '완료', '대기', '진행', '완료', '대기']
+```
+
+같은 값 하나만 반복한다면 저장이 필요 없는 `repeat()`이 더 알맞습니다. `cycle()`과 `repeat()`은 둘 다 끝나지 않으므로 `islice()`나 정해진 반복 횟수로 끝을 만듭니다.

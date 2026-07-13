@@ -1,0 +1,159 @@
+---
+title: "Part 1. 초급: 이터레이터를 조합하는 기본 도구"
+---
+
+## itertools는 언제 쓰는 도구인가요?
+
+`itertools`는 반복문에 줄 데이터를 만들어 주는 Python 3.12 표준 라이브러리입니다. 여러 목록을 차례로 읽거나, 앞의 몇 개만 꺼내거나, 이웃한 값을 비교할 때 자주 씁니다.
+
+함수의 결과는 보통 값을 모두 담은 목록이 아니라 **필요할 때 다음 값을 만드는 이터레이터**입니다. 결과를 눈으로 확인할 때만 `list()`로 감싸면 됩니다.
+
+```python
+from itertools import chain
+
+names = chain(['Mina', 'Jun'], ['Sora'])
+print(list(names))
+```
+
+```text
+['Mina', 'Jun', 'Sora']
+```
+
+이후 예제도 같은 방식입니다. `list()`는 설명을 위해 결과를 표시하는 용도이고, 실제 큰 데이터를 처리할 때는 `for` 문으로 하나씩 쓰면 됩니다.
+
+## 이터레이터는 꺼낸 값을 기억하지 않습니다
+
+이터레이터에서 값을 꺼내면 그 값은 지나갑니다. 따라서 같은 이터레이터를 두 번 `list()`로 만들면 두 번째 결과는 비어 있습니다.
+
+```python
+numbers = iter([10, 20, 30])
+
+print(next(numbers))
+print(list(numbers))
+print(list(numbers))
+```
+
+```text
+10
+[20, 30]
+[]
+```
+
+처음부터 여러 번 쓸 데이터라면 리스트를 사용합니다. 파일이나 생성기처럼 한 번만 읽는 입력은, 필요한 작업을 한 번의 반복문 안에서 끝내는 편이 안전합니다.
+
+## chain으로 목록을 이어 붙이기
+
+두 목록을 한 순서로 처리하고 싶을 때 `chain()`을 씁니다. `morning + afternoon`처럼 새 목록을 만들지 않아도, 첫 목록이 끝난 뒤 두 번째 목록을 바로 읽습니다.
+
+```python
+from itertools import chain
+
+morning = ['로그인', '검색']
+afternoon = ['결제']
+
+for event in chain(morning, afternoon):
+    print(event)
+```
+
+```text
+로그인
+검색
+결제
+```
+
+목록이 여러 개 들어 있는 경우에는 `chain.from_iterable()`을 씁니다. 바깥 목록에서 안쪽 목록을 하나씩 꺼내 평평하게 만듭니다.
+
+```python
+from itertools import chain
+
+tags_by_day = [['python', 'web'], ['database'], ['testing']]
+print(list(chain.from_iterable(tags_by_day)))
+```
+
+```text
+['python', 'web', 'database', 'testing']
+```
+
+## islice로 앞부분만 읽기
+
+`islice()`는 이터레이터용 슬라이싱입니다. 로그처럼 끝이 크거나 알 수 없는 입력에서 앞의 몇 건만 확인할 때 편리합니다.
+
+```python
+from itertools import islice
+
+logs = (f'log-{number}' for number in range(1, 1000))
+first_three = islice(logs, 3)
+
+print(list(first_three))
+```
+
+```text
+['log-1', 'log-2', 'log-3']
+```
+
+`islice(logs, 2, 5)`처럼 시작과 끝도 줄 수 있고, `islice(logs, 0, 10, 2)`처럼 한 칸씩 건너뛸 수도 있습니다. 음수 인덱스는 지원하지 않습니다. 이터레이터는 끝에서부터 거꾸로 읽을 수 없기 때문입니다.
+
+## pairwise로 바로 옆 값끼리 비교하기
+
+`pairwise()`는 `(첫째, 둘째)`, `(둘째, 셋째)`처럼 겹치는 두 값씩 만듭니다. 오늘과 어제의 온도 차이처럼 연속한 값의 차이를 구할 때 인덱스를 직접 다루지 않아도 됩니다.
+
+```python
+from itertools import pairwise
+
+temperatures = [18, 21, 20, 24]
+
+for yesterday, today in pairwise(temperatures):
+    print(today - yesterday)
+```
+
+```text
+3
+-1
+4
+```
+
+값이 하나뿐이면 비교할 짝이 없으므로 아무것도 만들지 않습니다. 그래서 짧은 입력을 위한 별도 `if` 문이 필요 없습니다.
+
+## zip_longest로 빠진 값을 보이게 하기
+
+기본 `zip()`은 짧은 목록이 끝나면 멈춥니다. 이름은 세 명인데 점수는 두 명처럼, 빠진 값을 찾아야 할 때 `zip_longest()`를 사용합니다.
+
+```python
+from itertools import zip_longest
+
+users = ['Mina', 'Jun', 'Sora']
+scores = [92, 88]
+
+for user, score in zip_longest(users, scores, fillvalue='미입력'):
+    print(f'{user}: {score}')
+```
+
+```text
+Mina: 92
+Jun: 88
+Sora: 미입력
+```
+
+두 목록의 길이가 반드시 같아야 하는 작업이라면 `zip(..., strict=True)`를 사용해 길이 차이를 오류로 처리합니다. `zip_longest()`는 누락을 보여 주는 것이 목적일 때 선택합니다.
+
+## count와 repeat로 정해진 패턴 만들기
+
+`count()`는 1, 2, 3처럼 계속 증가하는 번호를 만들고, `repeat()`는 같은 값을 반복합니다. 둘 다 끝없이 만들 수 있으므로, 이 예제처럼 다른 입력의 끝이나 반복 횟수가 종료 조건이 되어야 합니다.
+
+```python
+from itertools import count, repeat
+
+for number, task in zip(count(1), ['메일', '배포', '점검']):
+    print(number, task)
+
+print(list(repeat('retry', 3)))
+```
+
+```text
+1 메일
+2 배포
+3 점검
+['retry', 'retry', 'retry']
+```
+
+`list(count())`처럼 무한 이터레이터를 그대로 목록으로 만들면 프로그램이 끝나지 않습니다. 무한 이터레이터에는 `zip()`, `islice()`, 횟수 제한 중 하나를 항상 함께 둡니다.

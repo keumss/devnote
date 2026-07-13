@@ -1,0 +1,129 @@
+---
+title: "Part 4. 실전: 스트리밍 주문 데이터를 배치 집계하기"
+---
+
+## 예제의 입력과 처리 순서 먼저 보기
+
+이 노트에서는 주문을 전부 목록으로 모으지 않고, 한 건씩 읽어 상태별로 집계한 뒤 두 건씩 저장합니다. `groupby()`를 쓰려면 같은 상태의 주문이 붙어 있어야 하므로, `read_orders()`가 `status` 기준으로 정렬된 데이터를 준다는 계약이 중요합니다.
+
+```python
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Order:
+    order_id: str
+    status: str
+    amount: int
+
+def read_orders() -> Iterable[Order]:
+    yield Order('A-1', 'paid', 12000)
+    yield Order('A-2', 'paid', 8000)
+    yield Order('A-3', 'paid', 15000)
+    yield Order('A-4', 'refunded', -8000)
+```
+
+실제 데이터베이스라면 `ORDER BY status`로, 파일이라면 읽기 전에 정렬하는 단계로 이 계약을 보장합니다. 순서가 보장되지 않는 입력에 `groupby()`를 바로 적용하면 같은 상태가 여러 번 나뉩니다.
+
+## groupby로 상태별 합계 만들기
+
+현재 상태의 주문만 읽어 합계와 건수를 계산합니다. 그룹을 리스트로 만들지 않으므로, 주문 수가 많아도 이전 상태의 주문은 메모리에 남지 않습니다.
+
+```python
+from itertools import groupby
+from operator import attrgetter
+
+def summarize_by_status(items: Iterable[Order]) -> dict[str, tuple[int, int]]:
+    summaries = {}
+
+    for status, group in groupby(items, key=attrgetter('status')):
+        count = 0
+        total = 0
+
+        for order in group:
+            count += 1
+            total += order.amount
+
+        summaries[status] = (count, total)
+
+    return summaries
+
+print(summarize_by_status(read_orders()))
+```
+
+```text
+{'paid': (3, 35000), 'refunded': (1, -8000)}
+```
+
+`group`은 한 번만 읽을 수 있습니다. 이 예제처럼 합계만 필요하면 반복문에서 바로 끝내고, 각 주문을 나중에 다시 써야 할 때만 `list(group)`으로 저장합니다.
+
+## batched로 저장 호출의 크기 제한하기
+
+저장 API가 한 번에 두 건만 받는다고 가정하면 `batched()`로 그룹을 바로 나눌 수 있습니다. 마지막 배치는 주문이 남은 만큼만 전달됩니다.
+
+```python
+from itertools import batched, groupby
+from operator import attrgetter
+
+def save_batch(status: str, batch: tuple[Order, ...]) -> None:
+    order_ids = [order.order_id for order in batch]
+    print(status, order_ids)
+
+for status, group in groupby(read_orders(), key=attrgetter('status')):
+    for batch in batched(group, 2):
+        save_batch(status, batch)
+```
+
+```text
+paid ['A-1', 'A-2']
+paid ['A-3']
+refunded ['A-4']
+```
+
+배치 크기는 API의 항목 제한과 실패했을 때 다시 처리할 양을 보고 정합니다. 마지막의 짧은 배치를 받지 못하는 API라면, 저장 전에 그 배치만 별도 정책으로 처리합니다.
+
+## 재시도는 저장 작업이 중복돼도 안전할 때만 합니다
+
+네트워크 시간 초과처럼 일시적인 실패는 같은 배치를 다시 보낼 수 있습니다. 하지만 첫 요청이 서버에서 이미 성공했을 수도 있으므로, 저장 작업은 같은 주문을 두 번 보내도 결과가 중복되지 않게 만들어야 합니다.
+
+```python
+from collections.abc import Callable
+
+def save_with_retry(
+    save: Callable[[tuple[Order, ...]], None],
+    batch: tuple[Order, ...],
+    attempts: int = 3,
+) -> None:
+    for attempt in range(attempts):
+        try:
+            save(batch)
+            return
+        except TimeoutError:
+            if attempt == attempts - 1:
+                raise
+```
+
+주문 ID를 고유 키로 저장하면 같은 배치를 재시도해도 새 주문이 중복 생성되지 않습니다. 인증 실패나 잘못된 입력처럼 재시도로 해결되지 않는 오류는 잡지 않고 호출자에게 전달합니다.
+
+## 생성기 입력으로 한 번만 읽는 흐름 테스트하기
+
+테스트도 목록 대신 생성기를 넘기면, 함수가 입력을 한 번만 소비하는지 확인할 수 있습니다. `read_orders()` 대신 작은 생성기를 만들어 상태별 집계 결과만 검증합니다.
+
+```python
+def test_summarize_by_status() -> None:
+    items = (
+        Order(order_id, status, amount)
+        for order_id, status, amount in [
+            ('A-1', 'paid', 12000),
+            ('A-2', 'paid', 8000),
+            ('A-3', 'refunded', -8000),
+        ]
+    )
+
+    assert summarize_by_status(items) == {
+        'paid': (2, 20000),
+        'refunded': (1, -8000),
+    }
+```
+
+생성기는 소비한 뒤 다시 시작하지 않습니다. 두 번째 테스트 입력이 필요하면 같은 생성기를 재사용하지 말고 새 생성기를 만들며, 정렬되지 않은 입력을 거부해야 한다면 그 경우를 별도 테스트로 추가합니다.
