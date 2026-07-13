@@ -1,10 +1,10 @@
 ---
-title: "Part 1. 초급: 경로 객체를 만들고 해석하기"
+title: "Part 1. 초급: Path로 경로와 파일 다루기"
 ---
 
 ## pathlib가 문자열 경로보다 나은 이유
 
-`pathlib`는 파일 시스템 경로를 객체로 표현하는 Python 3.12 표준 라이브러리입니다. 별도 설치 없이 `Path`를 가져와 사용합니다. 경로 조합, 이름 분석, 파일 읽기 같은 연관 동작을 한 객체에서 이어 쓸 수 있어 문자열 연결보다 의도가 분명하고 운영체제별 구분자도 직접 다룰 필요가 줄어듭니다.
+`pathlib`는 파일 시스템 경로를 객체로 표현하는 Python 3.12 표준 라이브러리입니다. 별도 설치 없이 대부분의 작업에 `Path`를 사용합니다. 경로 조합, 이름 분석, 파일 읽기 같은 동작을 한 객체에서 이어 쓸 수 있어 문자열 연결보다 의도가 분명하고 운영체제별 구분자도 직접 다룰 필요가 줄어듭니다.
 
 ```python
 from pathlib import Path
@@ -15,7 +15,7 @@ print(report.parent)
 print(report.name)
 ```
 
-POSIX 환경의 예상 결과는 다음과 같습니다. Windows에서는 출력 구분자가 `\\`이지만 같은 코드가 올바른 경로를 만듭니다.
+POSIX 환경의 예상 결과는 다음과 같습니다. Windows에서는 `\\`가 표시되지만 같은 코드가 올바른 경로를 만듭니다.
 
 ```text
 reports/2026/summary.txt
@@ -23,13 +23,13 @@ reports/2026
 summary.txt
 ```
 
-`Path` 객체는 경로를 표현할 뿐 생성만으로 파일이나 디렉터리를 만들지 않습니다. 실제 파일 시스템에 접근하는 `exists()`, `read_text()`, `mkdir()` 같은 메서드를 호출할 때 입출력이 일어납니다. 이 구분을 알면 경로 계산과 파일 작업을 분리해 테스트하기 쉽습니다.
+`Path`를 만드는 것만으로 파일이나 디렉터리가 생기지는 않습니다. `/`, `parent`, `with_suffix()` 같은 연산은 경로만 계산하고, `read_text()`, `write_text()`, `mkdir()` 같은 메서드를 호출할 때 실제 입출력이 일어납니다. 이 구분을 알면 경로 계산과 실패할 수 있는 파일 작업을 분리하기 쉽습니다.
 
-문자열을 `f'{directory}/{name}'`처럼 합치면 Windows 구분자, 중복 구분자, 절대 경로 입력의 의미를 직접 책임져야 합니다. 경로 조합에는 `/` 연산자나 `joinpath()`를 사용하고, 사용자에게 보여 주거나 문자열만 받는 오래된 API를 호출할 때만 `str(path)`로 변환합니다.
+다른 운영체제의 경로 문법만 계산하거나 입출력을 금지하고 싶을 때는 `PurePosixPath`, `PureWindowsPath` 같은 순수 경로가 필요하지만, 일반 애플리케이션은 실행 환경에 맞는 `Path`에서 시작하면 됩니다.
 
 ## Path와 슬래시 연산자로 경로 조합하기
 
-`Path()`는 현재 운영체제의 경로 규칙을 따르는 구체 경로 객체를 만듭니다. 여러 조각을 생성자에 전달하거나 `/` 연산자로 자식 경로를 추가할 수 있습니다. `Path.cwd()`는 현재 작업 디렉터리, `Path.home()`은 현재 사용자의 홈 디렉터리를 반환합니다.
+여러 경로 조각은 생성자나 `/` 연산자로 조합합니다. `Path.cwd()`는 현재 작업 디렉터리, `Path.home()`은 현재 사용자의 홈 디렉터리를 반환합니다.
 
 ```python
 from pathlib import Path
@@ -49,9 +49,9 @@ True
 True
 ```
 
-경로 객체는 불변입니다. `/`나 `with_name()`을 호출하면 원본을 바꾸지 않고 새 객체를 반환하므로 설정값이나 딕셔너리 키로 안전하게 공유할 수 있습니다.
+경로 객체는 불변입니다. `/`나 `with_name()`은 원본을 바꾸지 않고 새 객체를 반환합니다. 문자열을 `f'{directory}/{name}'`처럼 합치면 Windows 구분자와 절대 경로의 의미를 직접 책임져야 하므로 경로 조합에는 `Path` 연산을 사용합니다.
 
-조합할 오른쪽 값이 절대 경로라면 앞부분은 버려집니다. 따라서 외부 입력을 기준 디렉터리 아래에 붙일 때는 절대 경로인지 검사하지 않고 단순히 `/`로 결합해서는 안 됩니다.
+오른쪽 값이 절대 경로라면 앞부분은 버려집니다.
 
 ```python
 from pathlib import PurePosixPath
@@ -66,11 +66,11 @@ print(base / '/etc/passwd')
 /etc/passwd
 ```
 
-두 번째 결과처럼 기준 경로가 사라지는 동작은 정상적인 경로 의미입니다. 신뢰할 수 없는 입력을 안전한 루트 아래로 제한하는 방법은 Part 3에서 다룹니다.
+두 번째 결과는 정상적인 경로 규칙입니다. 신뢰할 수 없는 입력을 기준 디렉터리 아래에 붙일 때는 단순 조합만으로 안전하다고 판단하지 않습니다. 실제 경로를 검증하는 방법은 Part 3에서 다룹니다.
 
 ## name, stem, suffix로 파일 이름 분석하기
 
-경로의 마지막 조각은 `name`, 마지막 확장자를 제외한 이름은 `stem`, 마지막 확장자는 `suffix`로 읽습니다. 여러 확장자를 모두 보고 싶으면 `suffixes`를 사용합니다. `parent`와 `parents`는 논리적인 상위 경로를 제공합니다.
+마지막 경로 조각은 `name`, 마지막 확장자를 제외한 이름은 `stem`, 마지막 확장자는 `suffix`로 읽습니다. 여러 확장자는 `suffixes`, 논리적인 상위 경로는 `parent`와 `parents`로 확인합니다.
 
 ```python
 from pathlib import Path
@@ -82,7 +82,6 @@ print(archive.stem)
 print(archive.suffix)
 print(archive.suffixes)
 print(archive.parent)
-print(list(archive.parents))
 ```
 
 ```text
@@ -91,16 +90,11 @@ notes.tar
 .gz
 ['.tar', '.gz']
 backups
-[PosixPath('backups'), PosixPath('.')]
 ```
 
-마지막 줄의 구체 클래스 이름과 구분자는 운영체제에 따라 달라집니다. 파일 형식을 확인할 때 `.tar.gz` 전체가 필요하다면 `''.join(path.suffixes)`를 사용하고, 대소문자를 구분하지 않는 정책이라면 `path.suffix.lower()`처럼 정책을 코드에 명시합니다. 실제 파일 시스템의 대소문자 규칙은 운영체제와 볼륨 설정에 따라 다를 수 있습니다.
-
-이름을 바꾼 새 경로는 `with_name()`, `with_stem()`, `with_suffix()`로 계산합니다. 이 메서드들도 파일 이름을 실제로 바꾸지는 않습니다.
+이름을 바꾼 새 경로는 `with_name()`, `with_stem()`, `with_suffix()`로 계산합니다. 이 메서드들은 실제 파일 이름을 바꾸지 않습니다.
 
 ```python
-from pathlib import Path
-
 draft = Path('notes/draft.md')
 print(draft.with_stem('published'))
 print(draft.with_suffix('.txt'))
@@ -111,56 +105,63 @@ notes/published.md
 notes/draft.txt
 ```
 
-실제 이동이나 이름 변경에는 Part 2의 `rename()` 또는 `replace()`가 필요합니다.
+파일 형식을 대소문자와 무관하게 비교하는 정책이라면 `path.suffix.lower()`처럼 정책을 코드에 명시합니다. 실제 파일 시스템의 대소문자 규칙은 운영체제와 볼륨 설정에 따라 다를 수 있습니다.
 
-## PurePath로 운영체제별 경로를 입출력 없이 다루기
+## read_text와 write_text로 작은 파일 처리하기
 
-대부분의 애플리케이션은 실행 중인 운영체제에서 입출력할 수 있는 `Path`를 사용합니다. 반면 `PurePath` 계열은 파일 시스템에 접근하는 메서드가 없고 문자열 수준의 경로 계산만 수행합니다. Unix에서 Windows 경로를 분석하거나 그 반대 상황을 테스트할 때 `PureWindowsPath`, `PurePosixPath`가 유용합니다.
-
-```python
-from pathlib import PurePosixPath, PureWindowsPath
-
-windows = PureWindowsPath(r'C:\Users\mina\notes.txt')
-posix = PurePosixPath('/home/mina/notes.txt')
-
-print(windows.drive, windows.root, windows.name)
-print(windows.as_posix())
-print(posix.anchor, posix.parts)
-```
-
-```text
-C: \ notes.txt
-C:/Users/mina/notes.txt
-/ ('/', 'home', 'mina', 'notes.txt')
-```
-
-순수 경로는 해당 파일이 존재하는지 확인하지 않습니다. `PureWindowsPath('NUL').is_reserved()`처럼 경로 문법을 검사하거나 다른 플랫폼용 설정을 생성할 수는 있지만 `read_text()`나 `exists()`는 제공하지 않습니다.
-
-`Path('a/../b').parent` 같은 연산도 파일 시스템을 보지 않는 어휘적 계산입니다. `..` 앞의 `a`가 심볼릭 링크라면 단순 조각 계산과 실제 도착 위치가 다를 수 있습니다. 실제 위치가 중요할 때는 `resolve()`를 사용합니다.
-
-## PathLike 인터페이스로 다른 API와 연결하기
-
-`Path`와 순수 경로는 `os.PathLike` 인터페이스를 구현합니다. 표준 라이브러리와 많은 서드파티 API는 문자열뿐 아니라 경로 객체를 직접 받으므로, 필요 이상으로 `str()`로 바꾸지 않아도 됩니다.
+파일 전체를 한 번에 다룰 때는 `read_text()`와 `write_text()`가 간결합니다. 텍스트 해석이 실행 환경에 따라 달라지지 않도록 `encoding='utf-8'`을 명시합니다.
 
 ```python
-import json
-import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-config_path = Path('config.json')
-raw_path = os.fspath(config_path)
+with TemporaryDirectory() as directory:
+    note = Path(directory) / 'note.txt'
+    written = note.write_text('첫 줄\n둘째 줄\n', encoding='utf-8')
 
-print(raw_path)
-print(type(raw_path).__name__)
-print(json.dumps({'path': config_path.as_posix()}))
+    print(written)
+    print(note.read_text(encoding='utf-8'), end='')
 ```
 
 ```text
-config.json
-str
-{"path": "config.json"}
+9
+첫 줄
+둘째 줄
 ```
 
-`open(config_path)`처럼 `PathLike`를 받는 함수에는 객체를 그대로 전달합니다. JSON 응답이나 환경 변수처럼 문자열만 저장하는 경계에서는 `str(path)` 또는 항상 `/`를 써야 하는 문서·URL용 표현이라면 `as_posix()`를 선택합니다. 파일 URL이 필요하면 절대 경로에서만 동작하는 `as_uri()`를 사용합니다.
+`write_text()`의 반환값은 쓴 문자 수이며 UTF-8 바이트 수가 아닙니다. 기본 동작은 기존 파일을 덮어씁니다. 이미지나 압축 데이터에는 `read_bytes()`와 `write_bytes()`를 사용하고, 큰 파일이나 이어쓰기는 Part 2의 `open()`으로 처리합니다.
 
-경로 객체를 애플리케이션 내부의 공통 타입으로 유지하고 외부 경계에서만 변환하면 경로 조합과 이름 분석을 계속 `pathlib`로 처리할 수 있습니다.
+`Path`는 `os.PathLike`를 구현하므로 `open(path)`처럼 경로 객체를 받는 API에는 그대로 전달합니다. JSON, 환경 변수처럼 문자열만 받는 경계에서만 `str(path)`로 변환합니다.
+
+## mkdir와 상태 확인으로 기본 작업 흐름 완성하기
+
+`mkdir()`는 기본적으로 부모가 없거나 대상이 이미 있으면 예외를 발생시킵니다. 여러 단계의 부모를 만들려면 `parents=True`, 이미 있는 디렉터리를 허용하려면 `exist_ok=True`를 지정합니다.
+
+```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+with TemporaryDirectory() as directory:
+    root = Path(directory)
+    notes = root / 'workspace' / 'notes'
+    notes.mkdir(parents=True, exist_ok=True)
+
+    guide = notes / 'guide.md'
+    guide.write_text('# Path\n', encoding='utf-8')
+
+    print(notes.is_dir())
+    print(guide.is_file())
+    print(guide.exists())
+    print(guide.read_text(encoding='utf-8'), end='')
+```
+
+```text
+True
+True
+True
+# Path
+```
+
+`exist_ok=True`는 같은 경로에 디렉터리가 있을 때만 기존 상태를 허용합니다. 파일이 그 자리를 차지하면 여전히 `FileExistsError`가 발생합니다. `touch()`는 빈 파일을 만들거나 수정 시각을 갱신할 때 사용하지만, 내용을 쓸 목적이라면 `write_text()`나 `open()`이 더 분명합니다.
+
+`exists()`는 화면에 상태를 표시하거나 선택 대상을 거르는 데 유용하지만 다음 작업의 성공을 보장하지 않습니다. 확인과 사용 사이에 파일이 사라지거나 권한이 바뀔 수 있으므로 실제 작업의 예외를 처리하는 방법은 Part 2에서 이어서 다룹니다.

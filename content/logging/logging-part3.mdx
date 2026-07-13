@@ -1,10 +1,10 @@
 ---
-title: "Part 3. 고급: 메시지, 예외, 컨텍스트와 파일 운영"
+title: "Part 3. 고급: 성능, 컨텍스트와 운영"
 ---
 
 ## 지연 포맷과 레벨 검사로 불필요한 비용 줄이기
 
-로그 값은 f-string으로 미리 합치지 않고 `%s` 자리표시자와 인자로 전달합니다. 비활성 레벨이면 `logging`이 문자열 포맷을 생략할 수 있습니다. 인자를 만드는 작업 자체가 비싸다면 `isEnabledFor()`로 먼저 확인합니다.
+로그 값은 f-string으로 미리 합치지 않고 `%s` 자리표시자와 인자로 전달합니다. 비활성 레벨이면 `logging`이 문자열 포맷을 생략할 수 있습니다. 인자를 계산하는 작업 자체가 비싸다면 `isEnabledFor()`로 먼저 확인합니다.
 
 ```python
 import logging
@@ -23,55 +23,52 @@ if logger.isEnabledFor(logging.DEBUG):
     logger.debug('현재 상태: %s', snapshot)
 ```
 
-이 설정에서는 두 `DEBUG` 호출이 기록되지 않으며 `build_expensive_debug_snapshot()`도 실행되지 않습니다. 비밀번호, 토큰, 쿠키, 전체 개인정보처럼 수집해서는 안 되는 값은 레벨과 관계없이 로그 인자로 넘기지 않습니다.
+이 설정에서는 두 `DEBUG` 호출이 기록되지 않고 스냅샷도 만들지 않습니다. 단순 변수 전달까지 매번 조건문으로 감싸면 코드만 복잡해지므로 실제로 비용이 큰 계산에만 사용합니다.
 
-## logger.exception으로 실패 맥락과 traceback 남기기
+## extra와 LoggerAdapter로 공통 컨텍스트 남기기
 
-처리 중인 예외를 기록할 때는 `logger.exception()`을 사용하면 메시지와 traceback이 함께 `ERROR` 레벨로 남습니다. 예외를 잡은 `except` 블록 안에서 호출하고, 어떤 입력과 작업이 실패했는지 안전한 범위에서 설명합니다.
-
-```python
-import logging
-
-logger = logging.getLogger(__name__)
-
-def load_price(raw_price: str) -> int:
-    try:
-        return int(raw_price)
-    except ValueError:
-        logger.exception('가격 변환에 실패했습니다. raw_price=%r', raw_price)
-        raise
-```
-
-같은 예외를 여러 계층에서 반복 기록하면 traceback이 중복됩니다. 예외를 복구하거나 사용자용 오류로 바꾸는 경계처럼, 실패의 의미를 가장 잘 설명할 수 있는 한 지점에서 기록합니다.
-
-## LoggerAdapter로 요청 컨텍스트 반복 줄이기
-
-여러 로그를 같은 요청과 연결하려면 `request_id` 같은 식별자를 `LogRecord`에 추가합니다. 매 호출마다 `extra`를 반복하기보다 `LoggerAdapter`에 공통 컨텍스트를 넣으면 누락을 줄일 수 있습니다.
+여러 로그를 같은 요청이나 작업과 연결하려면 `request_id`, `job_id` 같은 식별자를 `LogRecord`에 추가합니다. 한두 번은 `extra`, 반복되는 값은 `LoggerAdapter`가 적합합니다.
 
 ```python
 import logging
 
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter(
-    '%(levelname)s request_id=%(request_id)s %(message)s',
+    '%(levelname)s job_id=%(job_id)s %(message)s',
 ))
 
-base_logger = logging.getLogger('shop.api')
+base_logger = logging.getLogger('shop.sync')
 base_logger.setLevel(logging.INFO)
 base_logger.addHandler(handler)
 base_logger.propagate = False
 
-logger = logging.LoggerAdapter(base_logger, {'request_id': 'req-8f31'})
-logger.info('주문을 생성합니다.')
-logger.info('재고를 차감합니다.')
+logger = logging.LoggerAdapter(base_logger, {'job_id': 'job-8f31'})
+logger.info('동기화를 시작합니다.')
+logger.info('동기화를 완료했습니다.')
 ```
 
 ```text
-INFO request_id=req-8f31 주문을 생성합니다.
-INFO request_id=req-8f31 재고를 차감합니다.
+INFO job_id=job-8f31 동기화를 시작합니다.
+INFO job_id=job-8f31 동기화를 완료했습니다.
 ```
 
-포매터가 `request_id`를 요구하면 해당 핸들러로 들어오는 모든 레코드에 그 값이 있어야 합니다. 웹 서버처럼 동시 요청이 많은 환경에서는 `contextvars.ContextVar`와 필터를 조합해 요청별 값을 자동으로 주입할 수 있습니다.
+동시 요청이 많은 서버에서는 전역 변수 대신 `contextvars.ContextVar`와 필터로 실행 컨텍스트별 값을 주입합니다.
+
+## 컨텍스트 누락과 민감정보 노출 방지하기
+
+포매터가 `%(job_id)s`를 요구하면 해당 핸들러로 들어오는 모든 레코드에 `job_id`가 있어야 합니다. 일부 레코드에 값이 없으면 포맷 중 오류가 발생할 수 있으므로, 그 핸들러를 전용 로거 계층에 두거나 필터가 기본값을 채우게 합니다.
+
+```python
+import logging
+
+class JobContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, 'job_id'):
+            record.job_id = '-'
+        return True
+```
+
+컨텍스트에는 조사에 필요한 최소 식별자만 넣습니다. 카드 번호 전체 대신 마지막 네 자리처럼 로그 경계에 들어오기 전에 안전한 표현으로 바꾸고, 인증 정보는 레코드에 전달하지 않습니다.
 
 ## 파일 회전과 중앙 수집 중 운영 방식 선택하기
 
@@ -97,4 +94,10 @@ logger.addHandler(handler)
 logger.info('애플리케이션을 시작했습니다.')
 ```
 
-컨테이너나 관리형 실행 환경에서는 보통 `StreamHandler`로 표준 오류에 기록하고 플랫폼의 수집·보존 기능에 맡깁니다. 여러 프로세스가 같은 회전 파일에 직접 쓰면 교체 시점이 충돌할 수 있으므로, 이런 환경에서는 중앙 수집 방식을 우선합니다.
+컨테이너나 관리형 실행 환경에서는 보통 `StreamHandler`로 표준 오류에 기록하고 플랫폼의 수집·검색·보존 기능에 맡깁니다. 애플리케이션이 파일 회전과 보관 정책까지 중복해서 소유하지 않게 배포 환경의 계약을 먼저 확인합니다.
+
+## 다중 프로세스에서 기록 경로 분리하기
+
+여러 프로세스가 같은 회전 파일을 직접 쓰면 교체 시점이 충돌하거나 레코드가 예상과 다른 파일에 나뉠 수 있습니다. 프로세스별 파일을 사용하거나, `QueueHandler`로 레코드를 한 수집 프로세스에 전달하거나, 표준 오류를 플랫폼 수집기로 보내는 구조를 선택합니다.
+
+느린 네트워크 전송이나 파일 작업이 요청을 지연시키면 큐로 로그 생성과 입출력을 분리하고, 큐가 가득 찼을 때의 유실·대기 정책을 정합니다. 운영 설정에는 목적지뿐 아니라 로그량, 보존 기간, 민감정보와 수집 실패 정책도 포함됩니다.

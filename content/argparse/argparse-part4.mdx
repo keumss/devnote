@@ -4,7 +4,7 @@ title: "Part 4. 실전: 테스트하고 운영할 수 있는 wordfreq CLI"
 
 ## 파서, 설정, 작업 함수를 분리하기
 
-실전 CLI는 모듈을 가져오는 순간 `parse_args()`나 파일 작업을 실행하지 않습니다. 파서 생성, 토큰 파싱, 실제 작업, 진입점을 분리하면 테스트가 실제 프로세스와 전역 `sys.argv`에 의존하지 않습니다.
+실전 CLI는 모듈을 가져오는 순간 `parse_args()`나 파일 작업을 실행하지 않습니다. 파서 생성, 명시적 설정 변환, 실제 작업, 렌더링, 진입점을 분리하면 테스트가 실제 프로세스와 전역 `sys.argv`에 의존하지 않습니다.
 
 ```python
 from collections.abc import Sequence
@@ -206,6 +206,15 @@ def test_parser_rejects_non_positive_limit() -> None:
 
     assert error.value.code == 2
 
+def test_help_exits_successfully(capsys) -> None:
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(['--help'])
+
+    captured = capsys.readouterr()
+    assert error.value.code == 0
+    assert '텍스트 파일에서 자주 나온 단어' in captured.out
+    assert captured.err == ''
+
 def test_main_prints_counts(tmp_path, capsys) -> None:
     source = tmp_path / 'notes.txt'
     source.write_text('Python cli python', encoding='utf-8')
@@ -226,7 +235,7 @@ def test_main_reports_missing_file(capsys) -> None:
     assert '읽을 수 없음: missing.txt' in captured.err
 ```
 
-도움말이 공개 문서 역할을 한다면 `build_parser().format_help()`에 명령 목적, 핵심 옵션, 사용 예가 들어 있는지도 검사합니다. 전체 도움말 문자열을 스냅샷으로 고정하면 Python 패치 버전의 줄바꿈 변화에도 테스트가 깨질 수 있으므로 중요한 조각만 확인하는 편이 유지보수에 유리합니다.
+도움말은 공개 문서이므로 성공 상태 0, 표준 출력, 명령 목적을 함께 검사합니다. 전체 도움말 문자열을 스냅샷으로 고정하면 Python 패치 버전의 줄바꿈 변화에도 테스트가 깨질 수 있으므로 중요한 조각만 확인하는 편이 유지보수에 유리합니다.
 
 ## 배포 전 실제 셸에서 경계 입력 점검하기
 

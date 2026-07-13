@@ -1,133 +1,182 @@
 ---
-title: "Part 4. 실전: 운영 설정, 문제 진단과 테스트"
+title: "Part 4. 실전: 배치 작업 로깅과 검증"
 ---
 
-## dictConfig로 애플리케이션 설정을 한 번에 적용하기
+## 설정, 작업, 진입점의 책임 분리하기
 
-실전 설정은 애플리케이션 진입점에서 `logging.config.dictConfig()`로 한 번 적용합니다. 핸들러와 포매터를 모듈마다 추가하지 않으면 초기화 순서와 중복 출력 문제를 줄일 수 있습니다.
+실전 프로그램은 로깅 설정을 진입점에서 한 번 적용하고, 각 모듈은 `getLogger(__name__)`으로 이벤트만 기록합니다. 일반 결과는 표준 출력, 진단과 실패는 로그의 기본 콘솔 목적지인 표준 오류로 분리합니다.
 
-```python
-import logging
-import logging.config
+이번 예제는 텍스트 파일의 상품 ID를 동기화하는 배치 작업입니다. 빈 줄은 무시하고, 올바르지 않은 ID는 오류로 기록하되 나머지는 계속 처리합니다. 입력 파일 자체를 읽을 수 없으면 작업 전체를 실패시킵니다.
 
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'standard': {
-            'format': '%(asctime)s %(levelname)s %(name)s: %(message)s',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'level': 'WARNING',
-            'formatter': 'standard',
-        },
-        'diagnostic': {
-            'class': 'logging.FileHandler',
-            'level': 'DEBUG',
-            'formatter': 'standard',
-            'filename': 'app.log',
-            'encoding': 'utf-8',
-        },
-    },
-    'root': {
-        'level': 'INFO',
-        'handlers': ['console', 'diagnostic'],
-    },
-    'loggers': {
-        'shop.checkout': {'level': 'DEBUG'},
-    },
-}
-
-logging.config.dictConfig(LOGGING)
-
-logger = logging.getLogger('shop.checkout')
-logger.debug('결제 요청 본문을 검증했습니다.')  # app.log에만 기록됩니다.
-logger.warning('결제 응답이 지연됩니다.')      # 콘솔과 app.log에 기록됩니다.
+```text
+# items.txt
+101
+bad-id
+203
 ```
 
-`shop.checkout`의 `DEBUG` 레코드는 전파 과정에서 루트 로거의 `INFO` 레벨을 다시 검사하지 않으므로 파일 핸들러까지 도달합니다. `disable_existing_loggers=False`는 설정 전에 만들어진 서드파티 로거를 의도치 않게 비활성화하지 않도록 명시합니다.
+성공 건수와 실패 건수는 자동화가 읽을 결과이고, 처리 과정과 원인은 운영 로그입니다. 이 구분을 함수 경계와 종료 상태에도 반영합니다.
 
-## 환경별 레벨과 서드파티 로그 양 조절하기
+## dictConfig로 배치 로깅 구성하기
 
-개발과 운영의 레벨은 코드에 흩어진 `setLevel()` 호출보다 설정을 만들 때 결정하는 편이 추적하기 쉽습니다. 환경 변수는 허용된 이름인지 검증하고, 애플리케이션 레벨과 콘솔 핸들러 레벨에 함께 적용합니다. 지나치게 많은 로그를 내는 서드파티 패키지는 이름별로 더 높은 기준을 둘 수 있습니다.
+`logging.config.dictConfig()`는 포매터, 핸들러, 로거 계층을 한 객체에서 구성합니다. 환경 변수의 레벨 이름은 허용 목록으로 검증하고, 설정 전에 만들어진 서드파티 로거를 의도치 않게 끄지 않도록 `disable_existing_loggers=False`를 명시합니다.
 
 ```python
+# inventory_sync.py
+import argparse
+import logging
 import logging.config
 import os
+from pathlib import Path
+from collections.abc import Sequence
 
-level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
-allowed_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
-if level_name not in allowed_levels:
-    raise ValueError(f'지원하지 않는 LOG_LEVEL입니다: {level_name}')
+logger = logging.getLogger(__name__)
 
-logging.config.dictConfig({
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'level': level_name,
+def configure_logging(level_name: str) -> None:
+    level = level_name.upper()
+    allowed = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+    if level not in allowed:
+        raise ValueError(f'지원하지 않는 로그 레벨입니다: {level_name}')
+
+    logging.config.dictConfig({
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'standard': {
+                'format': '%(asctime)s %(levelname)s %(name)s: %(message)s',
+            },
         },
-    },
-    'root': {'level': level_name, 'handlers': ['console']},
-    'loggers': {
-        'urllib3': {'level': 'WARNING', 'propagate': True},
-    },
-})
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'level': level,
+                'formatter': 'standard',
+            },
+        },
+        'root': {
+            'level': level,
+            'handlers': ['console'],
+        },
+    })
+
+def sync_product(product_id: int) -> None:
+    logger.debug('상품 동기화를 요청합니다. product_id=%s', product_id)
+
+def run_batch(source: Path) -> tuple[int, int]:
+    logger.info('배치를 시작합니다. source=%s', source)
+    succeeded = 0
+    failed = 0
+
+    for line_number, raw_line in enumerate(
+        source.read_text(encoding='utf-8').splitlines(),
+        start=1,
+    ):
+        value = raw_line.strip()
+        if not value:
+            continue
+
+        try:
+            product_id = int(value)
+            if product_id < 1:
+                raise ValueError('상품 ID는 1 이상이어야 합니다.')
+            sync_product(product_id)
+        except ValueError as error:
+            logger.error(
+                '항목을 건너뜁니다. line=%s value=%r reason=%s',
+                line_number,
+                value,
+                error,
+            )
+            failed += 1
+            continue
+
+        succeeded += 1
+
+    logger.info('배치를 마쳤습니다. succeeded=%s failed=%s', succeeded, failed)
+    return succeeded, failed
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description='상품 ID를 동기화합니다.')
+    parser.add_argument('source', type=Path)
+    return parser
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    try:
+        configure_logging(os.getenv('LOG_LEVEL', 'INFO'))
+        succeeded, failed = run_batch(args.source)
+    except (OSError, UnicodeError, ValueError):
+        logger.exception('배치를 실행하지 못했습니다. source=%s', args.source)
+        return 1
+
+    print(f'succeeded={succeeded} failed={failed}')
+    return 1 if failed else 0
+
+if __name__ == '__main__':
+    raise SystemExit(main())
 ```
 
-장애 조사 때 `DEBUG`를 잠시 활성화하면 로그 양과 민감정보 노출 가능성도 함께 커집니다. 필요한 기간과 대상 로거를 좁히고, 조사가 끝나면 원래 수준으로 되돌립니다.
+잘못된 행은 짧은 `ERROR`, 작업 전체를 막는 예외는 `logger.exception()`으로 남겨 같은 실패를 중복 기록하지 않습니다.
 
-## 로거 체인을 출력해 누락과 중복 원인 찾기
+## 출력 스트림과 종료 상태 확인하기
 
-로그가 보이지 않거나 두 번씩 나온다면 호출 지점만 고치기보다 로거 체인을 확인합니다. 유효 레벨, 연결된 핸들러, 각 핸들러의 레벨, `propagate`를 함께 보면 대부분의 설정 문제를 찾을 수 있습니다.
+기본 `INFO` 설정으로 예제를 실행하면 로그는 표준 오류, 요약은 표준 출력으로 나갑니다. 로그 시각과 traceback 경로는 환경에 따라 달라지므로 고정되는 메시지와 결과를 확인합니다.
+
+```bash
+python inventory_sync.py items.txt
+```
+
+표준 오류에는 시작·2번 행 오류·완료 로그가, 표준 출력에는 다음 고정 결과가 기록됩니다.
+
+```text
+succeeded=2 failed=1
+```
+
+모두 성공하면 상태 코드 0, 하나 이상의 항목이나 작업 전체가 실패하면 1을 반환합니다. 따라서 `inventory_sync.py items.txt > result.txt`로 결과만 저장해도 진단 로그는 터미널이나 수집기에 남습니다. `LOG_LEVEL=DEBUG`는 조사 기간과 대상 환경을 좁혀 사용합니다.
+
+## caplog로 로그 계약 검증하기
+
+작업 함수는 로깅 전역 설정이나 `sys.argv`를 직접 다루지 않으므로 pytest의 `caplog`와 `tmp_path`로 테스트할 수 있습니다. 전체 포맷 문자열보다 `LogRecord`의 이름, 레벨, 메시지를 검사하면 시각과 포매터 변경에 덜 취약합니다.
+
+```python
+# test_inventory_sync.py
+import logging
+
+from inventory_sync import run_batch
+
+def test_batch_reports_invalid_item(tmp_path, caplog) -> None:
+    source = tmp_path / 'items.txt'
+    source.write_text('101\nbad-id\n203\n', encoding='utf-8')
+
+    with caplog.at_level(logging.INFO):
+        result = run_batch(source)
+
+    assert result == (2, 1)
+    errors = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.ERROR
+    ]
+    assert len(errors) == 1
+    assert "line=2 value='bad-id'" in errors[0]
+```
+
+민감정보 제거가 계약이면 금지된 전체 값이 없는지도 검사합니다. 모든 디버그 문구보다 운영이 의존하는 레벨·식별자·오류 요약을 우선 고정합니다.
+
+## 누락과 중복 로그를 운영 전에 진단하기
+
+로그가 보이지 않으면 호출 로거의 유효 레벨과 각 핸들러 레벨을 확인합니다. 두 번 보이면 같은 목적지의 핸들러가 자식과 조상에 함께 붙었는지 확인하고, 중간 로거의 `propagate=False`가 상위 전달을 막는지도 살펴봅니다.
 
 ```python
 import logging
 
-def describe_logger(name: str) -> None:
-    logger = logging.getLogger(name)
-
-    while logger is not None:
-        handlers = [
-            f'{type(handler).__name__}({logging.getLevelName(handler.level)})'
-            for handler in logger.handlers
-        ]
-        print(
-            f'name={logger.name} '
-            f'effective={logging.getLevelName(logger.getEffectiveLevel())} '
-            f'handlers={handlers} propagate={logger.propagate}'
-        )
-
-        if not logger.propagate:
-            break
-        logger = logger.parent
-
-describe_logger('shop.checkout')
+target = logging.getLogger('inventory_sync')
+print(logging.getLevelName(target.getEffectiveLevel()))
+print([(type(handler).__name__, handler.level) for handler in target.handlers])
+print(target.propagate)
 ```
 
-유효 레벨이 예상보다 높으면 자식이 상속한 조상 레벨을 확인합니다. 레코드는 만들어지지만 보이지 않으면 핸들러 레벨을 확인하고, 중복되면 같은 목적지의 핸들러가 여러 계층에 붙어 있는지 확인합니다. `propagate=False`가 중간에 있으면 그 위의 핸들러에는 전달되지 않습니다.
+배포 전에는 정상 파일, 일부 잘못된 행, 없는 파일, UTF-8이 아닌 파일, 잘못된 `LOG_LEVEL`을 실행해 결과 스트림과 상태 코드를 확인합니다. 컨테이너 환경이라면 표준 오류가 실제 수집기에 도착하는지, 보존 기간과 접근 권한이 민감정보 정책에 맞는지도 함께 점검합니다.
 
-## caplog로 중요한 로그 동작 테스트하기
-
-오류 경로의 레벨과 메시지는 테스트로 고정할 수 있습니다. `pytest`의 `caplog`를 사용하면 실제 파일이나 콘솔에 쓰지 않고 `LogRecord`를 검사할 수 있으며, 비밀 값이 남지 않는지도 확인할 수 있습니다.
-
-```python
-import logging
-
-def charge(card_number: str) -> None:
-    logger = logging.getLogger('shop.payment')
-    logger.error('결제를 거절했습니다. card_last4=%s', card_number[-4:])
-
-def test_charge_logs_only_last_four_digits(caplog) -> None:
-    with caplog.at_level(logging.ERROR, logger='shop.payment'):
-        charge('4111111111111111')
-
-    assert 'card_last4=1111' in caplog.text
-    assert '4111111111111111' not in caplog.text
-```
-
-문자열 전체보다 `caplog.records`의 `levelno`, `name`, `getMessage()`를 검사하면 포매터 변경에 덜 취약한 테스트를 만들 수 있습니다.
+Python 3.12의 세부 동작은 [logging 공식 문서](https://docs.python.org/3.12/library/logging.html), [logging HOWTO](https://docs.python.org/3.12/howto/logging.html), [logging cookbook](https://docs.python.org/3.12/howto/logging-cookbook.html)을 기준으로 확인합니다.
