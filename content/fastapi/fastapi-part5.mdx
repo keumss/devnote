@@ -1,100 +1,275 @@
 ---
-title: "Part 5. 정적 파일 제공 및 SSR (Static Files & Jinja2)"
+title: "Part 5. 고급: 인증과 인가"
 ---
 
-## 정적 파일 제공 (이미지 서버)
+## 인증과 인가의 경계를 구분하기
 
-업로드된 이미지(썸네일, 본문 이미지 등)를 클라이언트(브라우저)에서 접근할 수 있도록 URL을 통해 제공하려면 StaticFiles를 사용해 특정 디렉터리를 라우팅 경로에 마운트해야 합니다.
+인증(authentication)은 요청을 보낸 사용자가 누구인지 확인하고, 인가(authorization)는 그 사용자가 특정 작업을 해도 되는지 판단합니다. 유효한 토큰을 가졌다는 사실만으로 다른 사용자의 글을 수정할 권한까지 생기지는 않습니다.
 
-```python
-from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
-import os
+이 예제는 OAuth2 password flow로 사용자명과 비밀번호를 받아 짧게 유지되는 Bearer 액세스 토큰을 발급합니다. JWT는 서명되지만 암호화되지는 않으므로 비밀번호나 개인정보를 payload에 넣지 않습니다. 브라우저 기반 공개 서비스에서는 자체 비밀번호 로그인을 만들기 전에 외부 Identity Provider와 Authorization Code flow 사용도 검토합니다.
 
-app = FastAPI()
-
-UPLOAD_DIR = "app/static/uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-# /static 경로로 들어오는 요청을 app/static 디렉터리와 연결합니다.
-# 예: http://localhost:8000/static/uploads/thumb_1_img.png
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+```text
+POST /token             인증 정보 검증과 액세스 토큰 발급
+POST /posts             인증된 사용자를 작성자로 사용
+PATCH /posts/{post_id}  작성자만 수정 가능
+DELETE /posts/{post_id} 작성자만 삭제 가능
 ```
 
-## Jinja2 설정 및 템플릿 렌더링 준비
-
-FastAPI는 웹 애플리케이션 프레임워크인 Starlette를 기반으로 하므로, Jinja2Templates를 이용해 서버사이드 렌더링(SSR)을 쉽고 간편하게 구현할 수 있습니다. HTML을 동적으로 생성하여 풀스택 블로그 서비스로 거듭날 수 있습니다.
+두 판단을 하나로 섞지 않도록 인증된 사용자와 리소스 작성자를 별도로 전달합니다.
 
 ```python
-from fastapi import FastAPI, Request
-from fastapi.templating import Jinja2Templates
+def can_edit_post(authenticated_username: str, author: str) -> bool:
+    return authenticated_username == author
 
-app = FastAPI()
 
-# 템플릿 파일이 위치할 디렉터리 지정
-templates = Jinja2Templates(directory="app/templates")
+print(can_edit_post("alice", "alice"))
+print(can_edit_post("alice", "bob"))
 ```
 
-## Jinja2 템플릿에 데이터 렌더링하기
+```text
+True
+False
+```
 
-템플릿 엔진을 사용하여 DB에 저장된 블로그 포스트 데이터를 화면에 출력해 봅니다. TemplateResponse를 반환하며 request 객체를 반드시 콘텍스트(context) 딕셔너리에 포함해야 합니다.
+## 설정과 비밀키를 환경변수에서 읽기
+
+JWT 비밀키와 만료 시간은 코드에 하드코딩하지 않습니다. `pydantic-settings`를 사용하면 환경변수를 타입과 제약 조건에 맞게 검증할 수 있습니다.
+
+```bash
+python -m pip install pydantic-settings "pwdlib[argon2]" pyjwt
+openssl rand -hex 32
+```
+
+마지막 명령의 출력을 로컬 `.env`의 `SECRET_KEY`에 넣고 `.env`는 버전 관리에서 제외합니다.
+
+```dotenv
+SECRET_KEY=여기에_충분히_긴_무작위_값을_입력합니다
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+```
 
 ```python
-from fastapi import APIRouter, Request, Depends
-from sqlmodel import select, Session
-from typing import List
-# 위에서 정의한 get_session, Post 모델 등 임포트
+from functools import lru_cache
+from typing import Literal
 
-router = APIRouter()
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 블로그 메인 페이지 (목록 화면)
-@router.get("/", response_class=HTMLResponse)
-async def render_home(request: Request, session: Session = Depends(get_session)):
-    # DB에서 최신 포스트 10개를 조회합니다
-    posts = session.exec(select(Post).order_by(Post.created_at.desc()).limit(10)).all()
 
-    # index.html 템플릿을 호출하며 포스트 데이터를 넘겨줍니다
-    return templates.TemplateResponse(
-        "index.html",
-        {
-            "request": request,     # 필수값
-            "blog_title": "My Awesome Blog",
-            "posts": posts
-        }
+class Settings(BaseSettings):
+    secret_key: str = Field(min_length=32)
+    access_token_expire_minutes: int = Field(default=30, ge=1, le=1440)
+    algorithm: Literal["HS256"] = "HS256"
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+```
+
+운영에서는 `.env` 파일을 이미지에 복사하지 않고 배포 플랫폼의 secret 기능으로 환경변수를 주입합니다. 비밀키를 교체하면 기존 토큰 검증 정책에도 영향이 있으므로 키 ID와 교체 기간이 필요할 수 있습니다.
+
+## Argon2로 비밀번호를 해싱하고 사용자 열거 막기
+
+비밀번호는 복호화할 수 있는 암호문이 아니라 검증 가능한 해시로 저장합니다. `PasswordHash.recommended()`는 현재 권장 설정을 선택하며 새 비밀번호에는 Argon2가 사용됩니다.
+
+```python
+from dataclasses import dataclass
+
+from pwdlib import PasswordHash
+
+password_hash = PasswordHash.recommended()
+DUMMY_HASH = password_hash.hash("not-a-real-password")
+
+
+@dataclass
+class UserRecord:
+    username: str
+    hashed_password: str
+    disabled: bool = False
+
+
+users: dict[str, UserRecord] = {}
+
+
+def register_user(username: str, password: str) -> UserRecord:
+    user = UserRecord(
+        username=username,
+        hashed_password=password_hash.hash(password),
+    )
+    users[username] = user
+    return user
+
+
+def authenticate_user(username: str, password: str) -> UserRecord | None:
+    user = users.get(username)
+    if user is None:
+        password_hash.verify(password, DUMMY_HASH)
+        return None
+    if not password_hash.verify(password, user.hashed_password):
+        return None
+    return user
+```
+
+존재하지 않는 사용자에게도 더미 해시 검증을 수행하면 사용자 존재 여부에 따른 응답 시간 차이를 줄일 수 있습니다. 로그인 실패 메시지도 “사용자 없음”과 “비밀번호 불일치”를 구분하지 않습니다. 별도로 요청 횟수 제한과 로그인 감사 로그를 적용해야 무차별 대입 공격을 줄일 수 있습니다.
+
+## UTC 만료 시간을 포함한 JWT 발급하기
+
+JWT의 `sub`에는 애플리케이션 전체에서 대상을 고유하게 식별하는 문자열을 넣습니다. `exp`에는 timezone-aware UTC 시각을 사용하고, 디코딩할 때 허용 알고리즘을 고정합니다.
+
+```python
+from datetime import datetime, timedelta, timezone
+
+import jwt
+
+
+def create_access_token(subject: str, settings: Settings) -> str:
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.access_token_expire_minutes
+    )
+    payload = {"sub": subject, "exp": expires_at}
+    return jwt.encode(
+        payload,
+        settings.secret_key,
+        algorithm=settings.algorithm,
     )
 ```
 
-## index.html 템플릿 파일 예시
+payload는 클라이언트가 읽을 수 있으므로 최소한의 식별자와 권한 정보만 넣습니다. 액세스 토큰을 즉시 폐기해야 하거나 장기 세션이 필요하다면 짧은 액세스 토큰, 회전 가능한 refresh token, 서버 측 폐기 상태를 별도로 설계합니다.
 
-Jinja2 문법(`{{ 변수명 }}`, `{% 제어문 %}`)을 사용해 서버에서 넘겨받은 컨텍스트 데이터를 HTML 상에 출력하는 템플릿 코드의 예시입니다.
+## OAuth2 토큰 엔드포인트에서 동일한 실패 응답 사용하기
 
-```html
-<!DOCTYPE html>
-<html>
-<head>
-    <title>{{ blog_title }}</title>
-    <!-- 정적 파일 링크 (url_for 사용 권장) -->
-    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
-</head>
-<body>
-    <h1>Welcome to {{ blog_title }}</h1>
+`OAuth2PasswordRequestForm`은 JSON이 아니라 `application/x-www-form-urlencoded` 형식의 `username`과 `password`를 읽습니다. 성공 응답 형태를 모델로 고정하면 Swagger UI의 Authorize 기능도 이 토큰을 사용할 수 있습니다.
 
-    <ul class="post-list">
-        <!-- 넘겨받은 posts 리스트를 순회하며 렌더링 -->
-        {% for post in posts %}
-            <li>
-                <h2><a href="/posts/{{ post.id }}">{{ post.title }}</a></h2>
-                <!-- 썸네일 이미지가 있으면 표시 -->
-                {% if post.thumbnail %}
-                    <img src="{{ post.thumbnail }}" alt="Thumbnail">
-                {% endif %}
-                <p>{{ post.content[:100] }}...</p>
-                <small>Created at: {{ post.created_at.strftime("%Y-%m-%d") }}</small>
-            </li>
-        {% else %}
-            <li>현재 등록된 글이 없습니다.</li>
-        {% endfor %}
-    </ul>
-</body>
-</html>
+```python
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+@app.post("/token", response_model=Token)
+def login_for_access_token(
+    form: Annotated[OAuth2PasswordRequestForm, Depends()],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Token:
+    user = authenticate_user(form.username, form.password)
+    if user is None or user.disabled:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return Token(
+        access_token=create_access_token(user.username, settings),
+        token_type="bearer",
+    )
 ```
+
+```bash
+curl --silent --request POST http://127.0.0.1:8000/token \
+  --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data 'username=alice&password=correct-password'
+```
+
+```text
+{"access_token":"<요청마다 달라지는 서명된 JWT>","token_type":"bearer"}
+```
+
+토큰 문자열은 만료 시각과 비밀키에 따라 달라집니다. 실패는 사용자 존재 여부와 관계없이 같은 401 응답을 사용합니다.
+
+## Bearer 토큰에서 현재 사용자 가져오기
+
+`OAuth2PasswordBearer`는 `Authorization: Bearer <token>` 헤더를 읽습니다. 서명, 만료, subject, 사용자 상태 중 하나라도 유효하지 않으면 같은 인증 예외를 반환합니다.
+
+```python
+from jwt.exceptions import InvalidTokenError
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+
+def credentials_exception() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def get_current_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> UserRecord:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
+        username = payload.get("sub")
+        if not isinstance(username, str):
+            raise credentials_exception()
+    except InvalidTokenError as exc:
+        raise credentials_exception() from exc
+
+    user = users.get(username)
+    if user is None or user.disabled:
+        raise credentials_exception()
+    return user
+
+
+CurrentUser = Annotated[UserRecord, Depends(get_current_user)]
+```
+
+`WWW-Authenticate: Bearer` 헤더는 클라이언트와 OpenAPI 도구에 필요한 인증 방식을 알려 줍니다. 토큰 문자열이나 비밀번호를 오류 로그에 남기지 않습니다.
+
+## 작성자 소유권을 생성·수정·삭제에 적용하기
+
+글 작성자는 요청 본문이 아니라 검증된 현재 사용자에서 가져옵니다. 인증은 되었지만 다른 사용자의 글을 변경하려는 경우 403을 반환합니다.
+
+```python
+def require_owner(post: PostRecord, current_user: UserRecord) -> None:
+    if post.author != current_user.username:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions",
+        )
+
+
+@router.post("", response_model=PostPublic, status_code=201)
+def create_post(
+    post: PostCreate,
+    current_user: CurrentUser,
+    repository: Repo,
+) -> PostRecord:
+    return repository.add(post, author=current_user.username)
+
+
+@router.delete("/{post_id}", status_code=204)
+def delete_post(
+    post_id: int,
+    current_user: CurrentUser,
+    repository: Repo,
+) -> Response:
+    post = repository.get(post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail="Post not found")
+    require_owner(post, current_user)
+    repository.delete(post_id)
+    return Response(status_code=204)
+```
+
+수정 경로에도 조회 후 `require_owner()`를 같은 순서로 적용합니다. 관리자 역할이 필요하면 조건문을 여러 경로에 복사하지 말고 정책 의존성이나 서비스 계층으로 모읍니다.

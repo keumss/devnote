@@ -1,98 +1,207 @@
 ---
-title: "Part 6. 심화: 파일 업로드 (File Uploads)"
+title: "Part 6. 고급: 폼과 안전한 파일 업로드"
 ---
 
-## Form Data 처리하기 (Form)
+## Form으로 URL 인코딩 데이터를 받기
 
-Jinja2 기반의 HTML 폼이나 일반적인 application/x-www-form-urlencoded 데이터를 서버에서 받을 때는 Form 의존성을 사용합니다. JSON 바디를 받을 때와 달리 파라미터에 Form(...)을 명시해야 합니다.
-
-```python
-from fastapi import APIRouter, Form
-
-router = APIRouter()
-
-@router.post("/login-form/")
-def login_via_form(username: str = Form(...), password: str = Form(...)):
-    # HTML의 <form> 태그에서 전송된 데이터를 처리합니다.
-    return {"username": username, "message": "로그인 폼 제출 성공!"}
-```
-
-## 단일 이미지 업로드 (썸네일)
-
-블로그 포스트의 썸네일과 같은 단일 파일을 업로드하는 방법입니다. FastAPI의 UploadFile 객체를 사용하면 비동기 환경에서도 파일을 안전하고 효율적으로 다룰 수 있습니다.
+HTML 폼과 OAuth2 password flow는 주로 JSON 대신 폼 데이터를 전송합니다. 파일이 없으면 `application/x-www-form-urlencoded`, 파일이 있으면 `multipart/form-data`를 사용하며 두 형식을 파싱하려면 `python-multipart`가 필요합니다. `fastapi[standard]`를 설치했다면 함께 설치됩니다.
 
 ```python
-from fastapi import APIRouter, File, UploadFile
-import shutil
-import os
-import uuid
+from typing import Annotated
 
-router = APIRouter()
-UPLOAD_DIR = "app/static/uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+from fastapi import FastAPI, Form
 
-@router.post("/posts/{post_id}/thumbnail")
-async def upload_thumbnail(post_id: int, file: UploadFile = File(...)):
-    # 파일명 중복을 피하기 위해 UUID 사용
-    file_extension = file.filename.split(".")[-1]
-    unique_filename = f"thumb_{post_id}_{uuid.uuid4().hex}.{file_extension}"
-    file_location = os.path.join(UPLOAD_DIR, unique_filename)
+app = FastAPI()
 
-    # 파일을 청크 단위로 읽어 디스크에 저장합니다.
-    with open(file_location, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
 
-    # 클라이언트가 접근할 수 있는 URL 경로 반환
-    return {"thumbnail_url": f"/static/uploads/{unique_filename}"}
+@app.post("/feedback")
+def create_feedback(
+    email: Annotated[str, Form()],
+    message: Annotated[str, Form(min_length=1, max_length=1000)],
+) -> dict[str, str]:
+    return {"email": email, "message": message}
 ```
 
-## 다중 이미지 업로드 (포스트 본문)
+```bash
+curl --silent --request POST http://127.0.0.1:8000/feedback \
+  --data-urlencode 'email=learner@example.com' \
+  --data-urlencode 'message=FastAPI를 학습하고 있습니다.'
+```
 
-블로그 포스트 본문에 들어갈 여러 개의 이미지를 동시에 업로드하는 방법입니다. List[UploadFile] 타입을 파라미터로 받아 순회하며 저장합니다.
+```json
+{"email":"learner@example.com","message":"FastAPI를 학습하고 있습니다."}
+```
+
+한 요청의 본문은 하나의 미디어 타입을 사용합니다. 파일과 폼 필드는 함께 받을 수 있지만 같은 요청에서 별도의 JSON 본문까지 기대할 수는 없습니다.
+
+## UploadFile의 스풀 파일과 비동기 메서드 이해하기
+
+`bytes` 매개변수는 파일 전체를 메모리에 올리지만 `UploadFile`은 일정 크기까지 메모리를 사용한 뒤 임시 디스크로 넘기는 spooled file을 제공합니다. 파일명, 선언된 MIME 타입, 비동기 `read`, `seek`, `write`, `close`를 사용할 수 있습니다.
 
 ```python
-from fastapi import APIRouter, File, UploadFile
-from typing import List
-import shutil
-import os
-import uuid
+from fastapi import UploadFile
 
-@router.post("/posts/{post_id}/images")
-async def upload_multiple_images(post_id: int, files: List[UploadFile] = File(...)):
-    saved_urls = []
 
-    for file in files:
-        file_extension = file.filename.split(".")[-1]
-        unique_filename = f"post_{post_id}_{uuid.uuid4().hex}.{file_extension}"
-        file_location = os.path.join(UPLOAD_DIR, unique_filename)
-
-        with open(file_location, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        saved_urls.append(f"/static/uploads/{unique_filename}")
-
-    return {"image_urls": saved_urls}
+@app.post("/inspect-file")
+async def inspect_file(file: UploadFile) -> dict[str, int | str | None]:
+    try:
+        first_bytes = await file.read(16)
+        await file.seek(0)
+        return {
+            "filename": file.filename,
+            "content_type": file.content_type,
+            "header_size": len(first_bytes),
+        }
+    finally:
+        await file.close()
 ```
 
-## HTML Form 파일 업로드 요소 구성
+`content_type`과 `filename`은 클라이언트가 보낸 값이므로 보안 판정의 근거로 단독 사용하지 않습니다. `async def` 안에서는 `file.file.read()` 같은 동기 접근보다 await 가능한 메서드를 사용합니다.
 
-파일 업로드를 지원하는 HTML 폼 양식 예시입니다. 단일 파일과 다중 파일(multiple) 속성을 폼 인풋(input)으로 구성할 수 있습니다. 폼 전송 시에는 반드시 enctype="multipart/form-data" 속성이 있어야 합니다.
+## 실제 파일 시그니처와 크기를 확인해 저장하기
+
+다음 저장 함수는 JPEG, PNG, WebP의 고정 시그니처를 확인하고 5 MiB를 넘으면 413으로 거절합니다. 원래 파일명 대신 UUID를 사용하므로 경로 이동 문자와 이름 충돌을 피할 수 있습니다.
+
+```python
+from pathlib import Path
+from uuid import uuid4
+
+from anyio import open_file
+from fastapi import HTTPException, UploadFile, status
+
+UPLOAD_DIR = Path("uploads")
+MAX_FILE_SIZE = 5 * 1024 * 1024
+CHUNK_SIZE = 1024 * 1024
+
+
+def detect_image_extension(header: bytes) -> str | None:
+    if header.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if header.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+async def save_image(file: UploadFile) -> Path:
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    header = await file.read(16)
+    extension = detect_image_extension(header)
+    if extension is None:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Only JPEG, PNG, and WebP images are allowed",
+        )
+
+    target = UPLOAD_DIR / f"{uuid4().hex}.{extension}"
+    size = 0
+    completed = False
+
+    try:
+        async with await open_file(target, "xb") as output:
+            chunk = header
+            while chunk:
+                size += len(chunk)
+                if size > MAX_FILE_SIZE:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="File is too large",
+                    )
+                await output.write(chunk)
+                chunk = await file.read(CHUNK_SIZE)
+        completed = True
+        return target
+    finally:
+        if not completed:
+            target.unlink(missing_ok=True)
+```
+
+애플리케이션 제한은 이미 도착한 요청을 처리하는 단계에서 적용됩니다. 업로드 대역폭과 임시 파일 사용량까지 제한하려면 리버스 프록시나 플랫폼에도 요청 본문 크기 제한을 둡니다. 이미지 디코더로 전체 구조를 다시 검증해야 하는 서비스라면 Pillow 같은 전용 라이브러리를 추가합니다.
+
+## 단일 업로드에서 파일 닫기와 응답 경로 보장하기
+
+파일 저장의 성공 여부와 관계없이 `UploadFile`을 닫습니다. 응답에는 서버 내부 파일 시스템 경로 대신 클라이언트가 사용할 불투명한 URL만 반환합니다.
+
+```python
+from pydantic import BaseModel
+
+
+class UploadResult(BaseModel):
+    url: str
+
+
+@app.post("/images", response_model=UploadResult, status_code=201)
+async def upload_image(
+    file: UploadFile,
+    _current_user: CurrentUser,
+) -> UploadResult:
+    try:
+        saved_path = await save_image(file)
+        return UploadResult(url=f"/media/{saved_path.name}")
+    finally:
+        await file.close()
+```
+
+업로드 경로에는 인증과 인가를 적용하고, 파일 URL을 DB 레코드에 연결할 때 해당 글을 수정할 권한도 다시 확인합니다. DB 저장이 실패하면 이미 저장한 파일을 제거하거나 고아 파일 정리 작업을 준비합니다.
+
+## 다중 업로드를 하나의 성공 단위로 처리하기
+
+여러 파일 중 하나라도 실패했을 때 앞서 저장한 파일을 남길지 모두 취소할지 정책을 정해야 합니다. 다음 예제는 모두 성공해야 URL 목록을 반환하고, 실패하면 이번 요청에서 저장한 파일을 제거합니다.
+
+```python
+@app.post("/images/batch", response_model=list[UploadResult], status_code=201)
+async def upload_images(
+    files: list[UploadFile],
+    _current_user: CurrentUser,
+) -> list[UploadResult]:
+    saved_paths: list[Path] = []
+    try:
+        if not 1 <= len(files) <= 10:
+            raise HTTPException(status_code=422, detail="Upload 1 to 10 files")
+        for file in files:
+            saved_paths.append(await save_image(file))
+        return [UploadResult(url=f"/media/{path.name}") for path in saved_paths]
+    except Exception:
+        for path in saved_paths:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        for file in files:
+            await file.close()
+```
+
+파일 개수에도 상한을 두지 않으면 작은 파일을 매우 많이 보내 처리 시간을 늘릴 수 있습니다. 경로 연산에서 `len(files)`를 확인하거나 프록시 정책과 함께 최대 개수를 제한합니다.
+
+## 단일·다중 HTML 폼을 올바른 필드명에 연결하기
+
+폼의 `action`은 대상 엔드포인트와, `name`은 함수 매개변수와 일치해야 합니다. 단일 파일과 다중 파일을 서로 다른 폼으로 나누면 어느 버튼이 어느 요청을 만드는지 명확합니다.
 
 ```html
-<!-- 파일 업로드용 폼. enctype은 필수입니다. -->
-<form action="/posts/1/images" method="post" enctype="multipart/form-data">
-    <div>
-        <label for="thumbnail">썸네일 업로드:</label>
-        <!-- accept 속성으로 선택할 수 있는 파일 형식을 이미지로 제한할 수 있습니다. -->
-        <input type="file" id="thumbnail" name="file" accept="image/*">
-    </div>
+<form action="/images" method="post" enctype="multipart/form-data">
+  <label for="single-image">대표 이미지</label>
+  <input id="single-image" name="file" type="file" accept="image/png,image/jpeg,image/webp" required>
+  <button type="submit">한 장 업로드</button>
+</form>
 
-    <div>
-        <label for="images">본문 이미지 다중 업로드:</label>
-        <!-- multiple 속성을 주면 사용자가 여러 개의 파일을 동시에 선택할 수 있습니다. -->
-        <input type="file" id="images" name="files" accept="image/*" multiple>
-    </div>
-
-    <button type="submit">업로드 완료</button>
+<form action="/images/batch" method="post" enctype="multipart/form-data">
+  <label for="multiple-images">본문 이미지</label>
+  <input id="multiple-images" name="files" type="file" accept="image/png,image/jpeg,image/webp" multiple required>
+  <button type="submit">여러 장 업로드</button>
 </form>
 ```
+
+브라우저의 `accept`는 파일 선택을 돕는 힌트일 뿐 우회할 수 있습니다. 서버의 시그니처·크기·권한 검사를 생략하면 안 됩니다.
+
+## 허용한 미디어만 별도 정적 경로로 제공하기
+
+검증된 공개 이미지만 전용 디렉터리에 저장하고 `StaticFiles`로 마운트할 수 있습니다. HTML과 SVG처럼 브라우저에서 스크립트 실행이나 외부 참조가 가능한 형식은 이 경로에 허용하지 않습니다.
+
+```python
+from fastapi.staticfiles import StaticFiles
+
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=UPLOAD_DIR), name="media")
+```
+
+`StaticFiles` 경로 자체에는 사용자별 인가가 적용되지 않습니다. 비공개 파일은 권한을 확인하는 다운로드 경로나 짧게 유지되는 서명 URL로 제공합니다. 컨테이너 로컬 디스크는 재배포나 복제 시 공유되지 않을 수 있으므로 운영에서는 접근 정책, 악성 파일 검사, 보존 기간, 백업을 지원하는 객체 저장소와 CDN을 고려합니다.
