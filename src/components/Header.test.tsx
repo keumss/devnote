@@ -18,5 +18,9 @@ describe('Header', () => {
     const homeLink = getByLabelText('DevNote 홈으로 이동');
     expect(homeLink).toHaveClass('focus-visible:ring-2', 'focus-visible:ring-indigo-500/50');
     expect(homeLink).not.toHaveClass('focus:ring-2', 'focus:ring-indigo-500/50');
+
+    const homeIcon = homeLink.firstElementChild;
+    expect(homeIcon).toHaveClass('group-active:-translate-y-0.5', 'group-active:scale-105');
+    expect(homeIcon).not.toHaveClass('group-hover:-translate-y-0.5', 'group-hover:scale-105');
   });
 });
