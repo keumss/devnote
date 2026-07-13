@@ -6,10 +6,7 @@
     "sql",
     "sqlalchemy",
     "jinja2",
-    "collections",
-    "itertools",
     "logging",
-    "argparse",
-    "seedir"
+    "argparse"
   ]
 }
