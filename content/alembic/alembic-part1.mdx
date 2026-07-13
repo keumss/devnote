@@ -1,23 +1,25 @@
 ---
-title: "Part 1. 초급: 설치 및 초기 설정"
+title: 'Part 1. 초급: 설치와 마이그레이션 환경'
 ---
 
-## Alembic이 관리하는 스키마 변경 이해하기
+## Alembic이 스키마 변경 이력을 관리하는 이유
 
-Alembic은 SQLAlchemy 모델과 데이터베이스 스키마의 변경 이력을 Python 리비전 파일로 관리합니다. 예를 들어 `users.email` 컬럼을 추가하면 개발자마다 수동으로 `ALTER TABLE`을 실행하는 대신, 같은 리비전을 개발·테스트·운영 데이터베이스에 순서대로 적용합니다.
+Alembic은 SQLAlchemy의 데이터베이스 마이그레이션 도구입니다. 테이블·컬럼·인덱스·제약 조건의 변경을 Python 리비전 파일로 기록하고, 개발·테스트·운영 데이터베이스에 같은 순서로 적용합니다. 모델을 수정하는 것만으로 데이터베이스가 바뀌지는 않으며, 리비전 파일과 적용 명령이 함께 있어야 합니다.
 
-Alembic이 다루는 중심 대상은 테이블·컬럼·인덱스 같은 **스키마**입니다. 기존 행의 값을 채우는 데이터 마이그레이션은 리비전에 명시적으로 작성해야 하며, 모델 코드를 바꾸는 것만으로 운영 DB가 자동 갱신되지는 않습니다. 리비전 파일을 Git으로 공유하고 배포 과정에서 `upgrade`를 실행하는 흐름을 기억합니다.
+리비전은 이미 배포된 데이터베이스가 어떤 변경을 거쳐 현재 구조가 되었는지 설명하는 이력입니다. 파일을 Git으로 공유하고 배포 과정에서 한 번만 적용해야 여러 애플리케이션 인스턴스가 같은 스키마를 사용합니다.
 
-## 설치 후 init 결과물의 역할 파악하기
+Alembic의 중심 대상은 **스키마**입니다. 기존 행을 변환하는 데이터 마이그레이션은 변경 규모와 잠금 시간을 고려해 리비전에 직접 작성하거나 별도 작업으로 실행합니다. 모델 선언, 리비전 파일, 실제 데이터베이스 상태를 서로 다른 대상으로 구분해야 문제를 추적하기 쉽습니다.
 
-프로젝트 가상환경에 Alembic을 설치하고 초기화합니다. 폴더 이름은 관례적으로 `alembic`을 사용하지만 다른 이름도 가능합니다.
+## 설치하고 init 결과물의 역할 확인하기
+
+Python 3.12 가상환경에 Alembic과 사용할 데이터베이스 드라이버를 설치합니다. 아래 PostgreSQL 예제는 동기 드라이버인 Psycopg를 사용합니다. SQLite는 Python에 포함된 드라이버를 사용하므로 별도 설치가 필요 없습니다.
 
 ```bash
-python -m pip install alembic
+python -m pip install alembic 'psycopg[binary]'
 alembic init alembic
 ```
 
-명령을 실행하면 다음 구조가 생깁니다. 콘솔의 절대 경로와 안내 문구는 실행 위치에 따라 달라질 수 있습니다.
+초기화 결과의 절대 경로는 실행 위치에 따라 달라집니다.
 
 ```text
 Creating directory .../alembic
@@ -30,18 +32,18 @@ Please edit configuration/connection/logging settings in alembic.ini before proc
 
 ```text
 .
-├─alembic.ini
-└─alembic/
-  ├─env.py
-  ├─script.py.mako
-  └─versions/
+├─ alembic.ini
+└─ alembic/
+   ├─ env.py
+   ├─ script.py.mako
+   └─ versions/
 ```
 
-`alembic.ini`는 명령과 로깅의 기본 설정, `env.py`는 DB 연결과 모델 메타데이터를 준비하는 실행 환경, `versions/`는 앞으로 생성할 리비전 파일을 담습니다. 생성 직후에는 `versions/`가 비어 있는 것이 정상입니다.
+`alembic.ini`는 명령과 로깅의 기본 설정, `env.py`는 DB 연결과 모델 메타데이터를 준비하는 실행 환경입니다. `script.py.mako`는 새 리비전의 템플릿이고 `versions/`는 생성한 리비전 파일을 담습니다. 초기화 직후 `versions/`가 비어 있는 것은 정상입니다.
 
 ## 연결 URL을 환경 변수에서 안전하게 주입하기
 
-`alembic.ini`에 실제 비밀번호를 커밋하지 않습니다. 파일에는 개발자가 바꿔야 한다는 자리표시자만 두고, `env.py`에서 배포 환경의 `DATABASE_URL`을 읽어 설정을 덮어씁니다.
+`alembic.ini`에 실제 비밀번호를 커밋하지 않습니다. 파일에는 자리표시자만 두고 `env.py`에서 배포 환경의 `DATABASE_URL`로 덮어씁니다.
 
 ```ini
 # alembic.ini
@@ -59,34 +61,47 @@ database_url = os.environ.get('DATABASE_URL')
 if not database_url:
     raise RuntimeError('DATABASE_URL 환경 변수가 필요합니다.')
 
-# ConfigParser에서 URL의 % 문자가 보간 기호로 해석되지 않게 이스케이프합니다.
+# ConfigParser가 URL의 %를 보간 기호로 해석하지 않게 이스케이프합니다.
 config.set_main_option('sqlalchemy.url', database_url.replace('%', '%%'))
 ```
+
+연결을 확인합니다. 아직 리비전이 없는 새 데이터베이스라면 `current`가 출력할 리비전은 없습니다.
 
 ```bash
 DATABASE_URL='postgresql+psycopg://app:secret@localhost:5432/app' alembic current
 ```
 
-연결이 성공하고 아직 리비전을 적용하지 않은 새 DB라면 출력할 현재 리비전이 없습니다. 연결 실패는 드라이버 누락, 호스트·포트, 인증 정보 순서로 확인합니다. 셸 기록에 비밀번호가 남을 수 있으므로 실제 운영에서는 CI 시크릿이나 플랫폼의 비밀 주입 기능을 사용합니다.
+비밀번호가 셸 기록에 남을 수 있으므로 실제 운영에서는 CI 시크릿이나 플랫폼의 비밀 주입 기능을 사용합니다. 연결에 실패하면 URL의 드라이버 이름, 드라이버 설치 여부, 호스트·포트, 인증 정보 순서로 확인합니다.
 
-## env.py에 모델 메타데이터 연결하기
+## 모델 메타데이터를 연결하고 첫 리비전 만들기
 
-`--autogenerate`는 DB 스키마와 `target_metadata`를 비교합니다. Declarative Base를 쓰는 프로젝트라면 `Base.metadata`, SQLModel이라면 `SQLModel.metadata`를 연결합니다. 모델 모듈을 가져오지 않으면 메타데이터에 테이블이 등록되지 않아 빈 리비전이 생길 수 있습니다.
+`--autogenerate`는 연결된 DB 스키마와 `target_metadata`를 비교합니다. Declarative Base를 쓰면 `Base.metadata`, SQLModel을 쓰면 `SQLModel.metadata`를 연결합니다. 모든 모델 모듈을 가져오지 않으면 메타데이터에 테이블이 등록되지 않아 빈 리비전이 생길 수 있습니다.
 
 ```python
-# alembic/env.py
-from app.db import Base
+# SQLAlchemy Declarative 프로젝트
 from app import models  # 모든 매핑 클래스가 등록되도록 가져옵니다.
+from app.db import Base
 
 target_metadata = Base.metadata
 ```
 
 ```python
-# SQLModel 프로젝트의 대안
-from sqlmodel import SQLModel
+# SQLModel 프로젝트
 from app import models
+from sqlmodel import SQLModel
 
 target_metadata = SQLModel.metadata
 ```
 
-초기 설정 뒤 모델 하나를 만든 다음 `alembic revision --autogenerate -m 'create users'`를 실행합니다. 생성된 `upgrade()`에 `op.create_table(...)`이 있고 `downgrade()`에 반대 작업이 있는지 직접 검토해야 합니다. 자동 생성은 초안 작성 도구이며 컬럼 이름 변경을 삭제 후 재생성으로 오해하는 등 의도를 완전히 알 수 없습니다.
+모델 하나를 정의한 뒤 첫 초안을 생성합니다.
+
+```bash
+alembic revision --autogenerate -m 'create users'
+```
+
+```text
+INFO  [alembic.autogenerate.compare] Detected added table 'users'
+Generating .../alembic/versions/<revision>_create_users.py ...  done
+```
+
+리비전 ID는 실행할 때마다 달라집니다. 생성된 `upgrade()`에 `op.create_table(...)`이 있고 `downgrade()`에 반대 작업이 있는지 직접 검토합니다. 자동 생성은 의도를 완전히 알 수 없는 초안 작성 도구입니다.

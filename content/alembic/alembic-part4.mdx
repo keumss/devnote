@@ -1,80 +1,228 @@
 ---
-title: "Part 4. FastAPI + SQLModel 연동하기"
+title: 'Part 4. 실전: SQLModel 통합과 배포 검증'
 ---
 
-## SQLModel용 env.py 메타데이터 설정
+## SQLModel과 비동기 드라이버를 완결된 env.py로 연결하기
 
-SQLModel을 쓴다면 SQLAlchemy 방식과 조금 다르게 메타데이터를 매핑해야 감지가 정상적으로 이뤄집니다.
-
-```python
-# alembic/env.py
-
-# 1. SQLModel 임포트 (내부에서 SQLAlchemy 메타데이터를 관리함)
-from sqlmodel import SQLModel
-
-# 2. 모델들이 정의된 파일을 필수 임포트해야 스캐너가 감지할 수 있습니다.
-from app.models import Hero, Team
-
-# 3. target_metadata 에 SQLModel 내부 메타데이터 자산을 등록
-target_metadata = SQLModel.metadata
-
-# 옵션: DB 주소를 환경변수로부터 주입하려면 아래 방식으로 대체
-# import os
-# config.set_main_option("sqlalchemy.url", os.environ.get("DATABASE_URL"))
-```
-
-## FastAPI의 비동기 (Async) Alembic 설정
-
-성능 최적화를 위해 비동기 드라이버 (asyncpg 등) 사용 시, alembic 템플릿 명령어와 초기 코드 구성이 다릅니다.
+애플리케이션이 `asyncpg` 같은 비동기 드라이버를 사용한다면 async 템플릿으로 환경을 만듭니다. 비동기 처리는 API 요청 성능을 자동으로 높이는 설정이 아니라, 애플리케이션과 같은 드라이버 계열로 연결하기 위한 선택입니다.
 
 ```bash
-# 비동기 드라이버를 쓴다면 초기화 시 async 템플릿을 선택합니다.
+python -m pip install alembic 'sqlalchemy[asyncio]' asyncpg
 alembic init -t async alembic
 ```
 
+다음 `env.py`는 환경 변수 주입, SQLModel 메타데이터, offline mode, 비동기 엔진 생성과 정리까지 연결한 최소 구성입니다.
+
 ```python
-# alembic/env.py에는 비동기 엔진 처리가 포함됩니다.
+from __future__ import annotations
+
+import asyncio
+import os
+from logging.config import fileConfig
+
+from alembic import context
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlmodel import SQLModel
 
-def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
-    with context.begin_transaction():
-        context.run_migrations()
+from app import models  # 모든 table=True 모델을 등록합니다.
 
-async def run_async_migrations():
-    connectable = async_engine_from_config(config.get_section(config.config_ini_section, {}))
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-```
+config = context.config
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
 
-## SQLModel 타입 및 디폴트 값 감지 옵션
+database_url = os.environ.get('DATABASE_URL')
+if not database_url:
+    raise RuntimeError('DATABASE_URL 환경 변수가 필요합니다.')
+config.set_main_option('sqlalchemy.url', database_url.replace('%', '%%'))
 
-SQLModel(또는 SQLAlchemy)에서 타입과 DB 서버 기본값의 변경을 어떻게 비교할지 명시합니다. 최근 Alembic은 `compare_type`을 기본으로 비교하지만, 설정에 적어 두면 팀의 의도를 분명히 할 수 있습니다. `compare_server_default` 결과는 DB마다 차이가 있을 수 있으므로 생성된 리비전을 검토합니다.
+target_metadata = SQLModel.metadata
 
-```python
-# alembic/env.py 의 context.configure(...) 인스턴스를 찾습니다.
 
-def run_migrations_online():
+def run_migrations_offline() -> None:
     context.configure(
-        connection=connection,
+        url=config.get_main_option('sqlalchemy.url'),
         target_metadata=target_metadata,
-        compare_type=True,          # (중요) 기존 컬럼 데이터 타입 변경을 감지
-        compare_server_default=True # (중요) DB단 디폴트 값 변경 감지
+        literal_binds=True,
+        dialect_opts={'paramstyle': 'named'},
     )
 
     with context.begin_transaction():
         context.run_migrations()
+
+
+def do_run_migrations(connection: Connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+    )
+
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section) or {},
+        prefix='sqlalchemy.',
+        poolclass=pool.NullPool,
+    )
+
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+
+    await connectable.dispose()
+
+
+def run_migrations_online() -> None:
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
 ```
 
-## 배포 단계에서 한 번만 마이그레이션 적용
+`compare_type`은 최근 Alembic에서 기본값이 `True`지만 명시하면 팀의 정책이 드러납니다. `compare_server_default`는 DB마다 비교 정확도가 달라 기본적으로 켜지 말고, 실제 대상 DB에서 오탐이 없는지 검증한 뒤 선택합니다.
 
-여러 API 인스턴스가 동시에 시작되는 환경에서 각 인스턴스가 마이그레이션을 실행하면 락 경합이나 예측하기 어려운 실패가 생길 수 있습니다. 배포 파이프라인의 일회성 작업으로 현재 리비전을 확인하고 `head`까지 적용한 뒤, 애플리케이션을 시작합니다.
+## expand-contract로 애플리케이션과 스키마 호환성 유지하기
+
+운영 중 `users.display_name`을 `name`으로 바꾼다고 가정합니다. 컬럼 이름을 즉시 변경하면 아직 실행 중인 이전 API 인스턴스가 실패합니다. 먼저 새 컬럼을 추가하고 작은 데이터만 백필하는 expand 리비전을 적용합니다.
+
+```python
+from alembic import op
+import sqlalchemy as sa
+
+users = sa.table(
+    'users',
+    sa.column('display_name', sa.String(length=100)),
+    sa.column('name', sa.String(length=100)),
+)
+
+
+def upgrade() -> None:
+    op.add_column(
+        'users',
+        sa.Column('name', sa.String(length=100), nullable=True),
+    )
+    op.execute(
+        users.update()
+        .where(users.c.name.is_(None))
+        .values(name=users.c.display_name)
+    )
+
+
+def downgrade() -> None:
+    op.drop_column('users', 'name')
+```
+
+이 리비전 뒤에는 두 컬럼을 함께 쓰고 `name`을 우선 읽는 애플리케이션을 배포합니다. 대형 테이블이면 리비전 안의 전체 UPDATE 대신 재시도 가능한 배치 작업으로 백필합니다. 누락이 없고 이전 애플리케이션이 모두 종료된 것을 확인한 다음 별도 contract 리비전에서 제약을 강화하고 구 컬럼을 삭제합니다.
+
+```python
+from alembic import op
+import sqlalchemy as sa
+
+
+def upgrade() -> None:
+    op.alter_column(
+        'users',
+        'name',
+        existing_type=sa.String(length=100),
+        nullable=False,
+    )
+    op.drop_column('users', 'display_name')
+
+
+def downgrade() -> None:
+    op.add_column(
+        'users',
+        sa.Column('display_name', sa.String(length=100), nullable=True),
+    )
+    users = sa.table(
+        'users',
+        sa.column('display_name', sa.String(length=100)),
+        sa.column('name', sa.String(length=100)),
+    )
+    op.execute(
+        users.update().values(display_name=users.c.name)
+    )
+    op.alter_column(
+        'users',
+        'display_name',
+        existing_type=sa.String(length=100),
+        nullable=False,
+    )
+    op.alter_column(
+        'users',
+        'name',
+        existing_type=sa.String(length=100),
+        nullable=True,
+    )
+```
+
+이 예제는 `name`에서 `display_name`을 재구성할 수 있어 downgrade 경로를 제공하지만 두 컬럼 값이 달랐다면 이전 값을 정확히 복구하지 못합니다. contract 리비전은 데이터 삭제를 포함하므로 백업·보존 기간과 이전 버전 종료를 배포 승인 조건으로 둡니다.
+
+## 빈 테스트 DB에서 전체 리비전과 모델 차이 검사하기
+
+마이그레이션 테스트는 운영 DB가 아닌 매번 새로 만드는 테스트 DB에서 실행합니다. 전체 이력이 빈 DB에서 head까지 올라가는지, 최근 downgrade가 실행되는지, 다시 올린 뒤 모델과 차이가 없는지 확인합니다.
 
 ```bash
-# 배포 작업이 사용할 DATABASE_URL을 환경 변수로 주입합니다.
-alembic current
 alembic upgrade head
-
-# 문제가 생겼을 때 원인을 확인할 수 있도록 적용 가능한 이력도 남깁니다.
-alembic history --verbose
+alembic downgrade -1
+alembic upgrade head
+alembic check
+alembic heads
 ```
+
+차이가 없고 head가 하나라면 마지막 두 명령의 대표 결과는 다음과 같습니다. 리비전 ID는 프로젝트마다 다릅니다.
+
+```text
+No new upgrade operations detected.
+<revision> (head)
+```
+
+전체 downgrade를 지원하기로 한 프로젝트라면 별도 테스트 DB에서 `alembic downgrade base` 후 `upgrade head`도 실행합니다. 비가역 데이터 변경 때문에 전체 downgrade를 지원하지 않는다면 지원 경계를 문서화하고, 대신 현재 운영 리비전에서 새 head로 복제 데이터를 사용해 검증합니다.
+
+`alembic check`는 autogenerate와 같은 비교 기능을 사용하므로 이름 변경과 데이터 변환을 검증하지 못합니다. CI 통과만 믿지 말고 리비전 코드 리뷰와 대상 DB 통합 테스트를 함께 수행합니다.
+
+## 배포 파이프라인에서 마이그레이션을 한 번만 실행하기
+
+여러 API 인스턴스가 각자 시작할 때 마이그레이션을 실행하면 DDL 락 경합과 중복 실패가 생길 수 있습니다. 배포 파이프라인의 일회성 작업에서 현재 상태를 기록하고 head까지 적용한 뒤 애플리케이션을 배포합니다.
+
+```bash
+alembic current
+alembic heads
+alembic upgrade head
+alembic current
+```
+
+```text
+<previous_revision>
+<target_revision> (head)
+INFO  [alembic.runtime.migration] Running upgrade <previous_revision> -> <target_revision>, ...
+<target_revision> (head)
+```
+
+최초 배포라면 첫 `current` 출력이 없고 여러 리비전이 밀려 있으면 Running upgrade 줄이 여러 개 나옵니다. 배포 전에 구 애플리케이션이 새 스키마와 호환되는지 확인하고, 마이그레이션 성공 뒤 새 인스턴스를 시작합니다. 실패 시 DB가 DDL을 트랜잭션으로 되돌렸다고 가정하지 말고 대상 DB의 실제 스키마와 `alembic_version`을 확인합니다.
+
+## current, heads, history로 실패 원인 좁히기
+
+문제가 생기면 파일을 고치기 전에 DB 상태와 리비전 그래프를 수집합니다.
+
+```bash
+alembic current --verbose
+alembic heads --verbose
+alembic history --verbose
+alembic check
+```
+
+- `current`가 비어 있으면 새 DB인지, 연결 URL이 다른 DB를 가리키는지 확인합니다.
+- `heads`가 둘 이상이면 독립 계보가 의도된 것인지 확인하고, 협업 충돌이라면 `alembic merge heads -m 'merge migration branches'`로 그래프를 보존합니다.
+- 모델을 바꿨는데 `check`가 통과하면 모델 모듈 import와 `target_metadata`를 확인합니다.
+- 생성된 리비전이 계속 같은 타입이나 서버 기본값을 바꾸려 하면 대상 DB의 반영 결과와 비교 옵션을 확인합니다.
+- 적용 중 실패하면 로그의 마지막 리비전, 실제 컬럼·제약 상태, `alembic_version`을 함께 확인한 뒤 후속 리비전 또는 검증된 복구 절차를 선택합니다.
+
+운영 DB에서 `stamp`로 상태만 맞추면 실제 스키마 변경은 실행되지 않습니다. 이미 동일한 스키마임을 별도로 증명한 복구 상황이 아니라면 `stamp`로 실패를 숨기지 않습니다.
