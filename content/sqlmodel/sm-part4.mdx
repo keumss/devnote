@@ -1,88 +1,273 @@
 ---
-title: "Part 4. 실전! FastAPI API 통합"
+title: "Part 4. 실전: 안전한 FastAPI API와 테스트"
 ---
 
-## Session 의존성 주입 (Depends)
+## API 모델과 세션 의존성으로 경계 고정하기
 
-FastAPI의 라우터에서 안전한 트랜잭션 관리를 위해 Session을 Generator(yield)로 주입받습니다.
+실전 API에서도 테이블 모델을 요청 본문으로 직접 받지 않습니다. 다음 `app.py`는 생성·수정·공개 모델을 분리하고, SQLite 연결과 세션 수명을 한곳에서 관리합니다. `HeroPublic`에 없는 `secret_name`은 응답 직렬화 단계에서 제외됩니다.
 
 ```python
-from fastapi import FastAPI, Depends
+from collections.abc import Iterator
+from contextlib import asynccontextmanager
+from typing import Annotated
 
-app = FastAPI()
+from fastapi import Depends, FastAPI
+from pydantic import ConfigDict, field_validator
+from sqlmodel import Field, Session, SQLModel, create_engine
 
-def get_session():
+
+class HeroBase(SQLModel):
+    name: str = Field(min_length=1, max_length=50, index=True)
+    age: int | None = Field(default=None, ge=0)
+
+
+class Hero(HeroBase, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(min_length=1, max_length=50, index=True, unique=True)
+    secret_name: str = Field(min_length=1, max_length=50)
+
+
+class HeroCreate(HeroBase):
+    model_config = ConfigDict(extra='forbid')
+
+    secret_name: str = Field(min_length=1, max_length=50)
+
+
+class HeroPublic(HeroBase):
+    id: int
+
+
+class HeroUpdate(SQLModel):
+    model_config = ConfigDict(extra='forbid')
+
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    secret_name: str | None = Field(default=None, min_length=1, max_length=50)
+    age: int | None = Field(default=None, ge=0)
+
+    @field_validator('name', 'secret_name')
+    @classmethod
+    def required_fields_cannot_be_null(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError('field cannot be null')
+        return value
+
+
+sqlite_url = 'sqlite:///database.db'
+engine = create_engine(
+    sqlite_url,
+    connect_args={'check_same_thread': False},
+)
+
+
+def get_session() -> Iterator[Session]:
     with Session(engine) as session:
         yield session
 
-# 엔드포인트에서 db: Session 파라미터로 쉽게 주입받음
-@app.get("/heroes/")
-def read_heroes(session: Session = Depends(get_session)):
-    heroes = session.exec(select(Hero)).all()
-    return heroes
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    SQLModel.metadata.create_all(engine)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 ```
 
-## POST 리소스 생성 엔드포인트 구현
+검증기는 필드 생략은 허용하지만 `name: null`과 `secret_name: null`은 거부합니다. `age: null`은 나이를 지우는 유효한 요청입니다. `create_all()`은 학습용 초기화이며 운영에서는 애플리케이션 시작과 별도로 Alembic 마이그레이션을 적용합니다.
 
-검증된 데이터를 받아 DB에 저장하고, 새로 생성된 자원을 그대로 반환합니다.
+## 생성과 목록 조회에 응답 모델과 페이지 제한 적용하기
+
+POST는 `HeroCreate`를 테이블 객체로 변환하고 생성 성공을 201로 반환합니다. 목록 조회는 최대 100개로 제한하고 기본 키로 정렬해 페이지 순서를 안정적으로 유지합니다. 중복 이름 같은 DB 제약 오류는 rollback 후 409로 변환합니다.
 
 ```python
-from fastapi import HTTPException
+from fastapi import HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
 
-@app.post("/heroes/", response_model=Hero)
-def create_hero(hero: Hero, session: Session = Depends(get_session)):
-    # request body에서 파싱된 hero 객체를 그대로 Session에 추가
+
+def commit_or_conflict(session: Session, detail: str) -> None:
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=detail) from error
+
+
+@app.post(
+    '/heroes',
+    response_model=HeroPublic,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_hero(hero_create: HeroCreate, session: SessionDep):
+    hero = Hero.model_validate(hero_create)
     session.add(hero)
-    session.commit()
-    # DB에 삽입되어 자동 생성된 ID값을 동기화
+    commit_or_conflict(session, 'Hero name already exists')
     session.refresh(hero)
-
-    # JSON 응답으로 생성된 데이터를 반환
     return hero
+
+
+@app.get('/heroes', response_model=list[HeroPublic])
+def read_heroes(
+    session: SessionDep,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    statement = select(Hero).order_by(Hero.id).offset(offset).limit(limit)
+    return session.exec(statement).all()
 ```
 
-## PATCH 요청에서 부분 수정과 404 처리
+`response_model=HeroPublic`은 반환 객체가 `Hero`여도 공개 필드만 추출합니다. 생성 입력에 `id` 같은 알 수 없는 필드가 들어오면 `extra='forbid'` 설정 때문에 422가 반환됩니다.
 
-수정용 모델과 테이블 모델을 분리하면, 요청에 포함된 필드만 안전하게 바꿀 수 있습니다. 대상이 없으면 404를 반환하고, `exclude_unset=True`로 생략된 필드가 기존 값까지 덮어쓰지 않게 합니다.
+## PATCH와 DELETE의 누락·null·404 처리하기
+
+PATCH에서는 `exclude_unset=True`로 클라이언트가 실제로 보낸 필드만 적용합니다. 따라서 `{}`는 아무것도 바꾸지 않고 `{"age": null}`은 나이를 지웁니다. 필수 DB 컬럼의 명시적 null은 앞선 검증기가 422로 막습니다.
 
 ```python
-from typing import Optional
-from fastapi import HTTPException
+from fastapi import Response
 
-class HeroUpdate(SQLModel):
-    name: Optional[str] = None
-    secret_name: Optional[str] = None
-    age: Optional[int] = None
 
-@app.patch('/heroes/{hero_id}', response_model=Hero)
+@app.patch('/heroes/{hero_id}', response_model=HeroPublic)
 def update_hero(
     hero_id: int,
     hero_update: HeroUpdate,
-    session: Session = Depends(get_session),
+    session: SessionDep,
 ):
-    db_hero = session.get(Hero, hero_id)
-    if not db_hero:
+    hero = session.get(Hero, hero_id)
+    if hero is None:
         raise HTTPException(status_code=404, detail='Hero not found')
 
-    db_hero.sqlmodel_update(hero_update.model_dump(exclude_unset=True))
-    session.add(db_hero)
-    session.commit()
-    session.refresh(db_hero)
-    return db_hero
-```
+    update_data = hero_update.model_dump(exclude_unset=True)
+    hero.sqlmodel_update(update_data)
+    commit_or_conflict(session, 'Hero name already exists')
+    session.refresh(hero)
+    return hero
 
-## DELETE 요청의 성공 응답
 
-삭제도 먼저 리소스 존재 여부를 확인한 뒤 한 트랜잭션으로 확정합니다. 클라이언트는 성공 여부만 필요하므로, 삭제된 객체 전체 대신 짧은 확인 응답을 돌려줄 수 있습니다.
-
-```python
-@app.delete('/heroes/{hero_id}')
-def delete_hero(hero_id: int, session: Session = Depends(get_session)):
+@app.delete('/heroes/{hero_id}', status_code=status.HTTP_204_NO_CONTENT)
+def delete_hero(hero_id: int, session: SessionDep) -> Response:
     hero = session.get(Hero, hero_id)
-    if not hero:
+    if hero is None:
         raise HTTPException(status_code=404, detail='Hero not found')
 
     session.delete(hero)
     session.commit()
-    return {'ok': True}
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 ```
+
+DELETE가 성공하면 본문이 없는 204를, 같은 ID를 다시 삭제하면 404를 반환합니다. 여러 테이블을 함께 변경한다면 모든 변경을 마친 뒤 한 번만 커밋해 원자성을 유지합니다.
+
+## 의존성 교체와 인메모리 DB로 API 테스트하기
+
+테스트는 운영 파일 DB 대신 테스트마다 새 인메모리 DB를 사용합니다. `StaticPool`은 FastAPI 테스트 요청이 다른 스레드에서 실행되어도 같은 인메모리 DB 연결을 보게 하고, dependency override는 모든 엔드포인트가 테스트 세션을 사용하게 합니다.
+
+```python
+# test_app.py
+import pytest
+from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.pool import StaticPool
+
+import app as app_module
+from app import app, get_session
+
+
+@pytest.fixture(name='session')
+def session_fixture():
+    test_engine = create_engine(
+        'sqlite://',
+        connect_args={'check_same_thread': False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(test_engine)
+    with Session(test_engine) as session:
+        yield session
+
+
+@pytest.fixture(name='client')
+def client_fixture(session: Session, monkeypatch: pytest.MonkeyPatch):
+    def get_test_session():
+        return session
+
+    monkeypatch.setattr(app_module, 'engine', session.get_bind())
+    app.dependency_overrides[get_session] = get_test_session
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.clear()
+
+
+def test_create_hides_secret_name(client: TestClient):
+    response = client.post(
+        '/heroes',
+        json={'name': 'Deadpond', 'secret_name': 'Dive Wilson'},
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {'id': 1, 'name': 'Deadpond', 'age': None}
+
+
+def test_create_rejects_client_id(client: TestClient):
+    response = client.post(
+        '/heroes',
+        json={'id': 99, 'name': 'Deadpond', 'secret_name': 'Dive Wilson'},
+    )
+
+    assert response.status_code == 422
+
+
+def test_patch_rejects_null_name(client: TestClient):
+    created = client.post(
+        '/heroes',
+        json={'name': 'Deadpond', 'secret_name': 'Dive Wilson'},
+    )
+
+    response = client.patch(
+        f"/heroes/{created.json()['id']}",
+        json={'name': None},
+    )
+
+    assert response.status_code == 422
+
+
+def test_delete_then_returns_404(client: TestClient):
+    created = client.post(
+        '/heroes',
+        json={'name': 'Deadpond', 'secret_name': 'Dive Wilson'},
+    )
+    hero_id = created.json()['id']
+
+    assert client.delete(f'/heroes/{hero_id}').status_code == 204
+    assert client.delete(f'/heroes/{hero_id}').status_code == 404
+```
+
+```sh
+pytest -q
+```
+
+```text
+4 passed
+```
+
+실행 시간과 의존성 경고 줄은 환경에 따라 달라질 수 있으며 핵심 결과는 네 테스트가 모두 통과하는 것입니다. fixture가 끝날 때 override를 지우므로 다른 테스트로 전역 상태가 새지 않습니다. 여기에 중복 이름의 409, 페이지 경계, `age: null`, 관계 삭제 정책을 추가하면 검증·DB 제약·트랜잭션을 함께 회귀 테스트할 수 있습니다.
+
+## 운영 장애를 입력·제약·쿼리 단계로 나눠 추적하기
+
+422는 요청 스키마 검증, 404는 대상 부재, 409는 현재 예제의 고유 제약 충돌을 뜻합니다. 서버 로그에는 사용자 비밀 값이나 전체 SQL 파라미터를 남기지 말고 요청 ID와 예외 종류처럼 문제를 연결할 최소 정보만 기록합니다.
+
+```python
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+
+def log_database_failure(operation: str, error: Exception) -> None:
+    logger.exception(
+        'database operation failed',
+        extra={'operation': operation, 'error_type': type(error).__name__},
+    )
+```
+
+개발 중에는 SQLAlchemy `echo=True`로 실제 쿼리를 확인할 수 있지만 운영에서는 민감한 바인드 값과 로그 양을 고려해 제한합니다. 느린 목록 조회는 실행 계획과 인덱스를 확인하고, N+1은 Part 3의 쿼리 계측과 로더 전략으로 해결하며, 스키마 불일치는 애플리케이션 재시작이 아니라 Alembic 리비전 상태부터 점검합니다.

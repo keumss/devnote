@@ -149,6 +149,7 @@ npm run lint && npm test && npm run build
 
 - 커밋 메시지는 `fix: preserve search navigation`, `docs: update contributor guide`처럼 짧은 명령형으로 작성한다.
 - 사용자가 브랜치를 지정하지 않고 커밋 또는 푸시를 요청하면 별도 브랜치를 만들지 않고 `main`에 커밋해 `origin/main`으로 푸시한다.
+- 커밋 또는 푸시만 요청하면 GitHub CLI(`gh`) 없이 Git CLI로 처리하며, `gh` 미설치를 작업 중단 사유로 삼지 않는다.
 - PR에 변경 내용, 검증 명령어, 관련 이슈를 적는다. UI 변경 시 전·후 스크린샷도 포함한다.
 
 ## 배포

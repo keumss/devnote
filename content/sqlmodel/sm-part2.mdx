@@ -1,71 +1,154 @@
 ---
-title: "Part 2. 활용: 데이터 조회/수정/삭제"
+title: "Part 2. 중급: 재현 가능한 CRUD와 트랜잭션"
 ---
 
-## 단일 검색조건 (Select & Where)
+## CRUD 실습 모델과 초기 데이터 준비하기
 
-select() 함수와 Session.exec()를 이용해 조건에 맞는 데이터를 하나 혹은 여러 개 가져옵니다.
-
-```python
-from sqlmodel import select, Session
-
-with Session(engine) as session:
-    # WHERE 조건이 추가된 Select 객체
-    statement = select(Hero).where(Hero.name == "Deadpond")
-
-    # exec를 이용해 실행 후 결과 스캔
-    # .first() : 첫 번째 값 (없으면 None)
-    # .one() : 정확히 1개 보장 (없거나 여러개면 Exception 발생)
-    hero = session.exec(statement).first()
-    print(hero)
-```
-
-## 페이지네이션 (Offset & Limit)
-
-대량의 데이터를 조금씩 나누어 가져올 때 사용합니다. FastAPI 라우터와 궁합이 찰떡입니다.
+이 노트의 코드는 아래 준비 코드에 이어서 같은 파일에서 실행합니다. 인메모리 DB와 고정된 초기 데이터를 사용하므로 몇 번 실행해도 이전 실행 결과가 남지 않습니다. `name`의 `unique=True`는 이후 중복 데이터 오류 처리에도 사용합니다.
 
 ```python
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+from sqlmodel.pool import StaticPool
+
+
+class Hero(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True, min_length=1, max_length=50)
+    secret_name: str = Field(min_length=1, max_length=50)
+    age: int | None = Field(default=None, ge=0)
+
+
+engine = create_engine('sqlite://', poolclass=StaticPool)
+SQLModel.metadata.create_all(engine)
+
 with Session(engine) as session:
-    offset = 0 # 스킵할 아이템 수
-    limit = 10 # 가져올 아이템 수
-
-    # offset과 limit를 걸어 부분 결과만 가져옵니다
-    statement = select(Hero).offset(offset).limit(limit)
-    heroes = session.exec(statement).all()
-
-    print(f"Loaded {len(heroes)} heroes")
-```
-
-## 데이터 업데이트 (Update & Refresh)
-
-데이터를 데이터베이스에서 가져온 뒤, 객체 속성을 수정하고 커밋합니다.
-
-```python
-with Session(engine) as session:
-    statement = select(Hero).where(Hero.name == "Spider-Boy")
-    hero = session.exec(statement).one()
-
-    # Pydantic을 쓰듯 간단히 객체 속성을 수정
-    hero.age = 16
-    hero.name = "Spider-Man"
-
-    # 세션에 속성이 변경되었음을 알린 후 커밋
-    session.add(hero)
+    session.add_all(
+        [
+            Hero(name='Deadpond', secret_name='Dive Wilson'),
+            Hero(name='Spider-Boy', secret_name='Pedro Parqueador', age=15),
+            Hero(name='Rusty-Man', secret_name='Tommy Sharp', age=48),
+        ]
+    )
     session.commit()
-    # 업데이트된 버전으로 동기화
-    session.refresh(hero)
+
+    names = session.exec(select(Hero.name).order_by(Hero.id)).all()
+    print(names)
 ```
 
-## 객체 삭제 (Delete)
+```text
+['Deadpond', 'Spider-Boy', 'Rusty-Man']
+```
 
-Session.delete() 함수를 사용해 데이터베이스에서 완전히 레코드를 지웁니다.
+## first, one, get의 결과 계약 구분하기
+
+기본 키를 알고 있으면 `Session.get()`을 사용합니다. 조건 검색에서는 결과가 없어도 정상이라면 `first()`, 정확히 한 행이어야 한다면 `one()`을 사용합니다. `one()`은 결과가 없거나 여러 개면 예외를 발생시키므로 데이터 불변식을 확인할 때 적합합니다.
 
 ```python
 with Session(engine) as session:
-    statement = select(Hero).where(Hero.name == "Spider-Man")
-    hero = session.exec(statement).one()
+    by_id = session.get(Hero, 1)
+    maybe_hero = session.exec(
+        select(Hero).where(Hero.name == 'Nobody')
+    ).first()
+    exactly_one = session.exec(
+        select(Hero).where(Hero.name == 'Spider-Boy')
+    ).one()
 
-    # 객체를 삭제하고 확정
-    session.delete(hero)
-    session.commit()
+    print(by_id.name if by_id else None)
+    print(maybe_hero)
+    print(exactly_one.name)
 ```
+
+```text
+Deadpond
+None
+Spider-Boy
+```
+
+`first()`는 여러 행이어도 첫 행만 반환하므로 유일성을 보장하지 않습니다. 이름처럼 고유해야 하는 값은 애플리케이션의 `.one()` 호출뿐 아니라 DB의 `UNIQUE` 제약으로도 보호합니다.
+
+## 정렬과 상한이 있는 페이지네이션 만들기
+
+`offset()`과 `limit()`만 사용하면 DB가 행을 반환하는 순서가 보장되지 않아 요청 사이에 중복이나 누락이 생길 수 있습니다. 항상 고유한 컬럼을 포함한 정렬을 적용하고, API에서 받는 `limit`에는 상한을 둡니다.
+
+```python
+def read_page(offset: int = 0, limit: int = 2) -> list[str]:
+    safe_limit = min(max(limit, 1), 100)
+    with Session(engine) as session:
+        statement = (
+            select(Hero)
+            .order_by(Hero.id)
+            .offset(max(offset, 0))
+            .limit(safe_limit)
+        )
+        return [hero.name for hero in session.exec(statement).all()]
+
+
+print(read_page(offset=0, limit=2))
+print(read_page(offset=2, limit=2))
+```
+
+```text
+['Deadpond', 'Spider-Boy']
+['Rusty-Man']
+```
+
+큰 offset은 앞선 행을 계속 스캔할 수 있어 데이터가 많아지면 느려집니다. 규모가 커지면 마지막으로 본 `id` 이후를 조회하는 키셋 페이지네이션을 고려합니다.
+
+## 변경 감지와 rollback으로 수정 실패 복구하기
+
+세션에서 조회한 객체는 영속 상태이므로 속성을 바꾸면 SQLAlchemy가 변경을 추적합니다. 다시 `add()`하지 않아도 `commit()` 때 필요한 `UPDATE`가 실행됩니다. DB 제약 오류가 나면 세션을 계속 쓰기 전에 반드시 rollback합니다.
+
+```python
+from sqlalchemy.exc import IntegrityError
+
+
+with Session(engine) as session:
+    spider = session.exec(
+        select(Hero).where(Hero.name == 'Spider-Boy')
+    ).one()
+    spider.name = 'Spider-Man'
+    spider.age = 16
+    session.commit()
+    session.refresh(spider)
+    print(spider.name, spider.age)
+
+    spider.name = 'Deadpond'
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        print('duplicate name rolled back')
+
+    print(session.get(Hero, spider.id).name)
+```
+
+```text
+Spider-Man 16
+duplicate name rolled back
+Spider-Man
+```
+
+`rollback()`은 실패한 SQL만 취소하는 것이 아니라 현재 트랜잭션의 미확정 변경을 되돌립니다. 서로 함께 성공해야 하는 변경은 한 트랜잭션에 모으고, 중간에 불필요한 `commit()`을 넣지 않습니다.
+
+## 삭제 후 다시 조회해 결과 검증하기
+
+삭제 역시 `commit()` 전까지는 현재 트랜잭션의 변경입니다. 삭제할 행이 없을 수 있는 흐름에서는 먼저 `get()`이나 `first()`로 존재 여부를 확인합니다.
+
+```python
+with Session(engine) as session:
+    rusty_man = session.exec(
+        select(Hero).where(Hero.name == 'Rusty-Man')
+    ).one()
+    rusty_man_id = rusty_man.id
+
+    session.delete(rusty_man)
+    session.commit()
+
+    print(session.get(Hero, rusty_man_id))
+```
+
+```text
+None
+```
+
+관련 테이블이 있다면 단일 행 삭제만 보고 끝내지 말고 외래 키의 `CASCADE`, `SET NULL`, `RESTRICT` 중 어떤 정책이 도메인에 맞는지도 결정해야 합니다. 다음 Part에서 관계 로딩과 삭제 정책을 함께 다룹니다.

@@ -1,30 +1,52 @@
 ---
-title: "Part 1. 기초: 스키마 정의 및 조작"
+title: "Part 1. 기초: 모델 경계와 세션"
 ---
 
-## SQLModel이 줄여 주는 모델 중복 이해하기
+## SQLModel이 줄여 주는 중복과 남겨야 하는 경계 이해하기
 
-SQLModel은 SQLAlchemy의 테이블 매핑과 Pydantic의 데이터 모델 기능을 함께 사용할 수 있게 합니다. `table=True`인 클래스는 DB 테이블에 대응하고, `table=False`인 기본 SQLModel 클래스는 요청·응답처럼 DB에 직접 저장하지 않는 데이터 형식을 표현합니다.
+SQLModel은 SQLAlchemy의 테이블 매핑과 Pydantic의 데이터 검증을 한 모델 계층에서 사용할 수 있게 합니다. `table=True`인 클래스는 DB 테이블에 대응하고, `table=True`가 없는 클래스는 요청·응답처럼 DB에 저장하지 않는 데이터 형식을 표현합니다.
 
-하나의 클래스를 모든 계층에 그대로 노출하는 것이 목표는 아닙니다. 예를 들어 비밀 이름을 입력에서는 받되 공개 응답에서는 숨겨야 한다면 테이블 모델과 API 모델을 분리해야 합니다. 공통 필드만 상속해 중복을 줄이는 방식이 실전에서 안전합니다.
+그렇다고 테이블 모델 하나를 입력과 응답에 그대로 쓰면 안 됩니다. 생성 입력에 DB 기본 키가 노출되거나, 테이블에만 필요한 비밀 필드가 응답에 포함될 수 있기 때문입니다. 공통 필드는 상속하되 생성 입력, 테이블, 공개 응답의 책임은 분리하는 것이 이 섹션의 기본 원칙입니다.
 
-## 공통 필드와 테이블 모델 분리하기
+이 노트는 Python 3.12와 SQLModel 0.0.38을 기준으로 합니다. 가상 환경에서 다음처럼 설치하고 버전을 확인할 수 있습니다.
 
-기본 클래스에는 여러 모델이 공유할 필드를 두고, DB 전용 클래스에 기본 키와 `table=True`를 추가합니다. 생성 입력은 클라이언트가 ID를 임의로 지정하지 못하도록 별도 클래스로 둡니다.
+```sh
+python -m pip install 'sqlmodel==0.0.38'
+python -c 'import sqlmodel; print(sqlmodel.__version__)'
+```
+
+```text
+0.0.38
+```
+
+## 생성 입력, 테이블, 공개 응답 모델 분리하기
+
+공통 필드는 `HeroBase`에 두고, 각 경계에 필요한 필드만 하위 모델에 추가합니다. `HeroCreate`는 클라이언트가 보낼 필드만 받고, `HeroPublic`은 DB에서 생성된 `id`를 포함하되 `secret_name`은 제외합니다.
 
 ```python
+from pydantic import ConfigDict
 from sqlmodel import Field, SQLModel
+
 
 class HeroBase(SQLModel):
     name: str = Field(index=True, min_length=1, max_length=50)
     age: int | None = Field(default=None, ge=0)
 
+
 class Hero(HeroBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    secret_name: str
+    secret_name: str = Field(min_length=1, max_length=50)
+
 
 class HeroCreate(HeroBase):
-    secret_name: str
+    model_config = ConfigDict(extra='forbid')
+
+    secret_name: str = Field(min_length=1, max_length=50)
+
+
+class HeroPublic(HeroBase):
+    id: int
+
 
 payload = HeroCreate(name='Deadpond', secret_name='Dive Wilson')
 print(payload.model_dump())
@@ -34,17 +56,19 @@ print(payload.model_dump())
 {'name': 'Deadpond', 'age': None, 'secret_name': 'Dive Wilson'}
 ```
 
-`id`는 DB가 생성하므로 생성 입력에 없고, 선택적인 `age`는 기본값 `None`으로 나타납니다. `min_length`, `max_length`, `ge`는 API 경계의 잘못된 입력을 일찍 발견하게 하지만 DB 제약도 별도로 설계해야 합니다.
+`extra='forbid'`는 `id`처럼 생성 스키마에 없는 필드를 조용히 무시하지 않고 검증 오류로 처리합니다. `min_length`, `max_length`, `ge`는 애플리케이션 입력을 검증하지만 DB 제약을 대신하지 않으므로 운영 스키마의 `NOT NULL`, `UNIQUE`, `CHECK`도 별도로 설계해야 합니다.
 
-## 엔진 연결 후 생성된 테이블 확인하기
+## 인메모리 SQLite 엔진과 테이블 생성 확인하기
 
-학습 예제는 별도 서버 없이 실행할 수 있는 SQLite를 사용합니다. 모델을 모두 가져온 뒤 `SQLModel.metadata.create_all()`을 호출해야 메타데이터에 등록된 테이블이 생성됩니다.
+학습 예제는 실행할 때마다 초기화되는 인메모리 SQLite를 사용합니다. 모든 테이블 모델을 정의한 뒤 `SQLModel.metadata.create_all()`을 호출해야 메타데이터에 등록된 테이블이 생성됩니다.
 
 ```python
 from sqlalchemy import inspect
-from sqlmodel import SQLModel, create_engine
+from sqlmodel import create_engine
+from sqlmodel.pool import StaticPool
 
-engine = create_engine('sqlite:///database.db', echo=False)
+
+engine = create_engine('sqlite://', poolclass=StaticPool, echo=False)
 SQLModel.metadata.create_all(engine)
 
 print(inspect(engine).get_table_names())
@@ -54,14 +78,15 @@ print(inspect(engine).get_table_names())
 ['hero']
 ```
 
-기본 테이블 이름은 클래스 이름을 소문자로 바꾼 `hero`입니다. `create_all()`은 없는 테이블을 만드는 학습·테스트 용도에는 편하지만 기존 운영 테이블의 컬럼을 안전하게 변경하지는 않습니다. 운영 스키마 변경에는 Alembic 리비전을 사용합니다.
+`StaticPool`은 예제 전체가 같은 인메모리 DB 연결을 재사용하게 합니다. 파일 DB를 사용할 때는 `sqlite:///database.db`처럼 경로를 지정합니다. `create_all()`은 없는 테이블을 만드는 학습·테스트 용도에는 편하지만 기존 운영 컬럼을 안전하게 변경하지 않으므로, 운영 스키마 변경에는 Alembic 리비전을 사용합니다.
 
-## Session.add와 refresh로 생성 결과 확인하기
+## Session.add와 refresh로 공개 가능한 생성 결과 확인하기
 
-입력 모델을 테이블 객체로 바꾸고 세션에 추가합니다. `commit()`이 트랜잭션을 확정하고, `refresh()`는 DB가 만든 기본 키 같은 값을 객체에 다시 읽어 옵니다.
+입력 모델을 테이블 객체로 검증·변환한 뒤 세션에 추가합니다. `commit()`은 트랜잭션을 확정하고, `refresh()`는 DB가 만든 기본 키 같은 값을 객체에 다시 읽어 옵니다. 마지막에는 공개 응답 모델로 변환해 비밀 필드가 제외되는지 확인합니다.
 
 ```python
 from sqlmodel import Session
+
 
 hero_data = HeroCreate(name='Deadpond', secret_name='Dive Wilson')
 hero = Hero.model_validate(hero_data)
@@ -71,13 +96,12 @@ with Session(engine) as session:
     session.commit()
     session.refresh(hero)
 
-    print(hero.id, hero.name, hero.age)
+    public_hero = HeroPublic.model_validate(hero)
+    print(public_hero.model_dump())
 ```
-
-새 데이터베이스에서 처음 실행했다면 다음처럼 자동 생성된 ID를 확인할 수 있습니다.
 
 ```text
-1 Deadpond None
+{'name': 'Deadpond', 'age': None, 'id': 1}
 ```
 
-같은 파일 DB에서 예제를 반복하면 ID는 2 이상이 될 수 있습니다. `commit()` 전에 오류가 나면 세션 컨텍스트를 빠져나가기 전에 `rollback()`해야 같은 세션을 계속 사용할 수 있으며, 비밀 필드를 응답으로 직렬화하지 않도록 별도 응답 모델을 둡니다.
+세션 컨텍스트는 사용이 끝난 연결을 반환하지만, 실패한 트랜잭션을 계속 사용할 계획이라면 예외를 처리하면서 `session.rollback()`을 호출해야 합니다. `secret_name`은 테이블에는 남아 있지만 `HeroPublic`에 선언하지 않았으므로 공개 결과에는 포함되지 않습니다.

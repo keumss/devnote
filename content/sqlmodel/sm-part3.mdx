@@ -1,90 +1,194 @@
 ---
-title: "Part 3. 고급: 테이블 간 관계 매핑"
+title: "Part 3. 고급: 관계 로딩과 삭제 정책"
 ---
 
-## 외래 키 추가 구조 (Foreign Keys)
+## 외래 키와 양방향 Relationship을 함께 정의하기
 
-Field(foreign_key=...) 를 사용하여 다른 테이블의 기본 키를 참조합니다.
-
-```python
-class Team(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True)
-    headquarters: str
-
-# Hero에 Team의 ID를 외래키로 추가
-class Hero(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True)
-
-    # ForeignKey 설정
-    team_id: Optional[int] = Field(default=None, foreign_key="team.id")
-```
-
-## 양방향 속성 정의 (Relationship)
-
-Relationship() 을 통해 DB 쿼리 없이도 객체 안에서 서로 양방향(1:N) 탐색을 할 수 있도록 만듭니다.
+외래 키는 DB 컬럼 사이의 참조 무결성을 정의하고, `Relationship()`은 파이썬 객체에서 연관 객체를 탐색하게 합니다. 둘은 역할이 다르므로 한쪽만 선언했다고 다른 쪽의 동작까지 생기지는 않습니다. 이 노트는 Part 1의 모델을 관계가 있는 형태로 확장한 별도 실행 파일입니다.
 
 ```python
-from sqlmodel import Relationship
+from sqlalchemy import event
+from sqlmodel import Field, Relationship, Session, SQLModel, create_engine, select
+from sqlmodel.pool import StaticPool
+
 
 class Team(SQLModel, table=True):
-    # ... (생략)
-    # 하나의 팀이 다수의 영웅(Hero)을 가지게 됨 (List 타입 명시)
-    heroes: list["Hero"] = Relationship(back_populates="team")
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+
+    heroes: list['Hero'] = Relationship(
+        back_populates='team',
+        cascade_delete=True,
+    )
+
 
 class Hero(SQLModel, table=True):
-    # ... (생략)
-    team_id: Optional[int] = Field(default=None, foreign_key="team.id")
-    # Team 객체로 바로 접근 가능
-    team: Optional[Team] = Relationship(back_populates="heroes")
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    secret_name: str
+    team_id: int | None = Field(
+        default=None,
+        foreign_key='team.id',
+        ondelete='CASCADE',
+    )
+
+    team: Team | None = Relationship(back_populates='heroes')
+
+
+engine = create_engine('sqlite://', poolclass=StaticPool)
+
+
+@event.listens_for(engine, 'connect')
+def enable_sqlite_foreign_keys(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute('PRAGMA foreign_keys=ON')
+    cursor.close()
+
+
+SQLModel.metadata.create_all(engine)
+
+with Session(engine) as session:
+    z_force = Team(
+        name='Z-Force',
+        heroes=[Hero(name='Deadpond', secret_name='Dive Wilson')],
+    )
+    preventers = Team(
+        name='Preventers',
+        heroes=[Hero(name='Rusty-Man', secret_name='Tommy Sharp')],
+    )
+    solo = Hero(name='Solo', secret_name='Unknown')
+    session.add_all([z_force, preventers, solo])
+    session.commit()
+
+    print(z_force.heroes[0].team is z_force)
 ```
 
-## 내부 조인 (Inner Join)
+```text
+True
+```
 
-join()을 이용해 두 개 이상의 모델을 연결(교집합)합니다. 두 테이블 모두에 데이터가 있는 경우만 조회됩니다.
+`back_populates`는 양쪽 속성이 같은 관계임을 알려 메모리 안에서도 변경을 동기화합니다. `cascade_delete`와 `ondelete`는 마지막 토픽에서 다루며, SQLite는 외래 키 제약이 기본 비활성화이므로 연결마다 `PRAGMA foreign_keys=ON`을 적용했습니다.
+
+## 지연 로딩이 만드는 N+1 쿼리 측정하기
+
+`Relationship()`이 연관 데이터를 쿼리 없이 제공하는 것은 아닙니다. 기본 지연 로딩에서는 아직 읽지 않은 `team.heroes`에 접근하는 순간 SELECT가 실행됩니다. 팀 목록 1회와 각 팀의 영웅 목록 2회가 합쳐져 다음 예제에서는 SELECT가 총 3회 발생합니다.
+
+```python
+select_count = 0
+
+
+def count_selects(conn, cursor, statement, parameters, context, executemany):
+    global select_count
+    if statement.lstrip().upper().startswith('SELECT'):
+        select_count += 1
+
+
+event.listen(engine, 'before_cursor_execute', count_selects)
+
+with Session(engine) as session:
+    teams = session.exec(select(Team).order_by(Team.id)).all()
+    summary = [(team.name, len(team.heroes)) for team in teams]
+
+event.remove(engine, 'before_cursor_execute', count_selects)
+
+print(summary)
+print('SELECT count:', select_count)
+```
+
+```text
+[('Z-Force', 1), ('Preventers', 1)]
+SELECT count: 3
+```
+
+부모가 N개일 때 관계 접근 쿼리가 최대 N개 추가되는 형태가 N+1입니다. 세션이 닫힌 뒤 로딩되지 않은 관계에 접근하면 분리된 객체 오류도 생길 수 있으므로, 필요한 관계는 세션 안에서 명시적으로 로딩합니다.
+
+## 관계 속성으로 내부 조인과 외부 조인 작성하기
+
+명시적인 조인은 필터링하거나 두 모델의 값을 같은 결과 행에서 사용할 때 적합합니다. `join(Hero.team)`처럼 관계 속성을 전달하면 조인의 출발점과 ON 조건이 코드에 드러납니다. 내부 조인은 팀이 없는 영웅을 제외하고, 왼쪽 외부 조인은 유지합니다.
 
 ```python
 with Session(engine) as session:
-    # Hero와 Team 데이터를 한 번에 가져오기 (Team에 소속되지 않은 Hero는 리스트에서 제외됨)
-    statement = select(Hero, Team).join(Team)
+    inner_statement = (
+        select(Hero, Team)
+        .join(Hero.team)
+        .order_by(Hero.id)
+    )
+    inner_rows = session.exec(inner_statement).all()
+    print([(hero.name, team.name) for hero, team in inner_rows])
 
-    # (Hero, Team) 튜플 형태로 결과가 반환됩니다.
-    results = session.exec(statement)
-    for hero, team in results:
-        print(f"Hero: {hero.name}, belongs to Team: {team.name}")
+    outer_statement = (
+        select(Hero, Team)
+        .join(Hero.team, isouter=True)
+        .order_by(Hero.id)
+    )
+    outer_rows = session.exec(outer_statement).all()
+    print(
+        [
+            (hero.name, team.name if team else None)
+            for hero, team in outer_rows
+        ]
+    )
 ```
 
-## 외부 조인 (Left Outer Join)
+```text
+[('Deadpond', 'Z-Force'), ('Rusty-Man', 'Preventers')]
+[('Deadpond', 'Z-Force'), ('Rusty-Man', 'Preventers'), ('Solo', None)]
+```
 
-isouter=True 속성을 추가하여, 매칭되는 대상이 없더라도 왼쪽 테이블의 데이터는 모두 가져옵니다.
+조인은 결과 행의 모양을 바꾸지만, `joinedload()` 같은 로더 옵션은 주 모델의 결과를 유지하면서 관계 속성을 채우는 용도입니다. 조회 목적과 객체 로딩 목적을 구분해야 불필요한 중복 행과 복잡한 결과 처리를 피할 수 있습니다.
+
+## selectinload와 joinedload를 관계 크기에 맞게 선택하기
+
+컬렉션인 `Team.heroes`에는 부모를 읽은 뒤 관련 행을 `IN` 조건으로 가져오는 `selectinload()`가 일반적으로 적합합니다. 여러 영웅이 하나의 팀을 참조하는 N:1 관계에는 같은 행에 팀 컬럼을 붙이는 `joinedload()`를 고려할 수 있습니다.
+
+```python
+from sqlalchemy.orm import joinedload, selectinload
+
+
+with Session(engine) as session:
+    teams = session.exec(
+        select(Team)
+        .options(selectinload(Team.heroes))
+        .order_by(Team.id)
+    ).all()
+    print([(team.name, [hero.name for hero in team.heroes]) for team in teams])
+
+    heroes = session.exec(
+        select(Hero)
+        .options(joinedload(Hero.team))
+        .order_by(Hero.id)
+    ).all()
+    print([(hero.name, hero.team.name if hero.team else None) for hero in heroes])
+```
+
+```text
+[('Z-Force', ['Deadpond']), ('Preventers', ['Rusty-Man'])]
+[('Deadpond', 'Z-Force'), ('Rusty-Man', 'Preventers'), ('Solo', None)]
+```
+
+`selectinload()`는 보통 부모 SELECT와 관계 SELECT를 실행하고, `joinedload()`는 한 SELECT를 사용하지만 컬렉션이 크면 부모 행이 반복되어 전송량이 늘 수 있습니다. 실제 선택은 `echo=True`, 쿼리 계측, 운영 데이터 크기를 함께 보고 결정합니다.
+
+## ORM과 DB 양쪽에 연관 삭제 정책 적용하기
+
+팀 삭제가 소속 영웅 삭제를 뜻하는 도메인이라면 `Team.heroes`의 `cascade_delete=True`와 `Hero.team_id`의 `ondelete='CASCADE'`를 함께 둡니다. 전자는 ORM 세션의 객체 삭제를, 후자는 DB에서 직접 실행되는 삭제까지 보호합니다.
 
 ```python
 with Session(engine) as session:
-    # Team이 없는 Hero도 모두 조회하기 위함 (Left Join)
-    statement = select(Hero, Team).join(Team, isouter=True)
-
-    results = session.exec(statement)
-    for hero, team in results:
-        # team은 None일 수 있습니다. (히어로가 팀에 속하지 않은 경우)
-        team_name = team.name if team else "No Team"
-        print(f"Hero: {hero.name}, Team: {team_name}")
-```
-
-## Eager Loading (selectinload / joinedload)
-
-N+1 쿼리 문제를 해결하기 위해, 연관된 데이터들을 사전에 쿼리하여 메모리에 함께 로딩해둡니다.
-
-```python
-from sqlalchemy.orm import selectinload, joinedload
+    preventers = session.exec(
+        select(Team).where(Team.name == 'Preventers')
+    ).one()
+    session.delete(preventers)
+    session.commit()
 
 with Session(engine) as session:
-    # selectinload: 1:N 관계에서 주로 사용 (별도의 SELECT 쿼리를 1번 더 실행하여 매핑함. 리스트에 적합)
-    # joinedload: 1:1 또는 N:1 관계에서 주로 사용 (JOIN을 통해 한 번의 쿼리로 다 가져옴)
-    statement = select(Team).options(selectinload(Team.heroes))
-
-    teams = session.exec(statement).all()
-    for team in teams:
-        # 관계형 데이터(team.heroes)에 접근할 때 DB 조회가 또 발생하지 않습니다.
-        print(f"Team: {team.name}, Heroes Count: {len(team.heroes)}")
+    rusty_man = session.exec(
+        select(Hero).where(Hero.name == 'Rusty-Man')
+    ).first()
+    print(rusty_man)
 ```
+
+```text
+None
+```
+
+연관 행을 보존해야 한다면 `SET NULL`, 부모 삭제를 막아야 한다면 `RESTRICT`를 사용합니다. 정책을 바꿀 때는 모델 코드만 수정하지 말고 Alembic으로 실제 외래 키 제약을 마이그레이션하고, ORM을 거친 삭제와 직접 SQL 삭제를 모두 테스트합니다.
