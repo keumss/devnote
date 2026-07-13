@@ -1,68 +1,119 @@
 ---
-title: "Part 4. 실전: 서비스와 라이브러리의 로그 운영"
+title: "Part 4. 실전: 운영 설정, 문제 진단과 테스트"
 ---
 
-## 명령줄 서비스의 로그 수준을 안전하게 받기
+## dictConfig로 애플리케이션 설정을 한 번에 적용하기
 
-운영 중에는 재배포 없이 로그 수준을 높여 진단해야 할 수 있습니다. 사용자 입력 문자열을 그대로 `getattr()`에 넘기지 말고 허용할 레벨을 명시적으로 검증합니다. 이 예시는 `--log-level debug`처럼 대소문자와 관계없이 받을 수 있습니다.
-
-```python
-import argparse
-import logging
-
-LEVELS = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--log-level', default='INFO')
-args = parser.parse_args()
-
-level_name = args.log_level.upper()
-if level_name not in LEVELS:
-    parser.error(f'지원하지 않는 로그 수준입니다: {args.log_level}')
-
-logging.basicConfig(level=level_name)
-```
-
-평소 운영 레벨은 `INFO` 또는 `WARNING`처럼 필요한 신호만 남기고, 특정 장애를 조사하는 짧은 기간에만 `DEBUG`로 올립니다. 로그 양과 개인정보 노출 범위를 함께 점검합니다.
-
-## 라이브러리는 설정 대신 NullHandler를 제공하기
-
-재사용할 패키지는 애플리케이션의 로그 정책을 바꾸면 안 됩니다. 루트 로거를 설정하거나 파일·콘솔 핸들러를 추가하지 말고, 최상위 패키지 로거에 `NullHandler`만 붙입니다. 이를 통해 사용자가 설정하지 않았을 때 원치 않는 표준 오류 출력을 막으면서, 사용하는 애플리케이션이 정한 핸들러로는 정상 전파됩니다.
-
-```python
-# payment_sdk/__init__.py
-import logging
-
-logging.getLogger(__name__).addHandler(logging.NullHandler())
-```
-
-각 하위 모듈은 계속 `logging.getLogger(__name__)`을 사용합니다. 사용 설명서에는 사용하는 로거 이름과 중요한 이벤트의 레벨을 알려, 애플리케이션 개발자가 `payment_sdk`만 별도 조정할 수 있게 합니다.
-
-## 중복 핸들러를 피하는 초기화 함수 만들기
-
-테스트, 개발 서버 리로드, 여러 앱 팩토리에서는 설정 코드가 반복 실행될 수 있습니다. 같은 파일을 여러 번 열거나 핸들러를 중복 추가하면 로그가 중복 기록됩니다. 애플리케이션 로거를 설정하는 함수는 이미 설정했는지 검사하거나, 더 단순하게는 진입점에서 `dictConfig()`를 한 번만 호출합니다.
+실전 설정은 애플리케이션 진입점에서 `logging.config.dictConfig()`로 한 번 적용합니다. 핸들러와 포매터를 모듈마다 추가하지 않으면 초기화 순서와 중복 출력 문제를 줄일 수 있습니다.
 
 ```python
 import logging
+import logging.config
 
-def configure_application_logger() -> logging.Logger:
-    logger = logging.getLogger('shop')
-    if logger.handlers:
-        return logger
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'standard': {
+            'format': '%(asctime)s %(levelname)s %(name)s: %(message)s',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': 'WARNING',
+            'formatter': 'standard',
+        },
+        'diagnostic': {
+            'class': 'logging.FileHandler',
+            'level': 'DEBUG',
+            'formatter': 'standard',
+            'filename': 'app.log',
+            'encoding': 'utf-8',
+        },
+    },
+    'root': {
+        'level': 'INFO',
+        'handlers': ['console', 'diagnostic'],
+    },
+    'loggers': {
+        'shop.checkout': {'level': 'DEBUG'},
+    },
+}
 
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    return logger
+logging.config.dictConfig(LOGGING)
+
+logger = logging.getLogger('shop.checkout')
+logger.debug('결제 요청 본문을 검증했습니다.')  # app.log에만 기록됩니다.
+logger.warning('결제 응답이 지연됩니다.')      # 콘솔과 app.log에 기록됩니다.
 ```
 
-이 예시는 `shop` 전용 출력 구성이 필요한 경우입니다. 전역 루트 설정을 이미 사용한다면 하위 로거에 핸들러를 추가하지 않는 편이 더 단순하고 중복에 강합니다.
+`shop.checkout`의 `DEBUG` 레코드는 전파 과정에서 루트 로거의 `INFO` 레벨을 다시 검사하지 않으므로 파일 핸들러까지 도달합니다. `disable_existing_loggers=False`는 설정 전에 만들어진 서드파티 로거를 의도치 않게 비활성화하지 않도록 명시합니다.
 
-## 로그 동작을 테스트로 고정하기
+## 환경별 레벨과 서드파티 로그 양 조절하기
 
-중요한 오류 경로는 테스트에서 로그 레벨과 메시지를 검증합니다. `pytest`의 `caplog` 픽스처를 사용하면 실제 파일이나 콘솔에 쓰지 않고 `LogRecord`를 확인할 수 있습니다. 메시지에 비밀 값이 없는지도 함께 테스트할 수 있습니다.
+개발과 운영의 레벨은 코드에 흩어진 `setLevel()` 호출보다 설정을 만들 때 결정하는 편이 추적하기 쉽습니다. 환경 변수는 허용된 이름인지 검증하고, 애플리케이션 레벨과 콘솔 핸들러 레벨에 함께 적용합니다. 지나치게 많은 로그를 내는 서드파티 패키지는 이름별로 더 높은 기준을 둘 수 있습니다.
+
+```python
+import logging.config
+import os
+
+level_name = os.getenv('LOG_LEVEL', 'INFO').upper()
+allowed_levels = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+if level_name not in allowed_levels:
+    raise ValueError(f'지원하지 않는 LOG_LEVEL입니다: {level_name}')
+
+logging.config.dictConfig({
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'level': level_name,
+        },
+    },
+    'root': {'level': level_name, 'handlers': ['console']},
+    'loggers': {
+        'urllib3': {'level': 'WARNING', 'propagate': True},
+    },
+})
+```
+
+장애 조사 때 `DEBUG`를 잠시 활성화하면 로그 양과 민감정보 노출 가능성도 함께 커집니다. 필요한 기간과 대상 로거를 좁히고, 조사가 끝나면 원래 수준으로 되돌립니다.
+
+## 로거 체인을 출력해 누락과 중복 원인 찾기
+
+로그가 보이지 않거나 두 번씩 나온다면 호출 지점만 고치기보다 로거 체인을 확인합니다. 유효 레벨, 연결된 핸들러, 각 핸들러의 레벨, `propagate`를 함께 보면 대부분의 설정 문제를 찾을 수 있습니다.
+
+```python
+import logging
+
+def describe_logger(name: str) -> None:
+    logger = logging.getLogger(name)
+
+    while logger is not None:
+        handlers = [
+            f'{type(handler).__name__}({logging.getLevelName(handler.level)})'
+            for handler in logger.handlers
+        ]
+        print(
+            f'name={logger.name} '
+            f'effective={logging.getLevelName(logger.getEffectiveLevel())} '
+            f'handlers={handlers} propagate={logger.propagate}'
+        )
+
+        if not logger.propagate:
+            break
+        logger = logger.parent
+
+describe_logger('shop.checkout')
+```
+
+유효 레벨이 예상보다 높으면 자식이 상속한 조상 레벨을 확인합니다. 레코드는 만들어지지만 보이지 않으면 핸들러 레벨을 확인하고, 중복되면 같은 목적지의 핸들러가 여러 계층에 붙어 있는지 확인합니다. `propagate=False`가 중간에 있으면 그 위의 핸들러에는 전달되지 않습니다.
+
+## caplog로 중요한 로그 동작 테스트하기
+
+오류 경로의 레벨과 메시지는 테스트로 고정할 수 있습니다. `pytest`의 `caplog`를 사용하면 실제 파일이나 콘솔에 쓰지 않고 `LogRecord`를 검사할 수 있으며, 비밀 값이 남지 않는지도 확인할 수 있습니다.
 
 ```python
 import logging
@@ -79,5 +130,4 @@ def test_charge_logs_only_last_four_digits(caplog) -> None:
     assert '4111111111111111' not in caplog.text
 ```
 
-운영 전에는 로그 파일 회전, 종료 시 큐 리스너 정리, 권한, 보존 기간도 확인합니다. 장애에 필요한 상관관계 ID와 오류 정보는 남기되, 민감 정보와 지나치게 큰 객체 전체를 기록하지 않는 것이 안전한 기본값입니다.
-
+문자열 전체보다 `caplog.records`의 `levelno`, `name`, `getMessage()`를 검사하면 포매터 변경에 덜 취약한 테스트를 만들 수 있습니다.

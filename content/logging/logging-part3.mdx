@@ -1,54 +1,88 @@
 ---
-title: "Part 3. 고급: 전파, 컨텍스트, 성능과 동시성"
+title: "Part 3. 고급: 메시지, 예외, 컨텍스트와 파일 운영"
 ---
 
-## 전파를 이해해 중복 로그 막기
+## 지연 포맷과 레벨 검사로 불필요한 비용 줄이기
 
-이름이 `shop.checkout`인 로거의 레코드는 기본적으로 상위 `shop`과 루트 로거의 핸들러까지 전파됩니다. 따라서 루트와 하위 로거 모두에 같은 종류의 핸들러를 붙이면 한 이벤트가 여러 번 출력될 수 있습니다. 보통은 루트에 핸들러를 붙이고 하위 로거의 `propagate`는 기본값 `True`로 둡니다.
+로그 값은 f-string으로 미리 합치지 않고 `%s` 자리표시자와 인자로 전달합니다. 비활성 레벨이면 `logging`이 문자열 포맷을 생략할 수 있습니다. 인자를 만드는 작업 자체가 비싸다면 `isEnabledFor()`로 먼저 확인합니다.
 
 ```python
 import logging
 
-root = logging.getLogger()
-root.setLevel(logging.INFO)
-root.addHandler(logging.StreamHandler())
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-checkout_logger = logging.getLogger('shop.checkout')
-checkout_logger.info('결제를 시작합니다.')  # 루트 핸들러가 처리합니다.
+def build_expensive_debug_snapshot() -> dict[str, int]:
+    return {'pending_orders': 3}
+
+user_id = 42
+logger.debug('사용자 상태를 조회합니다. user_id=%s', user_id)
+
+if logger.isEnabledFor(logging.DEBUG):
+    snapshot = build_expensive_debug_snapshot()
+    logger.debug('현재 상태: %s', snapshot)
 ```
 
-특정 하위 로거의 출력 목적지를 완전히 분리해야 할 때에만 자체 핸들러를 붙이고 `propagate = False`를 설정합니다. 이 설정은 상위 핸들러로의 전달을 끊는다는 뜻입니다.
+이 설정에서는 두 `DEBUG` 호출이 기록되지 않으며 `build_expensive_debug_snapshot()`도 실행되지 않습니다. 비밀번호, 토큰, 쿠키, 전체 개인정보처럼 수집해서는 안 되는 값은 레벨과 관계없이 로그 인자로 넘기지 않습니다.
 
-## 요청 식별자를 extra로 기록하기
+## logger.exception으로 실패 맥락과 traceback 남기기
 
-동시에 처리되는 요청을 추적하려면 레코드에 요청 식별자 같은 컨텍스트를 추가합니다. `extra`의 키는 `LogRecord`가 이미 쓰는 이름과 충돌하면 안 되고, 포매터가 요구하는 키는 모든 해당 레코드에 있어야 합니다. 누락된 키는 포맷 오류로 이어질 수 있습니다.
+처리 중인 예외를 기록할 때는 `logger.exception()`을 사용하면 메시지와 traceback이 함께 `ERROR` 레벨로 남습니다. 예외를 잡은 `except` 블록 안에서 호출하고, 어떤 입력과 작업이 실패했는지 안전한 범위에서 설명합니다.
 
 ```python
 import logging
 
-logger = logging.getLogger('shop.api')
+logger = logging.getLogger(__name__)
+
+def load_price(raw_price: str) -> int:
+    try:
+        return int(raw_price)
+    except ValueError:
+        logger.exception('가격 변환에 실패했습니다. raw_price=%r', raw_price)
+        raise
+```
+
+같은 예외를 여러 계층에서 반복 기록하면 traceback이 중복됩니다. 예외를 복구하거나 사용자용 오류로 바꾸는 경계처럼, 실패의 의미를 가장 잘 설명할 수 있는 한 지점에서 기록합니다.
+
+## LoggerAdapter로 요청 컨텍스트 반복 줄이기
+
+여러 로그를 같은 요청과 연결하려면 `request_id` 같은 식별자를 `LogRecord`에 추가합니다. 매 호출마다 `extra`를 반복하기보다 `LoggerAdapter`에 공통 컨텍스트를 넣으면 누락을 줄일 수 있습니다.
+
+```python
+import logging
+
 handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter(
     '%(levelname)s request_id=%(request_id)s %(message)s',
 ))
-logger.addHandler(handler)
-logger.propagate = False
 
-logger.info('주문을 생성합니다.', extra={'request_id': 'req-8f31'})
+base_logger = logging.getLogger('shop.api')
+base_logger.setLevel(logging.INFO)
+base_logger.addHandler(handler)
+base_logger.propagate = False
+
+logger = logging.LoggerAdapter(base_logger, {'request_id': 'req-8f31'})
+logger.info('주문을 생성합니다.')
+logger.info('재고를 차감합니다.')
 ```
 
-웹 서버에서는 `contextvars.ContextVar`와 필터 또는 `LoggerAdapter`를 이용해 요청마다 자동으로 컨텍스트를 넣을 수 있습니다. 이때도 토큰·인증 헤더처럼 비밀인 값은 컨텍스트에 넣지 않습니다.
+```text
+INFO request_id=req-8f31 주문을 생성합니다.
+INFO request_id=req-8f31 재고를 차감합니다.
+```
 
-## 로그 파일을 회전해 디스크 사용량 제한하기
+포매터가 `request_id`를 요구하면 해당 핸들러로 들어오는 모든 레코드에 그 값이 있어야 합니다. 웹 서버처럼 동시 요청이 많은 환경에서는 `contextvars.ContextVar`와 필터를 조합해 요청별 값을 자동으로 주입할 수 있습니다.
 
-단일 파일에 계속 기록하면 디스크를 모두 사용할 수 있습니다. `RotatingFileHandler`는 파일 크기 기준으로, `TimedRotatingFileHandler`는 시간 기준으로 이전 로그를 보관하고 교체합니다. 보관 개수(`backupCount`)와 최대 크기는 서비스의 장애 조사 기간과 디스크 예산을 함께 고려해 정합니다.
+## 파일 회전과 중앙 수집 중 운영 방식 선택하기
+
+단일 프로세스가 파일에 직접 기록한다면 회전 없이 파일 크기가 계속 증가합니다. `RotatingFileHandler`로 최대 크기와 보관 개수를 제한할 수 있습니다.
 
 ```python
 import logging
 from logging.handlers import RotatingFileHandler
 
 handler = RotatingFileHandler(
-    'logs/app.log',
+    'app.log',
     maxBytes=10 * 1024 * 1024,
     backupCount=5,
     encoding='utf-8',
@@ -60,31 +94,7 @@ handler.setFormatter(logging.Formatter(
 logger = logging.getLogger('shop')
 logger.setLevel(logging.INFO)
 logger.addHandler(handler)
+logger.info('애플리케이션을 시작했습니다.')
 ```
 
-여러 프로세스가 같은 파일에 직접 쓰는 구조에서는 회전과 파일 잠금이 안전하지 않을 수 있습니다. 프로세스별 파일 또는 중앙 수집 방식으로 설계를 바꾸는 것이 낫습니다.
-
-## 큐로 느린 출력 작업을 분리하기
-
-표준 핸들러는 스레드에서 안전하게 동작하도록 잠금을 사용하지만, 파일·네트워크 출력이 요청 처리를 지연시킬 수 있습니다. `QueueHandler`는 레코드를 큐에 넣고, 별도 스레드의 `QueueListener`가 실제 핸들러로 전달하게 하여 요청 경로를 가볍게 합니다. Python 3.12에서는 리스너의 시작과 종료를 `start()`와 `stop()`으로 직접 관리합니다.
-
-```python
-import logging
-import queue
-from logging.handlers import QueueHandler, QueueListener
-
-log_queue: queue.SimpleQueue[logging.LogRecord] = queue.SimpleQueue()
-file_handler = logging.FileHandler('app.log', encoding='utf-8')
-listener = QueueListener(log_queue, file_handler)
-
-logger = logging.getLogger('shop')
-logger.addHandler(QueueHandler(log_queue))
-listener.start()
-
-try:
-    logger.info('응답을 처리했습니다.')
-finally:
-    listener.stop()  # 종료 전에 큐에 남은 로그를 비웁니다.
-```
-
-Python 3.14에서 추가된 `with QueueListener(...)` 문법은 Python 3.12에서 사용할 수 없습니다. 3.12에서는 위처럼 `try`/`finally`에서 `stop()`을 반드시 호출합니다. 비동기화는 로그 유실·종료 순서·큐 포화 전략까지 함께 설계해야 합니다. 특히 다중 프로세스 환경은 `queue.SimpleQueue` 대신 `multiprocessing.Queue`와 별도 리스너 프로세스를 사용합니다.
+컨테이너나 관리형 실행 환경에서는 보통 `StreamHandler`로 표준 오류에 기록하고 플랫폼의 수집·보존 기능에 맡깁니다. 여러 프로세스가 같은 회전 파일에 직접 쓰면 교체 시점이 충돌할 수 있으므로, 이런 환경에서는 중앙 수집 방식을 우선합니다.

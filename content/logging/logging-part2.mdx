@@ -1,10 +1,10 @@
 ---
-title: "Part 2. 중급: 핸들러, 포매터, 선언형 설정"
+title: "Part 2. 중급: 계층, 전파와 다중 핸들러"
 ---
 
 ## Logger, Handler, Formatter의 역할 나누기
 
-로거는 `LogRecord`를 만들고, 핸들러는 콘솔·파일 같은 목적지로 보냅니다. 포매터는 최종 문자열의 시간, 레벨, 이름, 메시지 순서를 결정합니다. 로거 레벨과 핸들러 레벨은 모두 통과해야 하므로, 로거는 수집 범위를 넓게 두고 핸들러마다 목적지에 필요한 기준을 적용할 수 있습니다.
+로거는 호출을 받아 `LogRecord`를 만들고, 핸들러는 레코드를 콘솔·파일 같은 목적지로 보냅니다. 포매터는 목적지에 기록할 문자열의 구조를 정합니다. 로거와 핸들러가 모두 레벨을 가지므로, 어느 코드의 이벤트를 만들지와 어느 목적지에 보낼지를 따로 제어할 수 있습니다.
 
 ```python
 import logging
@@ -17,77 +17,112 @@ console.setLevel(logging.WARNING)
 console.setFormatter(logging.Formatter(
     '%(levelname)s %(name)s: %(message)s',
 ))
-
 logger.addHandler(console)
+
+logger.debug('재고 조회를 시작합니다.')
 logger.warning('재고가 부족합니다.')
 ```
 
-이처럼 `DEBUG`까지 기록 가능한 로거라도 콘솔 핸들러가 `WARNING`이면 콘솔에는 경고 이상만 나타납니다.
+```text
+WARNING shop: 재고가 부족합니다.
+```
 
-## 실행 비용을 줄이는 메시지 인자 전달
+로거는 두 호출을 모두 레코드로 만들지만, 콘솔 핸들러가 `DEBUG` 레코드를 거릅니다.
 
-로그 메시지는 f-string으로 미리 완성하지 말고 `%s` 자리표시자와 인자로 전달합니다. 해당 레벨이 비활성화되어 있으면 `logging`이 문자열 결합을 늦출 수 있기 때문입니다. 단, 함수 호출처럼 인자 계산 자체가 비싸다면 `isEnabledFor()`로 먼저 확인합니다.
+## 로거 계층에서 유효 레벨을 상속하고 재정의하기
+
+점(`.`)으로 구분한 이름은 로거 계층을 만듭니다. 새 로거의 레벨은 기본값 `NOTSET`이며, 이때 가장 가까운 조상 로거의 설정값을 유효 레벨로 사용합니다. 패키지 전체에 기본값을 주고 조사할 모듈만 더 자세한 레벨로 재정의할 때 유용합니다.
 
 ```python
 import logging
 
-logger = logging.getLogger(__name__)
+shop = logging.getLogger('shop')
+shop.setLevel(logging.INFO)
 
-logger.debug('사용자 %s가 장바구니에 %s개를 담았습니다.', user_id, count)
+catalog = logging.getLogger('shop.catalog')  # shop의 INFO를 상속합니다.
+checkout = logging.getLogger('shop.checkout')
+checkout.setLevel(logging.DEBUG)
 
-if logger.isEnabledFor(logging.DEBUG):
-    snapshot = build_expensive_debug_snapshot()
-    logger.debug('현재 상태: %s', snapshot)
+for logger in (catalog, checkout):
+    level = logging.getLevelName(logger.getEffectiveLevel())
+    print(f'{logger.name}: {level}')
 ```
 
-비밀번호, 액세스 토큰, 쿠키, 전체 개인정보처럼 민감한 값은 로그 인자로 넘기지 않습니다. 로그는 오래 보관되거나 외부 관찰 도구로 전송될 수 있으므로, 필요한 식별자만 제한적으로 기록합니다.
-
-## dictConfig로 환경별 설정을 한곳에 모으기
-
-여러 핸들러와 로거를 코드 여러 곳에서 조립하면 중복 출력과 초기화 순서 문제가 생기기 쉽습니다. 애플리케이션 진입점에서 `logging.config.dictConfig()`를 한 번 호출해 설정을 선언형 딕셔너리로 관리합니다. 새 애플리케이션에는 구성 파일 방식보다 딕셔너리 구성이 권장됩니다.
-
-```python
-import logging.config
-
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'standard': {
-            'format': '%(asctime)s %(levelname)s %(name)s: %(message)s',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'level': 'INFO',
-            'formatter': 'standard',
-        },
-    },
-    'root': {'level': 'INFO', 'handlers': ['console']},
-}
-
-logging.config.dictConfig(LOGGING)
+```text
+shop.catalog: INFO
+shop.checkout: DEBUG
 ```
 
-`disable_existing_loggers=False`는 이미 만들어진 서드 파티 로거를 의도치 않게 꺼뜨리지 않게 합니다. 개발·운영의 레벨과 파일 핸들러 차이는 이 설정을 환경별로 만들거나 조립하는 방식으로 분리합니다.
+애플리케이션 모듈에서 `getLogger(__name__)`을 사용하면 패키지 구조가 그대로 이 계층이 됩니다. 대부분은 자식 로거의 레벨을 건드리지 않고, 상위 패키지 로거에서 기본 수준을 관리합니다.
 
-## 예외와 진단 정보를 함께 남기기
+## 핸들러 레벨로 목적지마다 기록 범위 나누기
 
-`logger.exception()`은 현재 처리 중인 예외의 traceback을 포함해 `ERROR` 레벨로 기록합니다. 예외 처리 블록 안에서만 사용하고, 예외를 사용자용 오류로 바꾸거나 복구하는 맥락을 로그에 남깁니다. 재발생시킬 때도 원인을 관찰할 수 있습니다.
+하나의 로거가 만든 레코드를 여러 핸들러가 서로 다른 기준으로 처리할 수 있습니다. 다음 설정은 상세 로그는 파일에 남기고 운영 콘솔에는 경고 이상만 보냅니다.
 
 ```python
 import logging
 
-logger = logging.getLogger(__name__)
+formatter = logging.Formatter('%(levelname)s %(name)s: %(message)s')
 
-def load_price(raw_price: str) -> int:
-    try:
-        return int(raw_price)
-    except ValueError:
-        logger.exception('가격 변환에 실패했습니다. raw_price=%r', raw_price)
-        raise
+console = logging.StreamHandler()
+console.setLevel(logging.WARNING)
+console.setFormatter(formatter)
+
+diagnostic_file = logging.FileHandler('debug.log', encoding='utf-8')
+diagnostic_file.setLevel(logging.DEBUG)
+diagnostic_file.setFormatter(formatter)
+
+shop = logging.getLogger('shop')
+shop.setLevel(logging.DEBUG)
+shop.addHandler(console)
+shop.addHandler(diagnostic_file)
+
+checkout = logging.getLogger('shop.checkout')
+checkout.debug('PG 요청을 전송했습니다.')
+checkout.warning('PG 응답이 지연됩니다.')
 ```
 
-예외가 없는 호출 경로 자체를 조사할 때는 `stack_info=True`를 사용할 수 있습니다. traceback과 호출 스택은 서로 다른 정보이며, 지나치게 자주 기록하면 로그 양이 급증하므로 장애 분석이 필요한 지점에 한정합니다.
+콘솔에는 경고 한 줄만 보이고, `debug.log`에는 두 줄이 모두 기록됩니다.
 
+```text
+# 콘솔
+WARNING shop.checkout: PG 응답이 지연됩니다.
+
+# debug.log
+DEBUG shop.checkout: PG 요청을 전송했습니다.
+WARNING shop.checkout: PG 응답이 지연됩니다.
+```
+
+로거 레벨은 레코드 생성 범위, 핸들러 레벨은 목적지별 출력 범위입니다. 상세 기록이 필요하다면 로거와 해당 핸들러의 기준이 모두 충분히 낮아야 합니다.
+
+## propagate를 이해해 중복 로그 막기
+
+자식 로거의 `propagate` 기본값은 `True`입니다. 레코드는 자기 핸들러를 거친 뒤 조상 로거의 핸들러에도 전달되므로, 같은 목적지의 핸들러를 자식과 조상 양쪽에 붙이면 중복 출력됩니다.
+
+```python
+import logging
+
+formatter = logging.Formatter('%(name)s: %(message)s')
+
+root_handler = logging.StreamHandler()
+root_handler.setFormatter(formatter)
+logging.getLogger().addHandler(root_handler)
+
+checkout = logging.getLogger('shop.checkout')
+checkout_handler = logging.StreamHandler()
+checkout_handler.setFormatter(formatter)
+checkout.addHandler(checkout_handler)
+
+checkout.warning('결제를 확인합니다.')  # 자식과 루트에서 한 번씩 출력됩니다.
+
+checkout.propagate = False
+checkout.warning('결제를 완료했습니다.')  # 자식 핸들러에서만 출력됩니다.
+```
+
+```text
+shop.checkout: 결제를 확인합니다.
+shop.checkout: 결제를 확인합니다.
+shop.checkout: 결제를 완료했습니다.
+```
+
+일반적인 애플리케이션은 루트에만 핸들러를 두고 자식의 전파를 유지합니다. 특정 하위 계층의 목적지를 완전히 분리할 때만 그 계층에 핸들러를 모두 붙이고 `propagate=False`로 끊습니다. 이미 자식 로거에서 만들어진 레코드가 전파될 때는 조상 로거의 레벨을 다시 검사하지 않으며, 조상에 연결된 각 핸들러의 레벨이 출력 여부를 결정합니다.
