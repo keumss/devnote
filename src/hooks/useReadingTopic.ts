@@ -1,41 +1,56 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { NoteTopic } from '../content';
 
 const ACTIVE_TOPIC_OFFSET = 120;
 
+function getInitialTopicId(topics: NoteTopic[], selectedTopicId?: string) {
+  const hasSelectedTopic = selectedTopicId && topics.some(topic => topic.id === selectedTopicId);
+  return hasSelectedTopic ? selectedTopicId : topics[0]?.id;
+}
+
 export function useReadingTopic(
   topics: NoteTopic[],
-  contentRootId: string,
+  contentRootRef: RefObject<HTMLElement | null>,
   selectedTopicId?: string,
 ) {
-  const [readingTopicId, setReadingTopicId] = useState<string | undefined>(
-    selectedTopicId ?? topics[0]?.id,
-  );
+  const [readingTopicId, setReadingTopicId] = useState<string | undefined>(() => (
+    getInitialTopicId(topics, selectedTopicId)
+  ));
+  const readingTopicIdRef = useRef(readingTopicId);
+
+  const updateReadingTopicId = useCallback((nextTopicId: string | undefined) => {
+    if (readingTopicIdRef.current === nextTopicId) return;
+
+    readingTopicIdRef.current = nextTopicId;
+    setReadingTopicId(nextTopicId);
+  }, []);
 
   useEffect(() => {
-    const matchingSelectedTopic = selectedTopicId && topics.some(topic => topic.id === selectedTopicId);
-    setReadingTopicId(matchingSelectedTopic ? selectedTopicId : topics[0]?.id);
-  }, [selectedTopicId, topics]);
+    updateReadingTopicId(getInitialTopicId(topics, selectedTopicId));
+  }, [selectedTopicId, topics, updateReadingTopicId]);
 
   useEffect(() => {
-    const topicElements = new Map<string, HTMLElement>();
-    const collectTopics = () => {
-      topics.forEach((topic) => {
-        const element = document.getElementById(topic.id);
-        if (element) topicElements.set(topic.id, element);
-      });
+    const getTopicElements = () => {
+      const contentRoot = contentRootRef.current;
+      if (!contentRoot) return [];
+
+      const elementsById = new Map(
+        Array.from(contentRoot.querySelectorAll<HTMLElement>('h2[id]'))
+          .map(element => [element.id, element]),
+      );
+      return topics
+        .map(topic => elementsById.get(topic.id))
+        .filter((element): element is HTMLElement => element !== undefined);
     };
 
     const updateReadingTopic = () => {
-      const availableTopics = topics
-        .map(topic => topicElements.get(topic.id))
-        .filter((element): element is HTMLElement => element !== undefined);
+      const availableTopics = getTopicElements();
       if (availableTopics.length === 0) return;
 
       const readingTopic = availableTopics.reduce<HTMLElement | null>((currentTopic, topic) => (
         topic.getBoundingClientRect().top <= ACTIVE_TOPIC_OFFSET ? topic : currentTopic
       ), null) ?? availableTopics[0];
-      setReadingTopicId(readingTopic.id);
+      updateReadingTopicId(readingTopic.id);
     };
 
     let animationFrameId: number | null = null;
@@ -48,14 +63,12 @@ export function useReadingTopic(
       });
     };
 
-    collectTopics();
     scheduleReadingTopicUpdate();
 
-    const contentRoot = document.getElementById(contentRootId);
+    const contentRoot = contentRootRef.current;
     const mutationObserver = typeof MutationObserver === 'undefined' || !contentRoot
       ? null
       : new MutationObserver(() => {
-        collectTopics();
         updateReadingTopic();
       });
     mutationObserver?.observe(contentRoot, { childList: true, subtree: true });
@@ -66,7 +79,7 @@ export function useReadingTopic(
       window.removeEventListener('scroll', scheduleReadingTopicUpdate);
       if (animationFrameId !== null) window.cancelAnimationFrame(animationFrameId);
     };
-  }, [contentRootId, topics]);
+  }, [contentRootRef, topics, updateReadingTopicId]);
 
   return readingTopicId;
 }

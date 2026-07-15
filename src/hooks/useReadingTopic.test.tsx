@@ -1,4 +1,5 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
+import { useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NoteTopic } from '../content';
 import { useReadingTopic } from './useReadingTopic';
@@ -6,15 +7,22 @@ import { useReadingTopic } from './useReadingTopic';
 const CONTENT_ROOT_ID = 'reading-topic-test-root';
 
 function ReadingTopicProbe({ topics }: { topics: NoteTopic[] }) {
-  const readingTopicId = useReadingTopic(topics, CONTENT_ROOT_ID);
-  return <output aria-label="현재 읽는 토픽">{readingTopicId}</output>;
+  const contentRootRef = useRef<HTMLElement>(null);
+  const readingTopicId = useReadingTopic(topics, contentRootRef);
+
+  return (
+    <>
+      <main ref={contentRootRef} id={CONTENT_ROOT_ID} />
+      <output aria-label="현재 읽는 토픽">{readingTopicId}</output>
+    </>
+  );
 }
 
 describe('useReadingTopic', () => {
   afterEach(() => {
     cleanup();
+    document.querySelector('[data-previous-note-heading]')?.remove();
     vi.unstubAllGlobals();
-    document.getElementById(CONTENT_ROOT_ID)?.remove();
   });
 
   it('updates when headings are inserted after a note transition', () => {
@@ -38,10 +46,6 @@ describe('useReadingTopic', () => {
     });
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
 
-    const contentRoot = document.createElement('main');
-    contentRoot.id = CONTENT_ROOT_ID;
-    document.body.append(contentRoot);
-
     const nextTopics = [
       { id: 'previous-topic', title: '이전 토픽' },
       { id: 'next-topic', title: '다음 노트 토픽' },
@@ -50,6 +54,7 @@ describe('useReadingTopic', () => {
 
     rerender(<ReadingTopicProbe topics={nextTopics} />);
 
+    const contentRoot = document.getElementById(CONTENT_ROOT_ID)!;
     const previousHeading = document.createElement('h2');
     previousHeading.id = 'previous-topic';
     previousHeading.getBoundingClientRect = () => ({ top: -20 } as DOMRect);
@@ -64,5 +69,59 @@ describe('useReadingTopic', () => {
     });
 
     expect(screen.getByLabelText('현재 읽는 토픽')).toHaveTextContent('next-topic');
+  });
+
+  it('ignores headings outside the current note content', () => {
+    class MockMutationObserver {
+      static instances: MockMutationObserver[] = [];
+      readonly callback: MutationCallback;
+
+      constructor(callback: MutationCallback) {
+        this.callback = callback;
+        MockMutationObserver.instances.push(this);
+      }
+
+      observe() {}
+      disconnect() {}
+    }
+
+    vi.stubGlobal('MutationObserver', MockMutationObserver);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+    const previousNoteHeading = document.createElement('h2');
+    previousNoteHeading.id = 'shared-topic';
+    previousNoteHeading.dataset.previousNoteHeading = 'true';
+    previousNoteHeading.getBoundingClientRect = () => ({ top: -20 } as DOMRect);
+    document.body.append(previousNoteHeading);
+
+    render(
+      <ReadingTopicProbe
+        topics={[
+          { id: 'current-topic', title: '현재 토픽' },
+          { id: 'shared-topic', title: '공유 토픽' },
+        ]}
+      />,
+    );
+
+    const contentRoot = document.getElementById(CONTENT_ROOT_ID)!;
+    const currentHeading = document.createElement('h2');
+    currentHeading.id = 'current-topic';
+    currentHeading.getBoundingClientRect = () => ({ top: -20 } as DOMRect);
+    const sharedHeading = document.createElement('h2');
+    sharedHeading.id = 'shared-topic';
+    sharedHeading.getBoundingClientRect = () => ({ top: 200 } as DOMRect);
+    contentRoot.append(currentHeading, sharedHeading);
+
+    const currentMutationObserver = MockMutationObserver.instances.at(-1);
+    act(() => {
+      currentMutationObserver?.callback([], currentMutationObserver as unknown as MutationObserver);
+    });
+
+    expect(screen.getByLabelText('현재 읽는 토픽')).toHaveTextContent('current-topic');
+    previousNoteHeading.remove();
   });
 });

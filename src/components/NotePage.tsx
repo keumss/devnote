@@ -1,4 +1,4 @@
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useRef } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import NavigationButton from './NavigationButton';
 import SidebarNav from './SidebarNav';
@@ -12,7 +12,6 @@ import { getNotePath, getHashTarget, getTopicHash, resolveNote } from '../naviga
 import { saveContinueLearningItem } from '../hooks/useContinueLearning';
 import { useReadingTopic } from '../hooks/useReadingTopic';
 
-const NOTE_CONTENT_ID = 'note-page-content';
 const READING_SAVE_DELAY = 800;
 
 function ScrollToTopic({ hash, navigationKey }: { hash: string; navigationKey: string }) {
@@ -63,7 +62,8 @@ export default function NotePage() {
   }
 
   const { section: activeSection, note: activeNote, isExact } = resolvedNote;
-  
+  const contentRootRef = useRef<HTMLElement>(null);
+
   const activeSectionId = activeSection.id;
   const activeNoteId = activeNote.id;
 
@@ -73,7 +73,7 @@ export default function NotePage() {
   const prevNoteInfo = currentNoteIndex > 0 ? allNotes[currentNoteIndex - 1] : null;
   const nextNoteInfo = currentNoteIndex < allNotes.length - 1 ? allNotes[currentNoteIndex + 1] : null;
   const selectedTopicId = getHashTarget(location.hash) ?? undefined;
-  const readingTopicId = useReadingTopic(activeNote.topics, NOTE_CONTENT_ID, selectedTopicId);
+  const readingTopicId = useReadingTopic(activeNote.topics, contentRootRef, selectedTopicId);
 
   useEffect(() => {
     if (!isExact) return;
@@ -118,7 +118,7 @@ export default function NotePage() {
         </aside>
 
         {/* Main note content */}
-        <main id={NOTE_CONTENT_ID} className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
+        <main ref={contentRootRef} className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div 
               key={activeNote.id}
