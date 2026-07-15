@@ -159,7 +159,7 @@ export default function NotePage() {
               </div>
               
               {/* Note navigation */}
-              <div className="mt-16 grid grid-cols-1 gap-3 border-t border-slate-200 pt-8 dark:border-slate-800 sm:grid-cols-2 sm:gap-4">
+              <div className="mt-16 grid grid-cols-2 gap-3 border-t border-slate-200 pt-8 dark:border-slate-800 sm:gap-4">
                 {prevNoteInfo ? (
                   <NavigationButton 
                     direction="prev"

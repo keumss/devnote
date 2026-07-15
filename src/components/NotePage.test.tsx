@@ -34,6 +34,8 @@ describe('NotePage note navigation', () => {
     const previousButton = await findByRole('button', { name: `이전 노트로 이동: ${previousNote.note.title}` });
     const nextButton = await findByRole('button', { name: `다음 노트로 이동: ${nextNote.note.title}` });
 
+    expect(previousButton.parentElement).toBe(nextButton.parentElement);
+    expect(previousButton.parentElement).toHaveClass('grid-cols-2');
     expect(within(previousButton).getByText(previousNote.section.title)).toBeInTheDocument();
     expect(within(nextButton).getByText(nextNote.section.title)).toBeInTheDocument();
 
