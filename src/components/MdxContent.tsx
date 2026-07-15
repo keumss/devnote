@@ -45,6 +45,19 @@ function Paragraph({ children }: { children?: ReactNode }) {
   );
 }
 
+export function NoteLink({ children, ...props }: ComponentProps<'a'>) {
+  return (
+    <a
+      {...props}
+      target="_blank"
+      rel="noreferrer"
+      className="font-medium text-indigo-600 underline underline-offset-4 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+    >
+      {children}
+    </a>
+  );
+}
+
 export const mdxComponents: MDXComponents = {
   h2: Heading,
   h3: ({ children, ...props }) => (
@@ -55,11 +68,7 @@ export const mdxComponents: MDXComponents = {
   p: Paragraph,
   pre: Pre,
   code: InlineCode,
-  a: ({ children, ...props }) => (
-    <a {...props} className="font-medium text-indigo-600 underline underline-offset-4 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300">
-      {children}
-    </a>
-  ),
+  a: NoteLink,
   ul: ({ children, ...props }) => (
     <ul {...props} className="mb-5 ml-6 list-disc space-y-2 text-slate-600 dark:text-slate-400">
       {children}
