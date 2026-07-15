@@ -1,14 +1,32 @@
 import { useEffect } from 'react';
 import { navData } from '../content';
 import { Link } from 'react-router-dom';
-import { ArrowUpRight, BookOpen, FileText, Layers } from 'lucide-react';
+import { ArrowUpRight, BookOpen, Clock3, FileText, Layers, Play } from 'lucide-react';
 import { motion } from 'motion/react';
 import Layout from './Layout';
-import { getNotePath } from '../navigation';
+import { getNotePath, getTopicHash } from '../navigation';
+import { getContinueLearningItem } from '../hooks/useContinueLearning';
 
 const totalNotes = navData.reduce((count, section) => count + section.notes.length, 0);
 
+function getContinueLearning() {
+  const item = getContinueLearningItem();
+  if (!item) return null;
+
+  const section = navData.find(candidate => candidate.id === item.sectionId);
+  const note = section?.notes.find(candidate => candidate.id === item.noteId);
+  if (!section || !note) return null;
+
+  const topic = item.topicId
+    ? note.topics.find(candidate => candidate.id === item.topicId)
+    : undefined;
+
+  return { section, note, topic };
+}
+
 export default function IndexPage() {
+  const continueLearning = getContinueLearning();
+
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
@@ -54,6 +72,44 @@ export default function IndexPage() {
               </div>
             </dl>
           </motion.section>
+
+          {continueLearning && (
+            <motion.section
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.05 }}
+              className="mb-8 overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-5 shadow-sm dark:border-indigo-500/20 dark:from-indigo-500/10 dark:to-slate-900/60 sm:mb-10 sm:flex sm:items-center sm:justify-between sm:gap-8 sm:p-6"
+              aria-labelledby="continue-learning-title"
+            >
+              <div>
+                <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.16em] text-indigo-600 dark:text-indigo-300">
+                  <Clock3 className="h-3.5 w-3.5" strokeWidth={2.5} />
+                  CONTINUE LEARNING
+                </p>
+                <h2 id="continue-learning-title" className="text-lg font-bold tracking-tight text-slate-900 dark:text-white sm:text-xl">
+                  이어서 학습하기
+                </h2>
+                <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {continueLearning.section.title} · {continueLearning.note.title}
+                </p>
+                {continueLearning.topic && (
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    마지막으로 읽은 토픽: {continueLearning.topic.title}
+                  </p>
+                )}
+              </div>
+              <Link
+                to={{
+                  pathname: getNotePath(continueLearning.section.id, continueLearning.note.id),
+                  hash: continueLearning.topic ? getTopicHash(continueLearning.topic.id) : '',
+                }}
+                className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-slate-950 sm:mt-0 sm:shrink-0"
+              >
+                이어서 읽기
+                <Play className="h-4 w-4" fill="currentColor" />
+              </Link>
+            </motion.section>
+          )}
 
           <section aria-labelledby="section-list-title">
             <motion.div

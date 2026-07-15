@@ -3,16 +3,19 @@ import { HashRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { navData } from '../content';
 import { getNotePath } from '../navigation';
+import { saveContinueLearningItem } from '../hooks/useContinueLearning';
 import IndexPage from './IndexPage';
 
 describe('IndexPage', () => {
   afterEach(() => {
     cleanup();
+    window.localStorage.clear();
   });
 
   beforeEach(() => {
     window.history.replaceState(null, '', '/#/');
     window.scrollTo = vi.fn();
+    window.localStorage.clear();
   });
 
   it('shows content totals and every section', () => {
@@ -68,6 +71,29 @@ describe('IndexPage', () => {
     expect(getByRole('link', { name: 'GitHub 프로젝트' })).toHaveAttribute(
       'href',
       'https://github.com/keumss/devnote',
+    );
+  });
+
+  it('shows a link to continue from the last opened topic', () => {
+    const section = navData[0];
+    const note = section.notes[0];
+    const topic = note.topics[0];
+    saveContinueLearningItem({
+      sectionId: section.id,
+      noteId: note.id,
+      topicId: topic.id,
+    });
+
+    const { getByRole } = render(
+      <HashRouter>
+        <IndexPage />
+      </HashRouter>,
+    );
+
+    expect(getByRole('heading', { name: '이어서 학습하기' })).toBeInTheDocument();
+    expect(getByRole('link', { name: '이어서 읽기' })).toHaveAttribute(
+      'href',
+      `#${getNotePath(section.id, note.id)}#${encodeURIComponent(topic.id)}`,
     );
   });
 });

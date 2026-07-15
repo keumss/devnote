@@ -36,4 +36,15 @@ describe('searchContent', () => {
       matchKind: 'topic-title',
     });
   });
+
+  it('uses plain text titles for topics with Markdown emphasis', () => {
+    const result = searchContent('post_init').find((item) => (
+      item.kind === 'topic' && item.topic.title.includes('post_init')
+    ));
+
+    expect(result).toMatchObject({
+      kind: 'topic',
+      topic: { title: 'post_init으로 생성 직후 값을 검증하기' },
+    });
+  });
 });

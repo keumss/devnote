@@ -1,6 +1,7 @@
 import Fuse from 'fuse.js';
 import {
   getNoteLocation,
+  formatTopicTitle,
   navData,
   type Note,
   type NoteSearchResult,
@@ -55,7 +56,7 @@ function getTopics(filePath: string, structuredData: StructuredData): Topic[] {
       const content = contentsByHeading.get(heading.id) ?? [];
       return {
         id: heading.id,
-        title: heading.content,
+        title: formatTopicTitle(heading.content),
         description: content[0] ?? '',
         content: content.join('\n'),
       };

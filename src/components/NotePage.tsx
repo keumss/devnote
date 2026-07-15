@@ -2,12 +2,18 @@ import { Suspense, useEffect } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import NavigationButton from './NavigationButton';
 import SidebarNav from './SidebarNav';
+import TopicNav from './TopicNav';
 import Layout from './Layout';
 import { navData } from '../content';
 import { mdxComponents } from './MdxContent';
 import { BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { getNotePath, getHashTarget, resolveNote } from '../navigation';
+import { getNotePath, getHashTarget, getTopicHash, resolveNote } from '../navigation';
+import { saveContinueLearningItem } from '../hooks/useContinueLearning';
+import { useReadingTopic } from '../hooks/useReadingTopic';
+
+const NOTE_CONTENT_ID = 'note-page-content';
+const READING_SAVE_DELAY = 800;
 
 function ScrollToTopic({ hash, navigationKey }: { hash: string; navigationKey: string }) {
   useEffect(() => {
@@ -66,6 +72,22 @@ export default function NotePage() {
   ));
   const prevNoteInfo = currentNoteIndex > 0 ? allNotes[currentNoteIndex - 1] : null;
   const nextNoteInfo = currentNoteIndex < allNotes.length - 1 ? allNotes[currentNoteIndex + 1] : null;
+  const selectedTopicId = getHashTarget(location.hash) ?? undefined;
+  const readingTopicId = useReadingTopic(activeNote.topics, NOTE_CONTENT_ID, selectedTopicId);
+
+  useEffect(() => {
+    if (!isExact) return;
+
+    const timeoutId = window.setTimeout(() => {
+      saveContinueLearningItem({
+        sectionId: activeSectionId,
+        noteId: activeNoteId,
+        topicId: readingTopicId,
+      });
+    }, READING_SAVE_DELAY);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeNoteId, activeSectionId, isExact, readingTopicId]);
 
   if (!isExact) {
     return (
@@ -75,6 +97,10 @@ export default function NotePage() {
       />
     );
   }
+
+  const handleSelectTopic = (topicId: string) => {
+    navigate({ hash: getTopicHash(topicId) });
+  };
 
   return (
     <Layout activeSectionId={activeSectionId} activeNoteId={activeNoteId}>
@@ -92,7 +118,7 @@ export default function NotePage() {
         </aside>
 
         {/* Main note content */}
-        <main className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
+        <main id={NOTE_CONTENT_ID} className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div 
               key={activeNote.id}
@@ -110,6 +136,20 @@ export default function NotePage() {
                   {activeNote.title}
                 </h2>
               </div>
+
+              <details className="mb-8 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40 xl:hidden">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-700 marker:text-indigo-500 dark:text-slate-200">
+                  이 노트의 목차 · {activeNote.topics.length}개 토픽
+                </summary>
+                <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+                  <TopicNav
+                    topics={activeNote.topics}
+                    onSelectTopic={handleSelectTopic}
+                    activeTopicId={readingTopicId}
+                    compact
+                  />
+                </div>
+              </details>
 
               <div className="note-content">
                 <Suspense fallback={<NoteLoader />}>
@@ -139,6 +179,17 @@ export default function NotePage() {
             </motion.div>
           </AnimatePresence>
         </main>
+
+        <aside className="hidden xl:block w-64 shrink-0 border-l border-slate-200 bg-white/50 dark:border-slate-800 dark:bg-slate-950/50 transition-colors duration-200">
+          <div className="sticky top-16 max-h-[calc(100vh-4rem)] overflow-y-auto px-5 py-8 custom-scrollbar">
+            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">이 노트의 목차</p>
+            <TopicNav
+              topics={activeNote.topics}
+              onSelectTopic={handleSelectTopic}
+              activeTopicId={readingTopicId}
+            />
+          </div>
+        </aside>
       </div>
     </Layout>
   );

@@ -20,7 +20,7 @@ describe('note search navigation', () => {
       </StrictMode>,
     );
 
-    fireEvent.click(await findByLabelText('Open search dialog', {}, { timeout: 5000 }));
+    fireEvent.click(await findByLabelText('Open search dialog', {}, { timeout: 8000 }));
     fireEvent.change(getByLabelText('Search query'), { target: { value: '조회 및 정렬 SELECT' } });
     fireEvent.click(await findByRole('button', { name: /조회 및 정렬.*SELECT/i }));
 

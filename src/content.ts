@@ -39,10 +39,16 @@ export interface Topic {
   content: string;
 }
 
+export interface NoteTopic {
+  id: string;
+  title: string;
+}
+
 export interface Note {
   id: string;
   title: string;
   displayTitle: string;
+  topics: NoteTopic[];
   Component: NoteContentComponent;
 }
 
@@ -98,6 +104,15 @@ const noteFrontmatters = import.meta.glob<NoteFrontmatter>(
     eager: true,
     import: 'frontmatter',
     query: { collection: 'docs', purpose: 'metadata' },
+  },
+);
+
+const noteStructuredData = import.meta.glob<StructuredData>(
+  '/content/**/*.{md,mdx}',
+  {
+    eager: true,
+    import: 'structuredData',
+    query: { collection: 'docs', purpose: 'search' },
   },
 );
 
@@ -234,10 +249,45 @@ export function formatNoteNavigationTitle(title: string) {
   return prefix || title.trim();
 }
 
+export function formatTopicTitle(title: string) {
+  let formattedTitle = title.trim();
+
+  for (let index = 0; index < 3; index += 1) {
+    const nextTitle = formattedTitle
+      .replace(/\\([\\`*_[\]{}()#+\-.!])/g, '$1')
+      .replace(/(`+)(.*?)\1/g, '$2')
+      .replace(/(\*\*|__)(.*?)\1/g, '$2');
+    if (nextTitle === formattedTitle) break;
+    formattedTitle = nextTitle;
+  }
+
+  return formattedTitle;
+}
+
 function createLazyNoteContent(loadNote: NoteLoader): NoteContentComponent {
   return lazy(async () => {
     const noteModule = await loadNote();
     return { default: noteModule.default };
+  });
+}
+
+function getNoteTopics(filePath: string) {
+  const structuredData = noteStructuredData[filePath];
+  if (!Array.isArray(structuredData?.headings)) {
+    throw new Error(`Structured topic data is invalid for ${filePath}.`);
+  }
+
+  const topicIds = new Set<string>();
+  return structuredData.headings.flatMap((heading): NoteTopic[] => {
+    const title = formatTopicTitle(heading.content);
+    if (!isNonEmptyString(heading.id) || !isNonEmptyString(title)) {
+      return [];
+    }
+    if (topicIds.has(heading.id)) {
+      throw new Error(`Duplicate topic id "${heading.id}" in ${filePath}.`);
+    }
+    topicIds.add(heading.id);
+    return [{ id: heading.id, title }];
   });
 }
 
@@ -263,6 +313,7 @@ for (const [filePath, loadNote] of Object.entries(noteLoaders)) {
     id: noteId,
     title,
     displayTitle: formatNoteNavigationTitle(title),
+    topics: getNoteTopics(filePath),
     Component: createLazyNoteContent(loadNote),
   });
   sectionMap.set(section.id, section);

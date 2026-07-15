@@ -1,7 +1,7 @@
 import { Search, X, ChevronRight, Hash, BookOpenText, FileText } from 'lucide-react';
 import type { SearchResult } from '../search';
 import { motion, AnimatePresence } from 'motion/react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -52,6 +52,49 @@ export default function SearchModal({
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+  const resultRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [activeResultIndex, setActiveResultIndex] = useState(-1);
+
+  useEffect(() => {
+    setActiveResultIndex(searchResults.length > 0 ? 0 : -1);
+  }, [searchQuery, searchResults]);
+
+  useEffect(() => {
+    if (activeResultIndex < 0) return;
+
+    const activeResult = resultRefs.current[activeResultIndex];
+    if (typeof activeResult?.scrollIntoView === 'function') {
+      activeResult.scrollIntoView({ block: 'nearest' });
+    }
+  }, [activeResultIndex]);
+
+  const handleInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (searchResults.length === 0) return;
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setActiveResultIndex(currentIndex => Math.min(
+        currentIndex < 0 ? 0 : currentIndex + 1,
+        searchResults.length - 1,
+      ));
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveResultIndex(currentIndex => Math.max(
+        currentIndex < 0 ? searchResults.length - 1 : currentIndex - 1,
+        0,
+      ));
+      return;
+    }
+
+    if (event.key === 'Enter' && activeResultIndex >= 0) {
+      event.preventDefault();
+      const selectedResult = searchResults[activeResultIndex] ?? searchResults[0];
+      onSelectResult(selectedResult);
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -135,8 +178,11 @@ export default function SearchModal({
                 placeholder="노트 검색 (예: select, pydantic...)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleInputKeyDown}
                 className="flex-1 outline-none bg-transparent px-4 py-4 text-base sm:text-lg text-slate-900 dark:text-slate-100 placeholder-slate-400"
                 aria-label="Search query"
+                aria-controls="search-results"
+                aria-describedby="search-keyboard-hint"
               />
               {searchQuery && (
                  <button 
@@ -163,6 +209,9 @@ export default function SearchModal({
             </div>
             
             <div className="overflow-y-auto flex-1 custom-scrollbar p-2">
+              <p id="search-keyboard-hint" className="sr-only">
+                화살표 키로 검색 결과를 고르고 Enter 키로 엽니다.
+              </p>
               {searchQuery.trim() === '' ? (
                 <div className="py-12 px-6 text-center text-slate-500 dark:text-slate-400">
                   <Search size={32} className="mx-auto mb-3 opacity-20" />
@@ -174,15 +223,25 @@ export default function SearchModal({
                   <p className="text-sm">다른 조합으로 검색해보세요.</p>
                 </div>
               ) : (
-                <div className="space-y-1" aria-live="polite" aria-label={`${searchResults.length}개의 검색 결과`}>
-                  {searchResults.map((result) => (
+                <div id="search-results" className="space-y-1" aria-live="polite" aria-label={`${searchResults.length}개의 검색 결과`}>
+                  {searchResults.map((result, index) => (
                     <button
                       type="button"
+                      ref={(element) => {
+                        resultRefs.current[index] = element;
+                      }}
                       key={result.kind === 'topic'
                         ? `${result.sectionId}-${result.noteId}-${result.topic.id}`
                         : `${result.kind}-${result.sectionId}-${result.noteId}`}
+                      onMouseEnter={() => setActiveResultIndex(index)}
                       onClick={() => onSelectResult(result)}
-                      className="w-full text-left px-4 py-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-indigo-50 dark:focus:bg-slate-800/80"
+                      aria-current={activeResultIndex === index ? 'true' : undefined}
+                      data-active={activeResultIndex === index}
+                      className={`w-full text-left px-4 py-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-indigo-50 dark:focus:bg-slate-800/80 ${
+                        activeResultIndex === index
+                          ? 'bg-indigo-50 dark:bg-slate-800/80'
+                          : ''
+                      }`}
                     >
                       <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex-wrap">
                          <span>{result.sectionTitle}</span>
