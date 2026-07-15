@@ -1,0 +1,179 @@
+---
+title: "Part 2. 중급: 대화 상태와 구조화된 응답 연결하기"
+---
+
+## previous_response_id로 후속 질문의 맥락 잇기
+
+첫 응답을 바탕으로 "그 내용을 더 짧게"처럼 이어 묻는 기능에는 이전 응답의 `id`를 `previous_response_id`로 넘깁니다. 이전 요청 전문을 매번 직접 조립하지 않아도 같은 대화 흐름을 이어 갈 수 있습니다.
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+first = client.responses.create(
+    model="gpt-5.6",
+    input="Python의 generator를 한 문단으로 설명해 줘.",
+)
+
+second = client.responses.create(
+    model="gpt-5.6",
+    previous_response_id=first.id,
+    input="방금 설명을 코드 예제 한 개로 바꿔 줘.",
+)
+
+print(second.output_text)
+```
+
+후속 요청도 이전 입력 토큰을 포함해 과금될 수 있으므로, 긴 대화에는 필요한 맥락만 유지하는 정책이 필요합니다. 저장과 보존 기간 요구사항이 있으면 `store`와 Conversations API의 동작도 함께 확인합니다.
+
+## responses.parse와 Pydantic으로 결과 형식 고정하기
+
+모델의 답을 화면 문장이 아니라 분류·저장·분기로 사용할 데이터로 받을 때는 Pydantic 모델을 `text_format`에 전달합니다. 직접 JSON 문자열을 파싱하는 대신 `response.output_parsed`에서 검증된 객체를 받습니다.
+
+```sh
+python -m pip install openai pydantic
+```
+
+```python
+from typing import Literal
+
+from openai import OpenAI
+from pydantic import BaseModel
+
+class SupportTicket(BaseModel):
+    category: Literal["billing", "bug", "question"]
+    summary: str
+    needs_human: bool
+
+
+client = OpenAI()
+response = client.responses.parse(
+    model="gpt-5.6",
+    input=[
+        {"role": "developer", "content": "고객 문의를 분류한다."},
+        {"role": "user", "content": "결제는 됐는데 영수증이 오지 않았어요."},
+    ],
+    text_format=SupportTicket,
+)
+
+ticket = response.output_parsed
+if ticket is None:
+    raise RuntimeError("구조화된 결과를 받지 못했습니다.")
+
+print(ticket.category)
+```
+
+스키마는 애플리케이션이 실제로 사용할 최소 필드만 둡니다. `category`처럼 코드의 분기를 결정하는 값은 `Literal`이나 `Enum`으로 가능한 값을 제한하고, 사용자가 보는 문장은 `summary`처럼 별도 필드에 둡니다.
+
+## output_parsed의 값으로 애플리케이션 분기하기
+
+구조화된 분류 결과를 받은 뒤에는 원문 문장을 다시 해석하지 말고 모델 객체의 필드로 분기합니다. 이 방식이면 프롬프트의 표현이 조금 바뀌어도 애플리케이션 계약은 `SupportTicket`으로 유지됩니다.
+
+```python
+from typing import Literal
+
+from pydantic import BaseModel
+
+class SupportTicket(BaseModel):
+    category: Literal["billing", "bug", "question"]
+    summary: str
+    needs_human: bool
+
+
+def choose_queue(ticket: SupportTicket) -> str:
+    if ticket.needs_human:
+        return "human-review"
+    if ticket.category == "billing":
+        return "billing"
+    return "self-service"
+
+
+ticket = SupportTicket(
+    category="billing",
+    summary="영수증을 받지 못함",
+    needs_human=False,
+)
+print(choose_queue(ticket))
+```
+
+```text
+billing
+```
+
+모델이 만들어 낸 `summary`를 SQL 조건이나 파일 경로처럼 실행 가능한 값으로 쓰지 않습니다. 실행 권한이나 식별자처럼 민감한 결정은 코드가 가진 허용 목록과 별도 검증을 거칩니다.
+
+## stream=True로 생성 중인 텍스트 보여 주기
+
+긴 답변을 모두 받은 뒤 표시하지 않고 생성되는 대로 보여 줄 때는 `stream=True`로 서버 전송 이벤트를 순회합니다. 텍스트 조각 이벤트만 출력하면 진행 상태와 최종 내용을 자연스럽게 연결할 수 있습니다.
+
+```python
+from openai import OpenAI
+
+client = OpenAI()
+stream = client.responses.create(
+    model="gpt-5.6",
+    input="Python context manager를 짧은 비유와 함께 설명해 줘.",
+    stream=True,
+)
+
+for event in stream:
+    if event.type == "response.output_text.delta":
+        print(event.delta, end="", flush=True)
+    elif event.type == "response.output_text.done":
+        print()
+```
+
+스트리밍 조각은 완성된 문장이나 JSON이 아닐 수 있습니다. 사용자에게 보일 텍스트에는 적합하지만, 구조화된 결과를 저장하거나 도구를 실행할 때는 응답이 완료된 뒤 검증된 값을 사용합니다.
+
+## AsyncOpenAI로 비동기 웹 요청 안에서 호출하기
+
+FastAPI 같은 비동기 서버의 요청 처리 함수에서는 `AsyncOpenAI`와 `await`를 사용합니다. 동기 `OpenAI`와 메서드 구조는 같고, 네트워크 대기 중 다른 코루틴이 실행될 수 있습니다.
+
+```python
+import asyncio
+
+from openai import AsyncOpenAI
+
+async def explain(question: str) -> str:
+    client = AsyncOpenAI()
+    response = await client.responses.create(
+        model="gpt-5.6",
+        input=question,
+    )
+    return response.output_text
+
+
+print(asyncio.run(explain("async와 await의 역할은 무엇인가요?")))
+```
+
+일반 스크립트에서는 동기 클라이언트가 더 단순합니다. 이미 `async def` 안에 있다면 `asyncio.run()`을 다시 호출하지 말고 코루틴을 `await explain(...)`으로 기다립니다.
+
+## timeout과 예외 유형으로 실패를 구분하기
+
+외부 API 호출이 실패할 수 있는 서비스에서는 연결 실패, 요청 한도, 그 밖의 HTTP 오류를 구분해 기록합니다. SDK는 일부 일시적 오류를 기본으로 재시도하므로, 애플리케이션 자체 재시도 정책을 더하기 전에 그 동작을 먼저 고려합니다.
+
+```python
+import openai
+from openai import OpenAI
+
+client = OpenAI(timeout=20.0)
+
+try:
+    response = client.responses.create(
+        model="gpt-5.6",
+        input="한 문장으로 정상 응답인지 확인해 줘.",
+    )
+except openai.RateLimitError:
+    print("잠시 후 다시 시도하도록 작업을 대기열에 넣습니다.")
+except openai.APIConnectionError:
+    print("네트워크 연결을 확인한 뒤 재시도합니다.")
+except openai.APIStatusError as error:
+    print(f"API 오류: status={error.status_code}, request_id={error.request_id}")
+    raise
+else:
+    print(response.output_text)
+```
+
+사용자 입력 오류나 인증 오류까지 무조건 재시도하지 않습니다. 운영 로그에는 실패 원인과 `request_id`를 남기되 API 키와 사용자의 원문 전체는 기록하지 않는 정책을 둡니다.
+
+대화 연결과 응답 저장은 [대화 상태 가이드](https://developers.openai.com/api/docs/guides/conversation-state), Pydantic 기반 파싱은 [Structured Outputs 가이드](https://developers.openai.com/api/docs/guides/structured-outputs), 비동기·스트리밍·오류·재시도는 [OpenAI Python 라이브러리 README](https://github.com/openai/openai-python)를 기준으로 확인합니다.
