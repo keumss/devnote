@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MotionConfig } from 'motion/react';
 import Header from './Header';
+import Footer from './Footer';
 import MobileNavDrawer from './MobileNavDrawer';
 import SearchModal from './SearchModal';
 import { useDarkMode } from '../hooks/useDarkMode';
@@ -89,6 +90,8 @@ export default function Layout({ children, activeSectionId, activeNoteId }: Layo
         <div className="flex-1 flex flex-col">
           {children}
         </div>
+
+        <Footer />
 
         <SearchModal
           isOpen={isSearchModalOpen}

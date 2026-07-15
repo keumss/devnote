@@ -57,4 +57,17 @@ describe('IndexPage', () => {
       }
     }
   });
+
+  it('shows a link to the GitHub project', () => {
+    const { getByRole } = render(
+      <HashRouter>
+        <IndexPage />
+      </HashRouter>,
+    );
+
+    expect(getByRole('link', { name: 'GitHub 프로젝트' })).toHaveAttribute(
+      'href',
+      'https://github.com/keumss/devnote',
+    );
+  });
 });
