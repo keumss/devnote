@@ -1,0 +1,172 @@
+---
+title: "Part 2. 중급: 재실행, 상태, 캐시"
+---
+
+## 재실행 때문에 일반 변수만으로는 목록을 유지할 수 없는 이유
+
+버튼을 눌러 항목을 추가하는 앱에서 일반 변수에 목록을 두면, 다음 상호작용 때 스크립트가 다시 실행되면서 목록이 빈 값으로 초기화됩니다. 상태가 필요한 문제인지 먼저 구분하면 불필요하게 전역 변수를 쓰는 일을 막을 수 있습니다.
+
+```python
+# app.py
+import streamlit as st
+
+st.title('실패하는 할 일 목록')
+tasks: list[str] = []
+task = st.text_input('할 일')
+
+if st.button('추가') and task:
+    tasks.append(task)
+
+st.write(tasks)
+```
+
+버튼을 누른 순간에는 입력한 항목이 보일 수 있지만, 다른 값을 입력하는 다음 재실행에서는 목록이 다시 비어 있습니다. 실행 사이에 유지할 값은 `st.session_state`에 넣습니다.
+
+## st.session_state로 세션별 목록 초기화하기
+
+한 브라우저 탭 안에서 사용자가 추가한 목록, 로그인 후 선택한 옵션처럼 유지할 값은 `st.session_state`에 저장합니다. 키가 없을 때만 초기값을 만들면 재실행해도 기존 목록을 보존합니다.
+
+```python
+# app.py
+import streamlit as st
+
+
+def add_task() -> None:
+    task = st.session_state.new_task.strip()
+    if task:
+        st.session_state.tasks.append(task)
+        st.session_state.new_task = ''
+
+
+st.title('할 일 목록')
+if 'tasks' not in st.session_state:
+    st.session_state.tasks = []
+
+st.text_input('할 일', key='new_task')
+st.button('추가', on_click=add_task)
+
+for number, saved_task in enumerate(st.session_state.tasks, start=1):
+    st.write(f'{number}. {saved_task}')
+```
+
+`운동하기`를 추가한 뒤 다른 값을 입력해도 목록에 남아 있습니다. 버튼 콜백은 위젯이 다시 만들어지기 전에 실행되므로 입력 칸도 안전하게 비웁니다. 상태는 사용자 세션마다 분리되며 서버를 다시 시작하거나 사용자가 세션을 새로 열면 사라질 수 있으므로, 영구 저장소를 대신하지는 않습니다.
+
+## on_change 콜백으로 입력 변경 직후 상태 갱신하기
+
+여러 위젯의 값을 하나의 요약 값에 반영해야 할 때는 `on_change` 콜백을 사용합니다. 콜백은 변경된 위젯의 새 값이 상태에 기록된 뒤, 스크립트 본문이 다시 실행되기 전에 한 번 실행됩니다.
+
+```python
+# app.py
+import streamlit as st
+
+
+def update_greeting() -> None:
+    name = st.session_state.name.strip()
+    st.session_state.greeting = f'안녕하세요, {name}님!' if name else '이름을 입력해 주세요.'
+
+
+st.title('콜백 인사말')
+if 'greeting' not in st.session_state:
+    st.session_state.greeting = '이름을 입력해 주세요.'
+
+st.text_input('이름', key='name', on_change=update_greeting)
+st.info(st.session_state.greeting)
+```
+
+입력 칸에서 포커스를 옮기거나 Enter를 누르면 최신 인사말이 보입니다. 콜백에 전달할 값은 변경 전 인수가 될 수 있으므로, 현재 위젯 값은 예제처럼 `st.session_state.name`에서 읽는 것이 명확합니다.
+
+## st.form으로 여러 입력을 한 번에 제출하기
+
+검색 조건처럼 사용자가 여러 값을 정한 뒤 한 번만 결과를 갱신해야 할 때는 폼을 사용합니다. 폼 안의 위젯 변경은 제출 버튼을 누르기 전까지 앱 전체 재실행을 일으키지 않습니다.
+
+```python
+# app.py
+import streamlit as st
+
+st.title('책 검색')
+with st.form('book_search'):
+    keyword = st.text_input('검색어')
+    category = st.selectbox('분야', ['Python', '데이터', '웹'])
+    submitted = st.form_submit_button('검색')
+
+if submitted:
+    if keyword.strip():
+        st.success(f'“{keyword}” · {category} 분야를 검색합니다.')
+    else:
+        st.warning('검색어를 입력해 주세요.')
+```
+
+`Python`과 `데이터`를 입력·선택한 뒤 제출하면 성공 메시지가 나타납니다. 폼마다 `st.form_submit_button()`을 하나 이상 두고, 일반 `st.button()`을 폼 안에 넣지 않습니다.
+
+## @st.cache_data로 읽기·변환 결과 재사용하기
+
+CSV 읽기, API 응답 변환처럼 같은 입력에 대해 같은 값을 돌려주는 느린 작업은 `@st.cache_data`로 감쌉니다. 인수 값이 같으면 이전 결과를 재사용하고, 인수가 바뀌면 새로 계산합니다.
+
+```python
+# app.py
+import time
+
+import streamlit as st
+
+
+@st.cache_data
+def make_daily_sales(days: int) -> list[int]:
+    time.sleep(1)  # 느린 파일 읽기·계산을 대신한 예시
+    return [day * 10 for day in range(1, days + 1)]
+
+
+st.title('캐시된 판매 데이터')
+days = st.slider('표시할 일수', min_value=3, max_value=7, value=5)
+st.line_chart(make_daily_sales(days))
+```
+
+같은 일수를 다시 선택하면 1초 대기 없이 결과가 나타납니다. 반환한 리스트나 DataFrame을 호출자에서 수정하지 말고, 파일이 바뀌었을 때는 파일 경로·수정 시각처럼 변경을 구분할 인수를 함수에 포함합니다.
+
+## @st.cache_resource로 공유 자원 한 번 만들기
+
+데이터베이스 연결, ML 모델처럼 복제하면 비싸고 여러 실행에서 공유해도 되는 자원은 `@st.cache_resource`로 만듭니다. 이 캐시는 사용자별 데이터나 변경 가능한 목록을 보관하는 장소가 아닙니다.
+
+```python
+# app.py
+import streamlit as st
+
+
+class ProductCatalog:
+    def find(self, product_id: str) -> str:
+        return {'BK-1': 'Python 입문', 'BK-2': '데이터 시각화'}.get(product_id, '없음')
+
+
+@st.cache_resource
+def get_catalog() -> ProductCatalog:
+    return ProductCatalog()
+
+
+st.title('공유 카탈로그')
+product_id = st.selectbox('상품', ['BK-1', 'BK-2', 'BK-9'])
+st.write(get_catalog().find(product_id))
+```
+
+`get_catalog()`은 앱 프로세스 안에서 같은 카탈로그 객체를 재사용합니다. 실제 연결 객체는 동시에 여러 사용자 요청이 접근할 수 있으므로, 사용하는 클라이언트가 스레드 안전한지 확인하고 사용자별 선택값은 세션 상태에 둡니다.
+
+## key로 반복 위젯의 정체성 고정하기
+
+반복문 안에서 같은 종류의 위젯을 여러 개 만들 때는 각 위젯의 `key`가 고유해야 합니다. 키가 같으면 Streamlit은 어느 위젯의 값인지 구분할 수 없어 오류를 냅니다.
+
+```python
+# app.py
+import streamlit as st
+
+st.title('과목별 완료 여부')
+subjects = ['Python', 'SQL', 'FastAPI']
+completed = {
+    subject: st.checkbox(subject, key=f'completed-{subject}')
+    for subject in subjects
+}
+
+done_count = sum(completed.values())
+st.write(f'{done_count}/{len(subjects)}개 과목을 완료했습니다.')
+```
+
+`completed-Python`처럼 안정적인 키를 쓰면 재실행 뒤에도 각 체크박스의 값이 해당 과목에 연결됩니다. 목록의 위치 번호만 키로 쓰면 정렬·필터 뒤 다른 항목에 이전 값이 붙을 수 있으므로, 데이터의 고유 ID를 우선 사용합니다.
+
+재실행, 위젯, 세션 상태, 폼, 캐시는 [Widget behavior](https://docs.streamlit.io/develop/concepts/architecture/widget-behavior), [Session State](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.session_state), [st.form](https://docs.streamlit.io/develop/api-reference/execution-flow/st.form)를 기준으로 확인합니다.

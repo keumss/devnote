@@ -1,0 +1,164 @@
+---
+title: "Part 3. 고급: 탐색, 부분 재실행, 외부 경계"
+---
+
+## 큰 앱에서 고급 기능을 고르는 기준 세우기
+
+화면이 늘어나면 한 파일의 조건문을 계속 늘리기보다 탐색 구조를 명시하고, 작은 상호작용이 비싼 전체 계산을 다시 실행하지 않게 분리해야 합니다. 외부 서비스 연결은 코드의 상수 대신 비밀 설정으로 넘겨야 배포 환경을 바꿔도 자격 증명이 소스에 남지 않습니다.
+
+이 노트는 이 세 가지 문제에 집중합니다. 여러 화면에는 `st.navigation`, 자주 바뀌는 작은 영역에는 `st.fragment`·`st.dialog`, 서비스 주소와 토큰에는 `st.secrets`를 사용합니다.
+
+## st.navigation과 st.Page로 명시적인 화면 흐름 만들기
+
+대시보드와 설정처럼 역할이 다른 화면을 만들 때는 진입점 파일에서 메뉴와 페이지를 정의합니다. 다음 `app.py`는 함수 기반 페이지 두 개를 탐색 메뉴로 연결합니다.
+
+```python
+# app.py
+import streamlit as st
+
+
+def show_dashboard() -> None:
+    st.title('학습 대시보드')
+    st.metric('이번 주 학습 시간', '5시간', '+2시간')
+
+
+def show_settings() -> None:
+    st.title('알림 설정')
+    st.toggle('주간 학습 요약 받기', value=True)
+
+
+page = st.navigation([
+    st.Page(show_dashboard, title='대시보드', icon='📊', default=True),
+    st.Page(show_settings, title='설정', icon='⚙️'),
+])
+page.run()
+```
+
+메뉴에서 `설정`을 고르면 설정 페이지 함수만 실행됩니다. 공통 인증·페이지 설정·메뉴 정의는 `page.run()`보다 앞에 두고, 각 화면의 데이터 조회와 위젯은 해당 페이지 함수 안에 둡니다.
+
+## st.query_params로 공유 가능한 필터 주소 만들기
+
+현재 필터를 동료에게 공유하거나 새로고침 뒤에도 같은 화면을 열어야 할 때는 URL 쿼리 매개변수를 사용합니다. 다음 예제는 지역 선택을 `?region=서울`처럼 주소와 동기화합니다.
+
+```python
+# app.py
+import streamlit as st
+
+regions = ['서울', '부산', '제주']
+saved_region = st.query_params.get('region', regions[0])
+initial_index = regions.index(saved_region) if saved_region in regions else 0
+region = st.selectbox('지역', regions, index=initial_index)
+
+if region != saved_region:
+    st.query_params['region'] = region
+
+st.title(f'{region} 학습 모임')
+```
+
+지역을 `부산`으로 바꾸면 주소에 `region` 값이 들어가고, 그 주소를 새 탭에서 열면 부산이 선택됩니다. 쿼리 매개변수에는 화면 상태를 재현할 최소한의 문자열·숫자만 넣고 토큰, 이메일, 권한처럼 민감한 값은 넣지 않습니다.
+
+## @st.fragment로 자주 바뀌는 미리보기만 갱신하기
+
+무거운 데이터 조회가 있는 화면에서 작은 미리보기 조작까지 전체 앱을 다시 실행하면 응답이 느려집니다. 독립적으로 다시 그려도 되는 영역은 `@st.fragment` 함수로 분리합니다.
+
+```python
+# app.py
+import streamlit as st
+
+st.title('보고서 작성')
+st.write('여기에는 한 번만 읽어도 되는 큰 데이터 표가 있다고 가정합니다.')
+
+
+@st.fragment
+def preview() -> None:
+    length = st.slider('요약 길이', min_value=1, max_value=5, value=3)
+    st.info('• ' * length + '핵심 내용을 표시합니다.')
+
+
+preview()
+```
+
+슬라이더를 바꾸면 `preview()` 영역만 다시 실행되어 요약 줄 수가 바뀝니다. 조각 함수는 바깥 코드의 지역 변수에 결과를 전달하는 용도보다, 그 안에서 위젯과 결과를 함께 렌더링하는 용도로 유지하면 실행 범위가 분명합니다.
+
+## st.dialog로 되돌릴 수 없는 작업 확인받기
+
+삭제나 제출처럼 사용자가 한 번 더 확인해야 하는 작업은 모달 대화상자로 분리합니다. 대화상자 안에서 수행한 작업 뒤에는 `st.rerun()`으로 화면 전체를 새 상태로 갱신합니다.
+
+```python
+# app.py
+import streamlit as st
+
+if 'archived' not in st.session_state:
+    st.session_state.archived = False
+
+
+@st.dialog('보고서를 보관할까요?')
+def confirm_archive() -> None:
+    st.warning('보관한 보고서는 이 예제에서 목록에서 사라집니다.')
+    if st.button('보관 확정', type='primary'):
+        st.session_state.archived = True
+        st.rerun()
+
+
+st.title('주간 보고서')
+if st.session_state.archived:
+    st.success('보고서를 보관했습니다.')
+else:
+    st.write('검토할 보고서가 있습니다.')
+    if st.button('보고서 보관'):
+        confirm_archive()
+```
+
+`보고서 보관`은 확인 창만 열고, `보관 확정`을 눌러야 상태가 바뀝니다. 실제 삭제는 이 UI 상태와 별개로 서버에서 권한 확인·감사 로그·복구 정책을 적용해야 하며, UI의 확인 창만으로 보호되지 않습니다.
+
+## st.secrets로 토큰을 코드 밖에 두기
+
+외부 API 주소와 토큰은 저장소에 넣지 않고 로컬에서는 `.streamlit/secrets.toml`, 배포 환경에서는 호스트가 제공하는 비밀 설정으로 주입합니다. 다음 파일은 예시 값이므로 실제 토큰으로 커밋하면 안 됩니다.
+
+```toml
+# .streamlit/secrets.toml
+[catalog]
+base_url = "https://api.example.com"
+token = "local-development-token"
+```
+
+```gitignore
+# .gitignore
+.streamlit/secrets.toml
+```
+
+```python
+# app.py
+import streamlit as st
+
+
+def catalog_url() -> str:
+    base_url = st.secrets['catalog']['base_url']
+    return f'{base_url}/products'
+
+
+st.title('카탈로그 연결 설정')
+if 'catalog' not in st.secrets:
+    st.error('카탈로그 비밀 설정이 없습니다.')
+    st.stop()
+
+st.success(f'연결 대상: {catalog_url()}')
+```
+
+화면에는 서비스 주소만 표시하고 `token`은 출력·로그·오류 메시지에 포함하지 않습니다. 비밀값이 바뀌면 앱을 다시 시작해 새 설정을 읽고, 외부 요청의 시간 제한과 오류 처리는 호출 함수에서 명시합니다.
+
+## 고급 기능을 함께 쓸 때의 실행 경계 점검하기
+
+여러 화면에서 공유하는 데이터는 각 페이지가 필요할 때 `@st.cache_data`로 읽고, 현재 사용자에게만 필요한 선택은 `st.session_state` 또는 안전한 쿼리 매개변수에 둡니다. 조각과 대화상자는 실행 범위만 줄일 뿐 권한·입력 검증·서버 측 데이터 무결성을 대신하지 않습니다.
+
+```text
+탐색 메뉴      → 어떤 페이지를 실행할지 결정
+세션 상태      → 현재 사용자 탭의 선택을 유지
+쿼리 매개변수  → 공유해도 되는 화면 조건을 주소에 유지
+fragment/dialog → 작은 상호작용의 실행 범위를 제한
+secrets        → 환경별 자격 증명을 코드 밖에 보관
+```
+
+새 기능을 넣기 전에는 이 값이 모든 사용자에게 공유돼도 되는지, 주소에 노출돼도 되는지, 재실행해도 안전한지를 각각 확인합니다. 이 세 질문으로 상태·캐시·비밀 설정의 경계를 잘못 섞는 문제를 대부분 예방할 수 있습니다.
+
+탐색, 쿼리 매개변수, 조각, 대화상자, 비밀 설정은 [Navigation and pages](https://docs.streamlit.io/develop/api-reference/navigation), [Execution flow](https://docs.streamlit.io/develop/api-reference/execution-flow), [Secrets](https://docs.streamlit.io/develop/api-reference/connections/secrets.toml)를 기준으로 확인합니다.
