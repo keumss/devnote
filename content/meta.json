@@ -2,6 +2,7 @@
   "pages": [
     "sql",
     "sqlalchemy",
+    "pydantic",
     "sqlmodel",
     "alembic",
     "fastapi",

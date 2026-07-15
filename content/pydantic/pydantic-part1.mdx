@@ -1,0 +1,216 @@
+---
+title: "Part 1. 기초: 외부 데이터를 믿을 수 있는 모델로 만들기"
+---
+
+## Pydantic은 언제 쓰는가?
+
+JSON 요청, 설정 파일, 메시지 큐처럼 프로그램 바깥에서 들어온 데이터가 타입과 형식의 약속을 지키는지 확인해야 할 때 Pydantic을 사용합니다. 타입 힌트로 모델의 계약을 선언하면 Pydantic이 입력을 검사·변환하고, 성공한 뒤에는 필드가 선언한 타입을 만족하는 모델 인스턴스를 돌려줍니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install "pydantic>=2.12,<2.13"
+python -c "import pydantic; print(pydantic.VERSION)"
+```
+
+```text
+2.12.x
+```
+
+이 섹션은 Python 3.12와 Pydantic 2.12 스타일을 기준으로 합니다. Pydantic은 데이터베이스 저장이나 HTTP 요청을 직접 수행하지 않고, 그런 외부 경계에서 받은 값을 프로그램 안에서 쓸 수 있는 데이터로 바꾸는 역할을 맡습니다.
+
+## BaseModel로 입력 계약 선언하기
+
+이름 있는 여러 값을 검증해 함께 전달할 때는 `BaseModel`을 상속해 필드를 선언합니다. 필드의 타입 힌트가 입력 계약이 되고, 모델을 만든 뒤에는 일반 속성처럼 값을 읽을 수 있습니다.
+
+```python
+from pydantic import BaseModel
+
+
+class Member(BaseModel):
+    member_id: int
+    name: str
+
+
+member = Member(member_id=7, name='민지')
+
+print(member.member_id)
+print(member.model_dump())
+```
+
+```text
+7
+{'member_id': 7, 'name': '민지'}
+```
+
+`Member`는 `member_id`와 `name`이 모두 있어야 만들어집니다. `model_dump()`는 검증된 모델을 외부 경계에 넘길 일반 딕셔너리로 바꿉니다. HTTP 핸들러나 파일 읽기 코드가 원시 딕셔너리를 계속 전달하는 대신, 경계에서 `Member`를 만든 뒤에는 이 두 필드가 있다는 계약을 사용할 수 있습니다.
+
+## 타입 힌트에 맞게 입력 변환하기
+
+외부 JSON에서 온 `'7'`처럼 흔한 표현을 선언한 타입으로 바꿔도 될 때 Pydantic의 기본 변환을 사용합니다. 모델 생성이 성공하면 `member_id`는 문자열이 아니라 `int`입니다.
+
+```python
+from pydantic import BaseModel
+
+
+class Member(BaseModel):
+    member_id: int
+    active: bool
+
+
+member = Member(member_id='7', active='true')
+
+print(member.member_id, type(member.member_id).__name__)
+print(member.active, type(member.active).__name__)
+```
+
+```text
+7 int
+True bool
+```
+
+Pydantic의 검증은 입력값 자체를 보존한다기보다, 타입과 제약을 만족하는 결과를 만드는 과정입니다. 문자열을 정수로 바꾸면 안 되는 내부 경계라면 뒤에서 다루는 엄격한 모델 설정을 선택합니다.
+
+## 기본값으로 선택 입력 만들기
+
+입력이 생략되어도 쓸 수 있는 값이 있다면 필드에 기본값을 둡니다. 기본값이 없는 필드는 필수이고, 기본값이 있는 필드는 모델을 만들 때 생략할 수 있습니다.
+
+```python
+from pydantic import BaseModel
+
+
+class Notification(BaseModel):
+    channel: str
+    enabled: bool = True
+
+
+print(Notification(channel='email'))
+print(Notification(channel='slack', enabled=False))
+```
+
+```text
+channel='email' enabled=True
+channel='slack' enabled=False
+```
+
+`enabled`의 기본값은 호출자가 값을 보내지 않았을 때만 사용됩니다. 기본값도 입력과 같은 수준으로 검사해야 한다면 `ConfigDict(validate_default=True)`를 모델 설정에 추가합니다.
+
+## str | None과 생략 가능한 필드 구분하기
+
+필드 값으로 `None`을 허용하는 일과 필드를 생략할 수 있는 일은 다릅니다. `str | None`만 쓰면 값이 `None`일 수 있을 뿐 여전히 필수이고, `= None`까지 써야 생략 가능한 선택 입력이 됩니다.
+
+```python
+from pydantic import BaseModel, ValidationError
+
+
+class Profile(BaseModel):
+    nickname: str | None
+    bio: str | None = None
+
+
+profile = Profile(nickname=None)
+print(profile)
+
+try:
+    Profile()
+except ValidationError as error:
+    print(error.errors(include_url=False)[0]['loc'])
+```
+
+```text
+nickname=None bio=None
+('nickname',)
+```
+
+API의 PATCH 모델에서는 이 차이가 특히 중요합니다. 값이 없다는 뜻의 `null`과 클라이언트가 아예 보내지 않은 필드를 구분해야 할 때, 기본값과 `model_dump(exclude_unset=True)`를 함께 사용합니다.
+
+## Field로 범위와 길이 제한하기
+
+숫자 범위, 문자열 길이처럼 필드 하나의 규칙을 모델 가까이에 적을 때 `Field()`를 사용합니다. 잘못된 값은 이후 계산을 시작하기 전에 `ValidationError`로 거절됩니다.
+
+```python
+from pydantic import BaseModel, Field, ValidationError
+
+
+class CartItem(BaseModel):
+    name: str = Field(min_length=1, max_length=30)
+    quantity: int = Field(ge=1, le=20)
+
+
+item = CartItem(name='키보드', quantity=2)
+print(item)
+
+try:
+    CartItem(name='', quantity=0)
+except ValidationError as error:
+    print([detail['loc'] for detail in error.errors(include_url=False)])
+```
+
+```text
+name='키보드' quantity=2
+[('name',), ('quantity',)]
+```
+
+`ge=1`은 1 이상, `le=20`은 20 이하를 뜻합니다. 화면의 입력 제한만으로 이 규칙을 대신하지 말고, 신뢰할 수 없는 데이터가 들어오는 모델에도 같은 제약을 둡니다.
+
+## 중첩 모델과 목록을 함께 검증하기
+
+주문처럼 하위 객체와 여러 항목을 함께 받는 데이터는 다른 모델을 필드 타입으로 사용합니다. Pydantic은 중첩된 딕셔너리와 목록의 각 항목까지 재귀적으로 모델로 만듭니다.
+
+```python
+from pydantic import BaseModel
+
+
+class Address(BaseModel):
+    city: str
+    street: str
+
+
+class Order(BaseModel):
+    order_id: str
+    address: Address
+    item_names: list[str]
+
+
+order = Order(
+    order_id='ORD-10',
+    address={'city': '서울', 'street': '세종대로'},
+    item_names=['키보드', '마우스'],
+)
+
+print(order.address.city)
+print(order.item_names)
+```
+
+```text
+서울
+['키보드', '마우스']
+```
+
+`order.address`는 `dict`가 아니라 `Address` 인스턴스입니다. 중첩된 데이터의 키를 직접 꺼내는 코드를 여러 곳에 두지 않고, 경계에서 한 번 모델화하면 속성 접근과 오류 위치가 더 명확해집니다.
+
+## model_validate_json으로 JSON 경계 통과시키기
+
+파일·메시지·HTTP 본문처럼 JSON 문자열이나 바이트를 받았다면 `model_validate_json()`으로 곧바로 검증합니다. `json.loads()`로 먼저 딕셔너리를 만든 뒤 생성자를 호출하는 것보다, JSON 입력이라는 경계와 검증 동작을 한 줄에 드러낼 수 있습니다.
+
+```python
+from pydantic import BaseModel
+
+
+class Event(BaseModel):
+    event_id: int
+    kind: str
+
+
+event = Event.model_validate_json('{"event_id": "42", "kind": "created"}')
+
+print(event)
+```
+
+```text
+event_id=42 kind='created'
+```
+
+이미 Python 딕셔너리로 읽은 데이터는 `Event.model_validate(data)`에 전달합니다. 둘 다 성공하면 같은 `Event` 모델을 얻지만, 들어온 데이터의 형식에 맞는 진입점을 고르면 경계 코드를 더 쉽게 읽을 수 있습니다.
+
+Python 3.12와 Pydantic 2.12의 모델·필드·JSON 검증 동작은 [Pydantic Models 공식 문서](https://docs.pydantic.dev/2.12/concepts/models/), [Fields 공식 문서](https://docs.pydantic.dev/2.12/concepts/fields/), [JSON 공식 문서](https://docs.pydantic.dev/2.12/concepts/json/)를 기준으로 확인합니다.

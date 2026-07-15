@@ -1,0 +1,219 @@
+---
+title: "Part 4. 실전: 주문 JSON을 검증해 견적 CLI 만들기"
+---
+
+## 주문 입력과 견적 결과의 계약 정하기
+
+이번에는 표준 입력으로 주문 JSON을 받아 유효성을 검사하고, 할인과 배송비를 포함한 견적 JSON을 표준 출력에 쓰는 `order_quote.py`를 만듭니다. 주문에는 ID·배송 방법·할인율·하나 이상의 상품 항목이 필요하고, 견적에는 각 금액을 소수 둘째 자리까지 담습니다.
+
+먼저 같은 파일에 입력·출력 모델과 재사용할 타입을 작성합니다. `extra='forbid'`는 주문 계약에 없는 키를 거절하고, `LineItem`의 `Field()` 제약은 금액과 수량을 계산 전에 검사합니다.
+
+```python
+# order_quote.py
+from __future__ import annotations
+
+from decimal import Decimal
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+
+OrderId = Annotated[str, StringConstraints(pattern=r'^ORD-[0-9]+$')]
+Sku = Annotated[str, StringConstraints(pattern=r'^[A-Z0-9-]{3,20}$')]
+Money = Annotated[
+    Decimal,
+    Field(gt=0, max_digits=10, decimal_places=2),
+]
+
+
+class LineItem(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    sku: Sku
+    unit_price: Money
+    quantity: int = Field(ge=1, le=100)
+
+
+class Order(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    order_id: OrderId
+    shipping_method: Literal['standard', 'express']
+    discount_rate: Decimal = Field(default=Decimal('0'), ge=0, le=Decimal('0.5'))
+    items: list[LineItem] = Field(min_length=1, max_length=20)
+
+
+class Quote(BaseModel):
+    order_id: str
+    subtotal: Decimal
+    discount: Decimal
+    shipping: Decimal
+    total: Decimal
+```
+
+`Order`에는 외부 입력만, `Quote`에는 계산 결과만 둡니다. `decimal_places=2`는 단가의 소수 자릿수를 제한하며, 금액 계산은 `float` 대신 `Decimal`을 사용해 이진 부동소수점 오차를 피합니다.
+
+## model_validator로 주문 전체 규칙 검사하기
+
+주문에 같은 SKU가 두 번 들어오면 각 줄은 유효해도 처리 규칙이 모호합니다. 각 `LineItem`을 모두 만든 뒤 SKU가 겹치지 않는지 확인하도록 `Order`에 모델 검증기를 추가합니다.
+
+```python
+class Order(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    order_id: OrderId
+    shipping_method: Literal['standard', 'express']
+    discount_rate: Decimal = Field(default=Decimal('0'), ge=0, le=Decimal('0.5'))
+    items: list[LineItem] = Field(min_length=1, max_length=20)
+
+    @model_validator(mode='after')
+    def has_unique_skus(self) -> 'Order':
+        skus = [item.sku for item in self.items]
+        if len(skus) != len(set(skus)):
+            raise ValueError('상품 SKU는 주문 안에서 중복될 수 없습니다.')
+        return self
+```
+
+이 코드로 앞 토픽의 `Order` 클래스를 교체합니다. 모델 검증기는 형식이 올바른 `LineItem` 목록을 받으므로, 원시 딕셔너리의 키를 직접 확인할 필요가 없습니다. 동일 SKU를 합산해야 하는 제품 요구라면 여기서 거절하는 대신 입력을 합치는 별도 변환 정책을 명시합니다.
+
+## 검증된 Order만 받아 견적 계산하기
+
+계산 함수는 JSON과 딕셔너리를 모르고 검증된 `Order`만 받습니다. 소계에서 할인액을 빼고 배송 방법별 고정 배송비를 더한 뒤, 외부로 보여 줄 금액을 소수 둘째 자리로 고정합니다.
+
+```python
+from decimal import ROUND_HALF_UP
+
+
+STANDARD_SHIPPING = Decimal('3000')
+EXPRESS_SHIPPING = Decimal('6000')
+MONEY_QUANTUM = Decimal('0.01')
+
+
+def as_money(value: Decimal) -> Decimal:
+    return value.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def calculate_quote(order: Order) -> Quote:
+    subtotal = as_money(sum(
+        (item.unit_price * item.quantity for item in order.items),
+        start=Decimal('0'),
+    ))
+    discount = as_money(subtotal * order.discount_rate)
+    shipping = (
+        STANDARD_SHIPPING
+        if order.shipping_method == 'standard'
+        else EXPRESS_SHIPPING
+    )
+
+    return Quote(
+        order_id=order.order_id,
+        subtotal=subtotal,
+        discount=discount,
+        shipping=as_money(shipping),
+        total=as_money(subtotal - discount + shipping),
+    )
+```
+
+`start=Decimal('0')`은 합계의 시작 타입도 금액으로 고정합니다. `calculate_quote()`는 이미 유효한 `Order`만 받는 순수 함수이므로, 파일·네트워크 없이 단위 테스트로 배송·할인 규칙을 검사할 수 있습니다.
+
+## model_validate_json과 ValidationError로 CLI 경계 처리하기
+
+이제 같은 파일 맨 아래에 표준 입력·출력과 종료 정책을 추가합니다. JSON이 깨졌거나 모델 규칙을 어기면 `ValidationError`를 잡아 표준 오류에 위치와 이유를 쓰고 상태 코드 1로 끝냅니다.
+
+```python
+import sys
+
+from pydantic import ValidationError
+
+
+def main() -> int:
+    try:
+        order = Order.model_validate_json(sys.stdin.read())
+        quote = calculate_quote(order)
+    except ValidationError as error:
+        print('order-quote: 입력이 계약에 맞지 않습니다.', file=sys.stderr)
+        for detail in error.errors(include_url=False):
+            location = '.'.join(str(part) for part in detail['loc'])
+            print(f'{location}: {detail["msg"]}', file=sys.stderr)
+        return 1
+
+    print(quote.model_dump_json())
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+`model_validate_json()`은 잘못된 JSON과 잘못된 필드 값을 모두 `ValidationError`로 표현합니다. 성공한 견적만 표준 출력에 JSON으로 보내고, 오류 진단은 표준 오류로 분리하면 다른 프로그램이 성공 결과만 안전하게 파이프할 수 있습니다.
+
+## 실행 결과로 할인과 배송비 확인하기
+
+앞 토픽의 조각을 순서대로 합친 `order_quote.py`를 실행합니다. 항목 소계는 30,000원, 10% 할인은 3,000원, 표준 배송비는 3,000원이므로 총액은 다시 30,000원입니다.
+
+```bash
+printf '%s\n' '{"order_id":"ORD-101","shipping_method":"standard","discount_rate":"0.10","items":[{"sku":"KEY-1","unit_price":"12000","quantity":2},{"sku":"MOU-2","unit_price":"6000","quantity":1}]}' | python order_quote.py
+```
+
+```text
+{"order_id":"ORD-101","subtotal":"30000.00","discount":"3000.00","shipping":"3000.00","total":"30000.00"}
+```
+
+같은 SKU를 두 번 넣거나 `quantity`를 0으로 보내면 정상 견적을 만들지 않습니다. `order-quote: 입력이 계약에 맞지 않습니다.`와 해당 오류 위치를 표준 오류에 쓴 뒤 상태 코드 1로 끝나므로, 호출자는 종료 상태로 성공·실패를 구분할 수 있습니다.
+
+## pytest로 계산과 주문 규칙 고정하기
+
+마지막으로 견적 계산과 중복 SKU 거절을 테스트합니다. 새 파일 `test_order_quote.py`에 다음을 저장하면, JSON·표준 입출력 없이 모델과 순수 함수를 빠르게 검사할 수 있습니다.
+
+```python
+# test_order_quote.py
+from decimal import Decimal
+
+import pytest
+from pydantic import ValidationError
+
+from order_quote import Order, calculate_quote
+
+
+def test_calculates_discount_and_standard_shipping() -> None:
+    order = Order.model_validate({
+        'order_id': 'ORD-101',
+        'shipping_method': 'standard',
+        'discount_rate': '0.10',
+        'items': [
+            {'sku': 'KEY-1', 'unit_price': '12000', 'quantity': 2},
+            {'sku': 'MOU-2', 'unit_price': '6000', 'quantity': 1},
+        ],
+    })
+
+    quote = calculate_quote(order)
+
+    assert quote.subtotal == Decimal('30000.00')
+    assert quote.discount == Decimal('3000.00')
+    assert quote.shipping == Decimal('3000.00')
+    assert quote.total == Decimal('30000.00')
+
+
+def test_rejects_duplicate_skus() -> None:
+    with pytest.raises(ValidationError, match='중복될 수 없습니다'):
+        Order.model_validate({
+            'order_id': 'ORD-102',
+            'shipping_method': 'express',
+            'items': [
+                {'sku': 'KEY-1', 'unit_price': '12000', 'quantity': 1},
+                {'sku': 'KEY-1', 'unit_price': '12000', 'quantity': 1},
+            ],
+        })
+```
+
+```bash
+pytest -q
+```
+
+```text
+2 passed
+```
+
+실행 시간과 경고는 환경에 따라 달라질 수 있으며, 중요한 결과는 두 계약 테스트가 모두 통과하는 것입니다. 배송비 경계, 50% 초과 할인율, 알 수 없는 입력 키, 손상된 JSON도 제품 요구에 맞춰 같은 방식으로 추가합니다.
+
+Python 3.12와 Pydantic 2.12의 `Decimal` 제약·모델 검증기·JSON 검증과 직렬화는 [Pydantic Fields 공식 문서](https://docs.pydantic.dev/2.12/concepts/fields/), [Validators 공식 문서](https://docs.pydantic.dev/2.12/concepts/validators/), [Models 공식 문서](https://docs.pydantic.dev/2.12/concepts/models/)를 기준으로 확인합니다.

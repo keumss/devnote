@@ -1,0 +1,107 @@
+---
+title: "Part 3. 고급: 입력 정규화와 교차 규칙을 모델에 모으기"
+---
+
+## field_validator(mode='before')로 원시 입력 정규화하기
+
+폼 입력처럼 하나의 문자열 또는 목록처럼 여러 모양으로 들어오는 값을 같은 필드 형식으로 맞출 때 `field_validator(..., mode='before')`를 사용합니다. 이 검증기는 Pydantic이 타입을 해석하기 전에 실행되므로, 매개변수는 아직 어떤 객체든 될 수 있습니다.
+
+```python
+from pydantic import BaseModel, field_validator
+
+
+class ArticleDraft(BaseModel):
+    title: str
+    tags: list[str]
+
+    @field_validator('tags', mode='before')
+    @classmethod
+    def split_comma_separated_tags(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [tag.strip() for tag in value.split(',') if tag.strip()]
+        return value
+
+
+draft = ArticleDraft(title='Pydantic', tags='python, validation, pydantic')
+print(draft.tags)
+```
+
+```text
+['python', 'validation', 'pydantic']
+```
+
+`before` 검증기에서는 `value`가 문자열·목록·딕셔너리 등 무엇이든 될 수 있으므로 필요한 타입을 먼저 확인합니다. 이미 타입 검증이 끝난 `int`, `str` 같은 값을 다룰 수 있다면 기본값인 `mode='after'` 검증기가 더 단순하고 안전합니다.
+
+## model_validator(mode='after')로 여러 필드의 관계 검사하기
+
+시작일과 종료일처럼 한 필드만 봐서는 판단할 수 없는 업무 규칙은 `model_validator(mode='after')`에 둡니다. 필드 검증이 끝난 모델 인스턴스를 받아 비교하고, 성공했을 때는 반드시 `self`를 반환합니다.
+
+```python
+from datetime import date
+
+from pydantic import BaseModel, ValidationError, model_validator
+
+
+class Promotion(BaseModel):
+    name: str
+    starts_on: date
+    ends_on: date
+
+    @model_validator(mode='after')
+    def end_must_not_precede_start(self) -> 'Promotion':
+        if self.ends_on < self.starts_on:
+            raise ValueError('종료일은 시작일보다 빠를 수 없습니다.')
+        return self
+
+
+promotion = Promotion(
+    name='여름 행사',
+    starts_on='2026-07-01',
+    ends_on='2026-07-31',
+)
+print(promotion.ends_on)
+
+try:
+    Promotion(name='오류', starts_on='2026-07-31', ends_on='2026-07-01')
+except ValidationError as error:
+    print(error.errors(include_url=False)[0]['msg'])
+```
+
+```text
+2026-07-31
+Value error, 종료일은 시작일보다 빠를 수 없습니다.
+```
+
+개별 필드의 형식·범위는 `Field()`에, 필드 사이의 일관성은 모델 검증기에 둡니다. 데이터베이스의 고유 제약이나 동시성처럼 모델 하나만으로 보장할 수 없는 규칙은 저장소 경계에서도 별도로 처리합니다.
+
+## TypeAdapter로 BaseModel 밖의 타입 검증하기
+
+독립된 목록·유니언·`TypedDict`처럼 모델 클래스를 만들기에는 과한 타입을 검증할 때 `TypeAdapter`를 사용합니다. 한 번 만든 어댑터는 반복 처리 경로에서 재사용해 타입 스키마를 다시 만드는 비용을 피합니다.
+
+```python
+from pydantic import BaseModel, TypeAdapter
+
+
+class Product(BaseModel):
+    product_id: int
+    name: str
+
+
+products_adapter = TypeAdapter(list[Product])
+products = products_adapter.validate_python([
+    {'product_id': '1', 'name': '노트'},
+    {'product_id': 2, 'name': '펜'},
+])
+
+print(products)
+print(products_adapter.dump_json(products).decode())
+```
+
+```text
+[Product(product_id=1, name='노트'), Product(product_id=2, name='펜')]
+[{"product_id":1,"name":"노트"},{"product_id":2,"name":"펜"}]
+```
+
+`TypeAdapter.validate_python()`은 `BaseModel.model_validate()`와 비슷하지만 Pydantic이 지원하는 임의의 타입에 적용됩니다. `TypeAdapter.dump_json()`은 `bytes`를 반환하는 반면, `BaseModel.model_dump_json()`은 `str`을 반환한다는 차이도 경계 코드에서 확인합니다.
+
+Python 3.12와 Pydantic 2.12의 검증기 모드·반환 규칙·TypeAdapter 동작은 [Pydantic Validators 공식 문서](https://docs.pydantic.dev/2.12/concepts/validators/)와 [Type Adapter 공식 문서](https://docs.pydantic.dev/2.12/concepts/type_adapter/)를 기준으로 확인합니다.
