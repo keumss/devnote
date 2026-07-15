@@ -1,0 +1,174 @@
+---
+title: "Part 1. 기초: 데이터를 담는 클래스를 빠르게 만들기"
+---
+
+## @dataclass는 언제 쓰는가?
+
+주문 한 건처럼 이름 있는 여러 값을 함께 전달하고, 생성·표시·동등성 비교의 규칙이 자연스러운 클래스가 필요할 때 `@dataclass`를 사용합니다. 필드에 타입 애너테이션을 쓰면 `__init__()`, `__repr__()`, `__eq__()` 같은 메서드를 자동으로 만듭니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Product:
+    name: str
+    price: int
+
+product = Product('키보드', 89000)
+
+print(product.name)
+print(product)
+```
+
+```text
+키보드
+Product(name='키보드', price=89000)
+```
+
+`Product`는 값을 보관하는 역할이 중심인 클래스입니다. 여러 책임을 숨기는 서비스 객체보다, 데이터의 이름과 계약을 코드에서 또렷하게 보여 주고 싶을 때 알맞습니다.
+
+## 필드 기본값으로 선택 입력 만들기
+
+모든 인스턴스에 자주 쓰는 값이 있다면 필드에 기본값을 둡니다. 기본값이 없는 필드는 생성할 때 반드시 전달하고, 기본값이 있는 필드는 생략할 수 있습니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class CartItem:
+    sku: str
+    quantity: int = 1
+
+print(CartItem('K-100'))
+print(CartItem('M-200', quantity=3))
+```
+
+```text
+CartItem(sku='K-100', quantity=1)
+CartItem(sku='M-200', quantity=3)
+```
+
+생성자 인자도 필드를 쓴 순서를 따릅니다. 호출하는 쪽에서 `quantity=3`처럼 이름을 적으면 값의 뜻이 더 잘 드러나고, 필드를 추가할 때 위치 인자 호출이 깨질 위험도 줄어듭니다.
+
+## 기본값 없는 필드를 앞에 두기
+
+필드 순서는 생성자 매개변수 순서가 됩니다. 그래서 기본값이 없는 필드를 기본값이 있는 필드 뒤에 놓으면, Python 함수의 매개변수 규칙과 같게 `TypeError`가 납니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Shipment:
+    order_id: str
+    address: str
+    expedited: bool = False
+
+print(Shipment('ORD-1', '서울시 중구'))
+```
+
+```text
+Shipment(order_id='ORD-1', address='서울시 중구', expedited=False)
+```
+
+아래처럼 `expedited: bool = False` 뒤에 필수 `address: str`를 두면 생성할 `__init__()`을 만들 수 없습니다. 상속으로 필드를 합친 결과에도 같은 규칙이 적용되므로, 필수 입력을 먼저 설계합니다.
+
+## 자동 __repr__로 값을 확인하기
+
+REPL, 로그, 테스트 실패 메시지에서 객체 안의 값을 빠르게 확인해야 할 때 자동 `__repr__()`이 유용합니다. 출력에는 클래스 이름과 선언 순서의 필드 이름·값이 포함됩니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Delivery:
+    order_id: str
+    status: str
+
+delivery = Delivery('ORD-7', 'packed')
+
+print(delivery)
+```
+
+```text
+Delivery(order_id='ORD-7', status='packed')
+```
+
+자동 표현은 운영 로그에 비밀번호나 토큰을 그대로 남기기에는 적합하지 않습니다. 그런 필드는 뒤에서 `field(repr=False)`로 명시적으로 제외합니다.
+
+## 자동 __eq__로 같은 데이터를 비교하기
+
+테스트에서 기대 객체를 만들거나, 같은 입력이 같은 결과를 만들었는지 확인할 때는 자동 `__eq__()`를 사용합니다. 같은 클래스의 인스턴스끼리 선언 순서의 필드 값이 모두 같으면 같다고 판단합니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class Point:
+    x: int
+    y: int
+
+print(Point(3, 4) == Point(3, 4))
+print(Point(3, 4) == Point(4, 3))
+```
+
+```text
+True
+False
+```
+
+`Point(3, 4)`와 `(3, 4)`처럼 다른 타입은 같은 필드 모양이어도 같지 않습니다. 값의 동등성보다 객체 정체성이나 특별한 비교 규칙이 중요하면 `eq=False` 또는 직접 구현한 `__eq__()`를 신중히 선택합니다.
+
+## 메서드로 데이터의 계산을 가까이 두기
+
+필드만 둘 필요는 없습니다. 해당 데이터가 스스로 계산할 수 있는 간단한 규칙은 인스턴스 메서드로 두면, 필요한 값과 동작이 함께 읽힙니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class CartItem:
+    name: str
+    unit_price: int
+    quantity: int
+
+    def total_price(self) -> int:
+        return self.unit_price * self.quantity
+
+item = CartItem('모니터', 250000, 2)
+print(item.total_price())
+```
+
+```text
+500000
+```
+
+`total_price()`는 이 항목의 값만 사용하므로 클래스에 두기 좋습니다. 데이터베이스 저장, 네트워크 요청처럼 외부 시스템을 조정하는 일은 별도 함수나 서비스로 분리해 데이터 모델의 책임을 작게 유지합니다.
+
+## field(default_factory)로 가변 기본값 만들기
+
+목록·딕셔너리·집합처럼 변경 가능한 기본값은 `field(default_factory=...)`로 만듭니다. 팩터리는 인스턴스를 만들 때마다 호출되므로 각 객체가 자기만의 빈 컨테이너를 받습니다.
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class TodoList:
+    title: str
+    tasks: list[str] = field(default_factory=list)
+
+morning = TodoList('오전')
+afternoon = TodoList('오후')
+morning.tasks.append('배포 확인')
+
+print(morning.tasks)
+print(afternoon.tasks)
+```
+
+```text
+['배포 확인']
+[]
+```
+
+`tasks: list[str] = []`처럼 빈 목록을 직접 기본값으로 쓰면 여러 인스턴스가 하나의 목록을 공유할 수 있어 오류의 원인이 됩니다. dataclass는 이 흔한 실수를 막기 위해 변경 가능한 기본값을 직접 쓰면 오류를 냅니다.
+
+Python 3.12의 `@dataclass`와 `field()` 생성 규칙은 [dataclasses 공식 문서](https://docs.python.org/3.12/library/dataclasses.html)를 기준으로 확인합니다.

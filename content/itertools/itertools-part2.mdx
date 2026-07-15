@@ -2,9 +2,9 @@
 title: "Part 2. 중급: 데이터를 묶고 누적하고 필터링하기"
 ---
 
-## batched로 두 개씩, 세 개씩 나누기
+## batched로 정해진 크기만큼 나누기
 
-한 번에 처리할 수 있는 개수가 정해져 있을 때 `batched()`를 사용합니다. 예를 들어 API가 사용자 ID를 한 요청에 두 개까지만 받는다면, 목록을 두 개씩 나누어 보낼 수 있습니다. `batched()`는 Python 3.12에서 추가되었습니다.
+외부 API가 한 요청에 받을 수 있는 항목 수가 정해져 있을 때 `batched()`를 사용합니다. 마지막 묶음은 입력에 남은 항목만 담으므로 짧을 수 있습니다.
 
 ```python
 from itertools import batched
@@ -21,11 +21,11 @@ for ids in batched(user_ids, 2):
 (105,)
 ```
 
-마지막 묶음은 입력이 남은 만큼만 들어가므로 짧을 수 있습니다. 마지막도 정확히 두 개여야 한다면, 짧은 묶음을 어떻게 처리할지 호출 전에 정합니다.
+마지막도 정확히 두 항목이어야 한다면 짧은 묶음을 저장할지, 오류로 처리할지 호출 전에 정합니다. `batched()`는 Python 3.12에서 추가되었습니다.
 
-## accumulate로 누계를 한 번에 만들기
+## accumulate로 중간 누계 만들기
 
-`sum()`은 최종 합계 하나만 반환합니다. 매일의 누계처럼 중간 합계도 모두 필요할 때는 `accumulate()`를 사용합니다.
+매일의 누계처럼 중간 결과도 모두 필요할 때 `accumulate()`를 사용합니다. 최종 합계 하나만 필요한 `sum()`과 달리, 입력을 읽을 때마다 새 누계를 만듭니다.
 
 ```python
 from itertools import accumulate
@@ -40,7 +40,7 @@ print(list(running_totals))
 [120, 200, 350]
 ```
 
-두 번째 인수에 계산 함수를 넣으면 덧셈 대신 다른 누적도 만들 수 있습니다. 지금까지 가장 느린 응답 시간을 알고 싶다면 `max`를 사용합니다.
+두 번째 인수에 이항 함수를 넣으면 덧셈 대신 다른 누적도 만들 수 있습니다. 지금까지 가장 느린 응답 시간을 유지하려면 `max`를 사용합니다.
 
 ```python
 from itertools import accumulate
@@ -53,9 +53,9 @@ print(list(accumulate(latencies, max)))
 [120, 120, 135, 135]
 ```
 
-## groupby는 붙어 있는 같은 값만 묶습니다
+## groupby로 연속한 같은 키 묶기
 
-`groupby()`는 같은 값이 **연속해서** 나오는 구간을 묶습니다. 아래 입력에서 `'paid'`는 떨어져 있으므로 두 그룹으로 나뉩니다.
+정렬된 주문을 상태별로 처리할 때 `groupby()`를 사용합니다. 이 함수는 같은 키가 **연속해서** 나오는 구간만 묶으므로, 멀리 떨어진 같은 값은 다른 그룹이 됩니다.
 
 ```python
 from itertools import groupby
@@ -72,7 +72,7 @@ pending ['pending']
 paid ['paid']
 ```
 
-상태별로 한 그룹만 만들고 싶다면 먼저 정렬합니다. SQL의 `GROUP BY`와 달리 `groupby()`는 자동으로 멀리 떨어진 값을 모으지 않는다는 점을 기억합니다.
+상태별로 한 그룹만 만들어야 한다면 같은 키로 먼저 정렬합니다. SQL의 `GROUP BY`와 달리 `groupby()`는 입력 전체에서 같은 값을 자동으로 모으지 않습니다.
 
 ```python
 from itertools import groupby
@@ -87,9 +87,9 @@ paid ['paid', 'paid', 'paid']
 pending ['pending']
 ```
 
-## groupby의 결과는 그 자리에서 사용하기
+## groupby의 그룹을 바로 소비하기
 
-`groupby()`가 주는 `group`은 목록이 아니라 원본을 함께 읽는 이터레이터입니다. 다음 그룹으로 넘어가기 전에 현재 그룹을 목록으로 만들거나 합계처럼 필요한 계산을 끝냅니다.
+상태별 금액 합계처럼 그룹마다 한 번의 계산으로 끝낼 때는 `groupby()`가 돌려준 `group`을 현재 반복 안에서 소비합니다. `group`은 원본 이터레이터를 공유하므로 다음 그룹으로 넘어간 뒤에는 이전 그룹을 다시 읽을 수 없습니다.
 
 ```python
 from itertools import groupby
@@ -106,11 +106,11 @@ paid 20000
 refunded -8000
 ```
 
-위처럼 합계만 필요하면 목록을 만들 필요가 없습니다. 나중에 각 주문도 다시 써야 한다면 `items = list(group)`으로 현재 반복 안에서 저장합니다.
+합계만 필요하면 목록을 만들 필요가 없습니다. 그룹의 항목을 나중에도 써야 할 때만 현재 반복 안에서 `items = list(group)`으로 저장합니다.
 
-## compress로 선택된 값만 남기기
+## compress로 선택된 위치의 값만 남기기
 
-`compress()`는 데이터와 같은 위치의 참·거짓 값을 보고, `True`인 데이터만 꺼냅니다. 표시할 열을 선택하거나 권한이 있는 항목만 남길 때 쓸 수 있습니다.
+표시할 열이나 권한이 있는 항목처럼, 같은 위치의 참·거짓 값으로 데이터를 고를 때 `compress()`를 사용합니다. 선택값이 참인 데이터만 결과로 나옵니다.
 
 ```python
 from itertools import compress
@@ -125,11 +125,11 @@ print(list(compress(fields, visible)))
 ['id', 'email', 'name']
 ```
 
-데이터와 선택값 중 하나가 먼저 끝나면 `compress()`도 멈춥니다. 선택값의 개수가 정확히 맞아야 하는 중요한 작업이라면 길이를 먼저 확인합니다.
+데이터와 선택값 중 하나가 먼저 끝나면 `compress()`도 멈춥니다. 선택값의 개수가 정확히 맞아야 하는 중요 작업이라면 먼저 길이를 검사합니다.
 
-## takewhile과 dropwhile로 앞부분 건너뛰기
+## takewhile과 dropwhile로 앞부분 경계 찾기
 
-두 함수는 조건에 맞는 값을 전체에서 찾는 필터가 아니라, **앞부분의 경계**를 찾습니다. `takewhile()`은 조건이 참인 동안만 꺼내고, `dropwhile()`은 조건이 참인 앞부분을 버린 뒤 나머지를 모두 꺼냅니다.
+파일의 헤더를 건너뛰거나 유효 구간의 앞부분만 읽을 때 `takewhile()`과 `dropwhile()`을 사용합니다. 두 함수는 전체에서 조건을 찾는 필터가 아니라 **앞부분의 경계**를 찾습니다.
 
 ```python
 from itertools import dropwhile, takewhile
@@ -146,11 +146,11 @@ print(list(dropwhile(lambda line: line.startswith('#'), header_lines)))
 ['본문', '# 결론']
 ```
 
-`takewhile()`은 `0`을 만나는 즉시 멈추므로 뒤의 `4`는 반환하지 않습니다. `dropwhile()`은 처음 조건이 거짓인 `'본문'`부터는 조건을 다시 검사하지 않고 전부 반환합니다.
+`takewhile()`은 처음 거짓인 `0`에서 멈추므로 뒤의 `4`는 반환하지 않습니다. `dropwhile()`은 처음 거짓인 `'본문'`부터는 조건을 다시 검사하지 않고 모든 값을 반환합니다.
 
-## starmap으로 튜플을 함수 인자로 넘기기
+## starmap으로 인자 튜플 호출하기
 
-입력이 `(가로, 세로)`처럼 함수에 전달할 인자 묶음일 때 `starmap()`을 씁니다. 각 튜플 앞에 `*`를 붙여 호출하는 일을 대신합니다.
+입력이 `(가로, 세로)`처럼 함수에 넘길 인자 묶음일 때 `starmap()`을 사용합니다. 각 튜플에 `*`를 붙여 호출하는 일을 대신해 한 항목씩 결과를 만듭니다.
 
 ```python
 from itertools import starmap
@@ -165,4 +165,6 @@ print(list(areas))
 [12, 10, 10]
 ```
 
-복잡한 계산이라면 람다 대신 이름 있는 함수를 사용합니다. `starmap()`은 한 항목씩 결과를 만들므로, 큰 입력도 `for area in areas:`처럼 바로 처리할 수 있습니다.
+복잡한 계산이라면 람다 대신 이름 있는 함수를 사용합니다. 큰 입력도 `for area in areas:`처럼 한 결과씩 바로 처리할 수 있습니다.
+
+Python 3.12의 `batched()`, `groupby()`, `accumulate()`과 입력 소비 규칙은 [itertools 공식 문서](https://docs.python.org/3.12/library/itertools.html)를 기준으로 확인합니다.

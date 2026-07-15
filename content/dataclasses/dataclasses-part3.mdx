@@ -1,0 +1,170 @@
+---
+title: "Part 3. 고급: 값 객체와 메모리 경계를 설계하기"
+---
+
+## frozen=True로 바뀌지 않는 값 객체 만들기
+
+좌표, 통화 금액, 설정 스냅샷처럼 만든 뒤 필드 값을 바꾸면 안 되는 데이터를 표현할 때 `frozen=True`를 사용합니다. 생성 뒤 대입을 막아, 객체를 여러 곳에 전달할 때 값이 몰래 달라지는 문제를 줄입니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Money:
+    amount: int
+    currency: str = 'KRW'
+
+price = Money(12000)
+
+try:
+    price.amount = 15000
+except AttributeError as error:
+    print(type(error).__name__)
+
+print(price)
+```
+
+```text
+FrozenInstanceError
+Money(amount=12000, currency='KRW')
+```
+
+발생하는 `FrozenInstanceError`는 `AttributeError`의 하위 클래스입니다. 불변성은 값 객체의 계약을 지키는 도구이지, 모든 클래스에 붙이는 기본 옵션은 아닙니다. 작업 중 필드가 자연스럽게 변하는 객체에는 일반 dataclass가 더 단순합니다.
+
+## replace로 불변 상태를 전이하기
+
+불변 객체의 한 값만 바꾼 다음 상태가 필요하면 직접 대입하지 말고 `replace()`로 새 객체를 만듭니다. 이전 상태와 다음 상태를 모두 보존하므로, 주문 상태 변경처럼 흐름을 추적해야 하는 코드에서 특히 읽기 쉽습니다.
+
+```python
+from dataclasses import dataclass, replace
+
+@dataclass(frozen=True)
+class OrderState:
+    order_id: str
+    status: str
+
+created = OrderState('ORD-10', 'created')
+paid = replace(created, status='paid')
+
+print(created.status)
+print(paid.status)
+```
+
+```text
+created
+paid
+```
+
+`replace()`는 새 인스턴스의 생성자를 호출하므로, 검증과 계산이 `__post_init__()`에 있다면 다음 상태에도 적용됩니다. 한 번에 바꿔야 하는 값들이 많거나 전이마다 검증이 다르면 `pay()`, `cancel()`처럼 의도가 드러나는 메서드를 제공합니다.
+
+## frozen 내부의 가변 값을 피하기
+
+`frozen=True`는 필드에 다시 대입하는 일만 막습니다. 필드가 가리키는 목록·딕셔너리 자체의 변경까지 막지는 않으므로, 진짜 값 객체로 쓰려면 튜플처럼 변경할 수 없는 값으로 모델링합니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Basket:
+    items: list[str]
+
+basket = Basket(['책'])
+basket.items.append('펜')
+
+print(basket.items)
+```
+
+```text
+['책', '펜']
+```
+
+위 코드는 `basket.items = []`는 막지만 기존 목록의 `append()`는 허용합니다. 외부에서 바뀌지 않는 태그라면 `items: tuple[str, ...]`로 선언하고 `('책', '펜')`처럼 생성합니다. 깊은 불변성이 필요한 모델은 모든 중첩 값의 변경 가능성까지 따로 검토합니다.
+
+## slots=True로 정해진 필드만 가진 객체 만들기
+
+같은 형태의 작은 객체를 많이 만들고, 임의 속성 추가를 막고 싶을 때 `slots=True`를 사용합니다. `__dict__` 대신 슬롯을 사용해 메모리 사용을 줄일 수 있으며, 선언하지 않은 속성은 붙일 수 없습니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass(slots=True)
+class Coordinate:
+    x: int
+    y: int
+
+point = Coordinate(3, 4)
+
+try:
+    point.label = '출발점'
+except AttributeError as error:
+    print(type(error).__name__)
+
+print(point)
+```
+
+```text
+AttributeError
+Coordinate(x=3, y=4)
+```
+
+`slots=True`는 만능 성능 옵션이 아닙니다. 프레임워크가 인스턴스에 동적 속성을 추가하거나 `__dict__`를 기대한다면 호환되지 않을 수 있습니다. 실제 병목과 해당 라이브러리의 계약을 확인한 뒤, 데이터가 많은 경로에만 적용합니다.
+
+## fields()로 slots와 상속의 필드 확인하기
+
+직렬화·검증·폼 생성을 위해 dataclass 필드 목록이 필요하면 `fields()`를 사용합니다. 특히 `slots=True`와 상속을 함께 쓸 때는 `__slots__`를 직접 해석하지 말고 이 API로 필드를 얻습니다.
+
+```python
+from dataclasses import dataclass, fields
+
+@dataclass(slots=True)
+class User:
+    user_id: int
+
+@dataclass(slots=True)
+class Admin(User):
+    role: str
+
+print([item.name for item in fields(Admin)])
+```
+
+```text
+['user_id', 'role']
+```
+
+`fields()`는 dataclass의 실제 필드만 반환하고 `ClassVar`, `InitVar` 같은 의사 필드는 제외합니다. 기반 클래스와 같은 이름의 슬롯이 중복되는 경우도 있으므로, 필드 이름을 알아내려는 목적으로 `__slots__`에 의존하지 않습니다.
+
+## match 문으로 데이터 모양을 분기하기
+
+상태와 관련 값을 함께 보고 분기해야 할 때 dataclass는 구조적 패턴 매칭과 잘 맞습니다. 위치 순서보다 필드 이름을 적는 패턴을 쓰면, 어떤 값으로 판단하는지 읽기 쉽습니다.
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class DeliveryEvent:
+    status: str
+    address: str | None
+
+def next_action(event: DeliveryEvent) -> str:
+    match event:
+        case DeliveryEvent(status='ready', address=address) if address:
+            return f'{address}로 출고'
+        case DeliveryEvent(status='ready'):
+            return '주소 확인 요청'
+        case DeliveryEvent(status='delivered'):
+            return '완료 기록'
+        case _:
+            return '상태 확인'
+
+print(next_action(DeliveryEvent('ready', '부산시 해운대구')))
+print(next_action(DeliveryEvent('ready', None)))
+```
+
+```text
+부산시 해운대구로 출고
+주소 확인 요청
+```
+
+기본값인 `match_args=True`에서는 위치 패턴도 지원하지만, 필드 선언 순서가 공개 계약이 됩니다. 위치 기반 매칭을 제공하지 않으려면 `@dataclass(match_args=False)`를 쓰고 키워드 패턴만 사용합니다.
+
+Python 3.12의 `frozen`, `slots`, `fields()`, `match_args` 규칙과 주의 사항은 [dataclasses 공식 문서](https://docs.python.org/3.12/library/dataclasses.html)를 기준으로 확인합니다.

@@ -1,0 +1,169 @@
+---
+title: "Part 1. 기초: 여러 설정에서 값을 찾기"
+---
+
+## ChainMap은 언제 쓰는가?
+
+명령행 옵션·프로젝트 설정·기본값처럼 우선순위가 있는 여러 딕셔너리를 하나의 설정처럼 읽을 때 `ChainMap`을 사용합니다. 딕셔너리를 미리 합치지 않아도 앞에 둔 매핑의 값이 먼저 선택됩니다.
+
+```python
+from collections import ChainMap
+
+defaults = {'format': 'text', 'timeout': 30}
+environment = {'format': 'json'}
+command_line = {'timeout': 5}
+
+options = ChainMap(command_line, environment, defaults)
+
+print(options['format'])
+print(options['timeout'])
+```
+
+```text
+json
+5
+```
+
+`ChainMap(command_line, environment, defaults)`의 순서 자체가 우선순위입니다. 사용자 입력처럼 가장 구체적인 값을 왼쪽에, 공통 기본값을 오른쪽에 둡니다.
+
+## ChainMap의 앞 매핑으로 우선순위 정하기
+
+같은 키가 여러 매핑에 있으면 `ChainMap`은 첫 번째 매핑부터 차례로 찾아 처음 만난 값을 반환합니다. 키가 겹칠 수 있다는 점을 전제로, 어떤 출처가 이겨야 하는지를 생성자 인자 순서로 드러냅니다.
+
+```python
+from collections import ChainMap
+
+defaults = {'theme': 'light', 'language': 'ko'}
+member_options = {'theme': 'dark'}
+
+settings = ChainMap(member_options, defaults)
+
+print(settings['theme'])
+print(settings['language'])
+```
+
+```text
+dark
+ko
+```
+
+`member_options`에 없는 `language`는 다음 매핑인 `defaults`에서 찾습니다. 반대로 기본값이 사용자 값을 덮어쓰게 하려면 매핑 순서를 바꾸는 것이 아니라, 보통 기본값을 마지막에 두는 설계를 다시 확인합니다.
+
+## maps로 원본 매핑 확인하기
+
+여러 설정이 어떤 순서로 연결되어 있는지 확인하거나, 현재 레이어에만 접근해야 할 때 `maps`를 사용합니다. `maps`는 첫 번째로 검색되는 매핑부터 담은 공개 리스트입니다.
+
+```python
+from collections import ChainMap
+
+request_options = {'page_size': 50}
+defaults = {'page_size': 20, 'timezone': 'Asia/Seoul'}
+settings = ChainMap(request_options, defaults)
+
+print(settings.maps)
+print(settings.maps[0])
+```
+
+```text
+[{'page_size': 50}, {'page_size': 20, 'timezone': 'Asia/Seoul'}]
+{'page_size': 50}
+```
+
+`maps[0]`은 현재 레이어이고, 마지막 매핑일수록 우선순위가 낮습니다. `maps` 목록을 직접 재배치하면 조회 규칙도 바뀌므로, 일시적인 값을 추가할 때는 뒤에서 다루는 `new_child()`를 우선 사용합니다.
+
+## 원본 딕셔너리 변경을 뷰에 반영하기
+
+설정 출처가 바뀐 뒤에도 최신 값을 읽어야 할 때 `ChainMap`의 참조 기반 뷰가 유용합니다. 생성할 때 내용을 복사하지 않으므로, 하부 딕셔너리를 바꾸면 연결된 `ChainMap`에서도 바로 보입니다.
+
+```python
+from collections import ChainMap
+
+defaults = {'retries': 2}
+settings = ChainMap({}, defaults)
+
+defaults['retries'] = 3
+defaults['timeout'] = 10
+
+print(settings['retries'])
+print(settings['timeout'])
+```
+
+```text
+3
+10
+```
+
+이 동작은 실행 중 바뀌는 설정을 읽을 때 편리하지만, 고정된 결과가 필요할 때는 맞지 않습니다. 외부 시스템으로 보내기 전처럼 스냅샷이 필요하면 `dict(settings)`로 일반 딕셔너리를 만듭니다.
+
+## 대입은 첫 번째 매핑에만 하기
+
+기본값을 보면서 현재 실행에만 다른 값을 적용할 때는 `ChainMap`에 그대로 대입합니다. 이미 아래 매핑에 같은 키가 있어도 쓰기는 언제나 첫 번째 매핑으로 갑니다.
+
+```python
+from collections import ChainMap
+
+runtime = {}
+defaults = {'retries': 2, 'timeout': 30}
+settings = ChainMap(runtime, defaults)
+
+settings['retries'] = 5
+settings['trace_id'] = 'req-17'
+
+print(runtime)
+print(defaults)
+```
+
+```text
+{'retries': 5, 'trace_id': 'req-17'}
+{'retries': 2, 'timeout': 30}
+```
+
+따라서 첫 번째 매핑에는 요청별·실행별 오버라이드처럼 변경해도 되는 값을 둡니다. 공용 기본값이나 환경 설정을 첫 매핑에 두면 의도치 않게 원본을 바꿀 수 있습니다.
+
+## del은 현재 레이어의 값만 지우기
+
+현재 실행에서 지정한 오버라이드를 취소하고 기본값으로 되돌릴 때 `del`을 사용합니다. 삭제도 첫 번째 매핑만 대상으로 하므로, 아래 매핑에만 있는 키를 삭제하려 하면 `KeyError`가 납니다.
+
+```python
+from collections import ChainMap
+
+runtime = {'timeout': 5}
+defaults = {'timeout': 30, 'retries': 2}
+settings = ChainMap(runtime, defaults)
+
+del settings['timeout']
+
+print(settings['timeout'])
+print(runtime)
+```
+
+```text
+30
+{}
+```
+
+`timeout`의 기본값은 지워지지 않았고, 첫 레이어의 `5`만 사라졌습니다. 전체 설정에서 키를 제거하는 정책이 필요하다면 어느 원본을 수정할지 명시적으로 정한 뒤 해당 딕셔너리를 직접 다룹니다.
+
+## dict와 같은 인터페이스로 전체 설정 읽기
+
+연결된 설정의 키·항목을 한 번에 순회하거나 일반 딕셔너리가 필요한 곳에 넘길 때도 `ChainMap`을 딕셔너리처럼 사용할 수 있습니다. 겹치는 키는 한 번만 나타나며, 값은 조회 우선순위에 따라 선택됩니다.
+
+```python
+from collections import ChainMap
+
+defaults = {'color': 'red', 'user': 'guest'}
+arguments = {'user': 'mina', 'debug': True}
+settings = ChainMap(arguments, defaults)
+
+print(list(settings))
+print(dict(settings))
+```
+
+```text
+['color', 'user', 'debug']
+{'color': 'red', 'user': 'mina', 'debug': True}
+```
+
+반복 순서는 매핑을 마지막에서 첫 번째 방향으로 살펴 결정하지만, `user`의 값은 앞 매핑의 `'mina'`입니다. 이 순서는 마지막 매핑부터 `dict.update()`로 차례로 합친 결과의 키 순서와 같습니다.
+
+Python 3.12의 `ChainMap` 조회·쓰기·삭제·반복 규칙은 [collections 공식 문서](https://docs.python.org/3.12/library/collections.html#chainmap-objects)를 기준으로 확인합니다.

@@ -67,7 +67,7 @@ const NavSectionItem = memo(({
       <button
         type="button"
         onClick={onToggle}
-        className={`w-full flex items-center justify-between text-xs font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded transition-colors ${
+        className={`w-full flex items-center justify-between text-left text-xs font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded transition-colors ${
           isExpanded 
             ? 'text-indigo-600 dark:text-indigo-400' 
             : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'

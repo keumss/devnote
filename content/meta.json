@@ -6,10 +6,8 @@
     "alembic",
     "fastapi",
     "jinja2",
-    "pathlib",
-    "logging",
-    "argparse",
+    "dataclasses",
     "itertools",
-    "functools"
+    "collections"
   ]
 }
