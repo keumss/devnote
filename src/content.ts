@@ -52,13 +52,36 @@ export interface Section {
   notes: Note[];
 }
 
-export interface SearchResult {
+export type SearchMatchKind =
+  | 'topic-title'
+  | 'note-title'
+  | 'section-title'
+  | 'description'
+  | 'content'
+  | 'fuzzy';
+
+interface SearchResultBase {
   sectionId: string;
   sectionTitle: string;
   noteId: string;
   noteTitle: string;
+  matchKind: SearchMatchKind;
+}
+
+export interface TopicSearchResult extends SearchResultBase {
+  kind: 'topic';
   topic: Topic;
 }
+
+export interface NoteSearchResult extends SearchResultBase {
+  kind: 'note';
+}
+
+export interface SectionSearchResult extends SearchResultBase {
+  kind: 'section';
+}
+
+export type SearchResult = TopicSearchResult | NoteSearchResult | SectionSearchResult;
 
 // Use a distinct module query for metadata so Rollup can tree-shake the MDX
 // renderer from the eager imports while retaining separate lazy render chunks.

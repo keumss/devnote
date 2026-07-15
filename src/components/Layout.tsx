@@ -6,6 +6,7 @@ import MobileNavDrawer from './MobileNavDrawer';
 import SearchModal from './SearchModal';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { useSearch } from '../hooks/useSearch';
+import type { SearchResult } from '../search';
 import { getNotePath, getTopicHash } from '../navigation';
 
 interface LayoutProps {
@@ -19,10 +20,10 @@ export default function Layout({ children, activeSectionId, activeNoteId }: Layo
   const navigate = useNavigate();
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
-  const handleSelectResult = useCallback((sectionId: string, noteId: string, topicId: string) => {
+  const handleSelectResult = useCallback((result: SearchResult) => {
     navigate({
-      pathname: getNotePath(sectionId, noteId),
-      hash: getTopicHash(topicId),
+      pathname: getNotePath(result.sectionId, result.noteId),
+      hash: result.kind === 'topic' ? getTopicHash(result.topic.id) : '',
     });
   }, [navigate]);
 

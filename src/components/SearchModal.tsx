@@ -1,4 +1,4 @@
-import { Search, X, ChevronRight, Hash } from 'lucide-react';
+import { Search, X, ChevronRight, Hash, BookOpenText, FileText } from 'lucide-react';
 import type { SearchResult } from '../search';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEffect, useRef } from 'react';
@@ -9,7 +9,36 @@ interface SearchModalProps {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   searchResults: SearchResult[];
-  onSelectResult: (sectionId: string, noteId: string, topicId: string) => void;
+  onSelectResult: (result: SearchResult) => void;
+}
+
+function getResultTitle(result: SearchResult) {
+  if (result.kind === 'topic') return result.topic.title;
+  if (result.kind === 'note') return result.noteTitle;
+  return `${result.sectionTitle} 섹션`;
+}
+
+function getResultDescription(result: SearchResult) {
+  if (result.kind === 'topic') return result.topic.description;
+  if (result.kind === 'note') return '노트 제목에서 찾음';
+  return '섹션 제목에서 찾음';
+}
+
+function getMatchLabel(result: SearchResult) {
+  switch (result.matchKind) {
+    case 'topic-title':
+      return '토픽 제목';
+    case 'note-title':
+      return '노트 제목';
+    case 'section-title':
+      return '섹션 제목';
+    case 'description':
+      return '설명';
+    case 'content':
+      return '본문';
+    case 'fuzzy':
+      return '유사 검색';
+  }
 }
 
 export default function SearchModal({
@@ -149,23 +178,34 @@ export default function SearchModal({
                   {searchResults.map((result) => (
                     <button
                       type="button"
-                      key={`${result.sectionId}-${result.noteId}-${result.topic.id}`}
-                      onClick={() => onSelectResult(result.sectionId, result.noteId, result.topic.id)}
+                      key={result.kind === 'topic'
+                        ? `${result.sectionId}-${result.noteId}-${result.topic.id}`
+                        : `${result.kind}-${result.sectionId}-${result.noteId}`}
+                      onClick={() => onSelectResult(result)}
                       className="w-full text-left px-4 py-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-indigo-50 dark:focus:bg-slate-800/80"
                     >
                       <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex-wrap">
                          <span>{result.sectionTitle}</span>
                          <ChevronRight size={12} className="text-slate-400" />
-                         <span>{result.noteTitle}</span>
+                         <span>{result.kind === 'section' ? '섹션' : result.noteTitle}</span>
+                         <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300 normal-case tracking-normal">
+                           {getMatchLabel(result)}
+                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Hash size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0" />
+                        {result.kind === 'topic' ? (
+                          <Hash size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0" />
+                        ) : result.kind === 'note' ? (
+                          <FileText size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0" />
+                        ) : (
+                          <BookOpenText size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0" />
+                        )}
                         <span className="font-bold text-sm sm:text-base text-slate-900 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300 transition-colors">
-                          {result.topic.title}
+                          {getResultTitle(result)}
                         </span>
                       </div>
                       <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
-                        {result.topic.description}
+                        {getResultDescription(result)}
                       </p>
                     </button>
                   ))}

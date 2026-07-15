@@ -6,12 +6,34 @@ describe('searchContent', () => {
     const results = searchContent('SELECT');
 
     expect(results.length).toBeGreaterThan(0);
-    expect(results.some(result => result.topic.title.toLowerCase().includes('select'))).toBe(true);
-    expect(results.every(result => result.topic.id && result.topic.content)).toBe(true);
+    expect(results.every(result => result.kind === 'topic')).toBe(true);
+    expect(results.some(result => (
+      result.kind === 'topic' && result.topic.title.toLowerCase().includes('select')
+    ))).toBe(true);
+    expect(results.every(result => result.matchKind === 'topic-title')).toBe(true);
   });
 
-  it('searches section and note titles and supports a one-character query', () => {
-    expect(searchContent('SQLModel').some(result => result.sectionId === 'sqlmodel')).toBe(true);
-    expect(searchContent('폼').length).toBeGreaterThan(0);
+  it('returns one navigable section result instead of every topic in that section', () => {
+    const results = searchContent('SQLModel');
+    const sectionResults = results.filter(result => result.kind === 'section');
+
+    expect(sectionResults).toHaveLength(1);
+    expect(sectionResults[0]).toMatchObject({
+      sectionId: 'sqlmodel',
+      matchKind: 'section-title',
+    });
+  });
+
+  it('uses exact matching for short queries and only searches content after titles', () => {
+    const shortQueryResults = searchContent('폼');
+    expect(shortQueryResults.length).toBeGreaterThan(0);
+    expect(shortQueryResults.every(result => result.matchKind !== 'fuzzy')).toBe(true);
+
+    const titleResults = searchContent('조회 및 정렬 SELECT');
+    expect(titleResults).toHaveLength(1);
+    expect(titleResults[0]).toMatchObject({
+      kind: 'topic',
+      matchKind: 'topic-title',
+    });
   });
 });

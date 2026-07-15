@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { searchContent } from '../search';
+import { searchContent, type SearchResult } from '../search';
 
 export function useSearch(
-  onSelectResult: (sectionId: string, noteId: string, topicId: string) => void,
+  onSelectResult: (result: SearchResult) => void,
   onBeforeOpen?: () => void,
 ) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -26,8 +26,8 @@ export function useSearch(
     return searchContent(normalizedQuery);
   }, [searchQuery]);
 
-  const handleSelectSearchResult = useCallback((sectionId: string, noteId: string, topicId: string) => {
-    onSelectResult(sectionId, noteId, topicId);
+  const handleSelectSearchResult = useCallback((result: SearchResult) => {
+    onSelectResult(result);
     setIsSearchModalOpen(false);
     setSearchQuery('');
   }, [onSelectResult]);

@@ -1,12 +1,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import SearchModal from './SearchModal';
+import type { SearchResult } from '../search';
 
-const searchResults = [{
+const searchResults: SearchResult[] = [{
   sectionId: 'sql',
   sectionTitle: 'SQL',
   noteId: 'sql-part1',
   noteTitle: 'Part 1: 기초',
+  kind: 'topic',
+  matchKind: 'topic-title',
   topic: {
     id: 'select',
     title: 'SELECT',
