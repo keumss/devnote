@@ -103,7 +103,7 @@ export default function IndexPage() {
                   pathname: getNotePath(continueLearning.section.id, continueLearning.note.id),
                   hash: continueLearning.topic ? getTopicHash(continueLearning.topic.id) : '',
                 }}
-                className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-slate-950 sm:mt-0 sm:shrink-0"
+                className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-bold text-indigo-700 transition-colors hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-indigo-400/20 dark:bg-indigo-500/15 dark:text-indigo-200 dark:hover:bg-indigo-500/25 dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-slate-950 sm:mt-0 sm:shrink-0"
               >
                 이어서 읽기
                 <Play className="h-4 w-4" fill="currentColor" />
