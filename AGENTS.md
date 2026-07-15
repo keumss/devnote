@@ -28,19 +28,21 @@ DevNote는 Vite 기반 React 19·TypeScript 정적 앱이다.
 │       └── <note>.mdx      # 학습 노트
 ├── source.config.ts        # Fumadocs MDX·스키마 설정
 ├── vite.config.ts          # 빌드 설정
+├── vitest.config.ts        # 테스트 실행 환경 설정
 └── public/                 # 정적 자산
 ```
 
 - 섹션은 기술별 폴더, 노트는 MDX 파일, 토픽은 노트의 `##` 제목이다.
 - `content/meta.json`의 `pages`는 Fumadocs 스키마 필드다. 문서에서는 이를 섹션 순서로 부르고, 화면·라우트 외에는 “page”라는 표현을 쓰지 않는다.
 - 테스트는 구현 파일 옆이나 `src/` 아래에 `*.test.ts`·`*.test.tsx` 형식으로 둔다.
-- `.source/`와 `dist/`는 생성물이므로 커밋하지 않는다.
+- `.source/`, `build/`, `dist/`, `coverage/`, `node_modules/`는 생성 또는 설치 산출물이므로 커밋하지 않는다.
 
 ## 작업 원칙
 
 - 요청과 직접 관련된 범위만 변경하고 기존 구조와 패턴을 따른다.
 - 자동 포매터와 ESLint 설정은 없다. 변경 범위를 좁게 유지하고 타입 검사를 실행한다.
 - 환경 파일, 자격 증명, 생성 로그를 커밋하지 않는다.
+- AGENTS.md에는 안정적인 구조·작업 방식·검증 기준만 기록한다. 자주 바뀌는 화면과 기능의 세부 동작은 코드와 테스트로 관리한다.
 
 ## 학습 콘텐츠
 
