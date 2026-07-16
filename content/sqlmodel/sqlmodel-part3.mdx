@@ -1,8 +1,8 @@
 ---
-title: "Part 3. 고급: API 스키마와 관계 성능 설계"
+title: "Part 3. 고급: API 경계와 복잡한 관계 설계"
 ---
 
-관계 로딩과 삭제 예제는 `Hero.team`과 `Team.heroes`가 연결된 모델과 시작 데이터가 이미 있다고 가정합니다. 이 노트는 테이블 선언을 반복하지 않고, API 경계와 로딩·삭제 옵션에 집중합니다.
+첫 세 토픽은 Part 2의 `Hero.team`·`Team.heroes` 모델과 시작 데이터를 사용합니다. 먼저 API가 받는 데이터와 저장된 데이터를 분리하고 안전하게 갱신한 다음, 목록 성능과 더 복잡한 관계·삭제 규칙으로 확장합니다. 다대다 토픽은 서로 영향을 주지 않도록 별도 메모리 SQLite 데이터베이스를 사용합니다.
 
 ## HeroCreate와 HeroPublic으로 API 데이터 경계 만들기
 
@@ -42,6 +42,62 @@ print(public.model_dump())
 
 응답 모델에 `secret_name`을 넣지 않아 비밀 데이터가 API 경계를 넘어가지 않게 합니다.
 
+## HeroUpdate와 exclude_unset으로 PATCH 요청에서 보낸 값만 갱신하기
+
+부분 수정 API에서 이름만 바꿨는데 `age`와 `team_id`가 기본값 `None`으로 덮어써지면 안 됩니다. 모든 필드를 선택적으로 둔 `HeroUpdate`에서 `model_dump(exclude_unset=True)`으로 실제 요청에 포함된 값만 추린 뒤, `sqlmodel_update()`로 기존 객체에 적용합니다.
+
+```python
+from sqlmodel import Session
+
+
+class HeroUpdate(SQLModel):
+    name: str | None = None
+    age: int | None = None
+    team_id: int | None = None
+
+
+patch = HeroUpdate(name='Deadpuddle')
+
+with Session(engine) as session:
+    hero = session.exec(select(Hero).where(Hero.name == 'Deadpond')).one()
+    hero.sqlmodel_update(patch.model_dump(exclude_unset=True))
+    session.commit()
+    session.refresh(hero)
+
+print(hero.name, hero.age, hero.team_id)
+```
+
+```text
+Deadpuddle None 2
+```
+
+`exclude_unset=True`은 값이 `None`인 필드를 무조건 버리지 않습니다. 예를 들어 `HeroUpdate(age=None)`처럼 명시적으로 보낸 `None`은 포함되므로, 선택적 필드를 비우는 요청도 정확히 처리합니다.
+
+## Session.begin으로 Hero와 Team 변경을 하나의 트랜잭션으로 확정하기
+
+Hero의 팀을 옮기면서 대상 Team의 본부도 함께 바꿔야 한다면, 두 변경을 하나의 트랜잭션으로 묶습니다. 블록 안에서 예외가 나면 두 변경 모두 확정되지 않아 중간 상태가 남지 않습니다.
+
+```python
+with Session(engine) as session:
+    with session.begin():
+        hero = session.exec(select(Hero).where(Hero.name == 'Spider-Boy')).one()
+        team = session.exec(select(Team).where(Team.name == 'Z-Force')).one()
+        hero.team = team
+        team.headquarters = 'New Sister Margaret\'s Bar'
+
+with Session(engine) as session:
+    hero = session.exec(select(Hero).where(Hero.name == 'Spider-Boy')).one()
+    print(hero.team.name if hero.team else None)
+    print(hero.team.headquarters if hero.team else None)
+```
+
+```text
+Z-Force
+New Sister Margaret's Bar
+```
+
+`session.begin()` 블록이 정상 종료되면 커밋하고, 예외가 전파되면 롤백합니다. 한 요청이 여러 행을 바꾸는 서비스 함수에서는 모든 검증을 `commit()` 전에 끝내는 구조와 함께 사용합니다.
+
 ## SQLAlchemy의 selectinload로 여러 Team의 Hero 목록 미리 읽기
 
 여러 Team과 각 소속 Hero를 목록으로 표시할 때 SQLAlchemy ORM의 `selectinload(Team.heroes)`를 SQLModel 쿼리에 추가합니다. SQLModel은 `select()`와 `Session.exec()`를 제공하지만 `selectinload`·`joinedload`를 별도로 내보내지 않으므로 `sqlalchemy.orm`에서 import합니다.
@@ -60,10 +116,64 @@ print('\n'.join(lines))
 
 ```text
 Preventers: ['Rusty-Man']
-Z-Force: ['Deadpond']
+Z-Force: ['Deadpuddle', 'Spider-Boy']
 ```
 
 `joinedload`도 `sqlalchemy.orm`에서 가져와 SQLModel 쿼리에 사용할 수 있습니다. 컬렉션 관계에 `joinedload`를 쓸 때는 조인 결과의 부모 행이 반복되므로 `session.exec(statement).unique().all()`로 중복을 제거합니다. 목록에는 대체로 `selectinload`가 예측하기 쉽습니다.
+
+## 링크 모델과 복합 기본 키로 Hero-Project 역할 저장하기
+
+한 Hero가 여러 Project에 참여하고, 참여할 때마다 역할까지 기록해야 한다면 링크 모델을 독립 테이블로 만듭니다. `hero_id`와 `project_id`를 함께 기본 키로 선언하면 같은 Hero를 같은 Project에 두 번 연결할 수 없습니다.
+
+```python
+from sqlmodel import Field, Relationship, Session, SQLModel, create_engine, select
+
+
+class HeroProjectLink(SQLModel, table=True):
+    hero_id: int | None = Field(default=None, foreign_key='projecthero.id', primary_key=True)
+    project_id: int | None = Field(default=None, foreign_key='project.id', primary_key=True)
+    role: str
+    hero: 'ProjectHero' = Relationship(back_populates='project_links')
+    project: 'Project' = Relationship(back_populates='hero_links')
+
+
+class Project(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    hero_links: list[HeroProjectLink] = Relationship(back_populates='project')
+
+
+class ProjectHero(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str
+    project_links: list[HeroProjectLink] = Relationship(back_populates='hero')
+```
+
+별도 엔진에서 Hero·Project를 먼저 저장한 뒤, 두 ID를 연결한 링크에 역할을 넣습니다.
+
+```python
+project_engine = create_engine('sqlite://')
+SQLModel.metadata.create_all(project_engine)
+
+with Session(project_engine) as session:
+    hero = ProjectHero(name='Rusty-Man')
+    project = Project(name='Rescue')
+    session.add_all([hero, project])
+    session.commit()
+
+    session.add(HeroProjectLink(hero_id=hero.id, project_id=project.id, role='lead'))
+    session.commit()
+
+with Session(project_engine) as session:
+    link = session.exec(select(HeroProjectLink)).one()
+    print(link.hero.name, link.project.name, link.role)
+```
+
+```text
+Rusty-Man Rescue lead
+```
+
+단순 연결만 필요하면 `link_model`을 사용해 `hero.projects`처럼 직접 탐색할 수 있습니다. 하지만 역할·참여 날짜처럼 연결 자체의 업무 정보가 있으면 이 예제처럼 링크를 조회·검증하는 편이 변경과 이력 관리에 적합합니다.
 
 ## cascade_delete와 ondelete로 Team 삭제 규칙 정하기
 
@@ -88,7 +198,7 @@ with Session(engine) as session:
     session.commit()
 
 with Session(engine) as session:
-    heroes = session.exec(select(Hero).where(Hero.name == 'Deadpond')).all()
+    heroes = session.exec(select(Hero).where(Hero.name == 'Deadpuddle')).all()
 
 print(heroes)
 ```
@@ -99,4 +209,4 @@ print(heroes)
 
 소속 해제가 맞는 업무라면 삭제 연쇄 대신 선택적 `team_id`와 `ondelete='SET NULL'`을 검토합니다. 삭제 결과는 데이터 보존·삭제 권한·외부 참조 요구에 맞춰 선택합니다.
 
-SQLModel의 [여러 API 모델](https://sqlmodel.tiangolo.com/tutorial/fastapi/multiple-models/)과 [관계 삭제 규칙](https://sqlmodel.tiangolo.com/tutorial/relationship-attributes/cascade-delete-relationships/)을 기준으로 구성했습니다.
+SQLModel의 [여러 API 모델](https://sqlmodel.tiangolo.com/tutorial/fastapi/multiple-models/), [부분 수정](https://sqlmodel.tiangolo.com/tutorial/fastapi/update/), [추가 필드가 있는 링크 모델](https://sqlmodel.tiangolo.com/tutorial/many-to-many/link-with-extra-fields/), [관계 삭제 규칙](https://sqlmodel.tiangolo.com/tutorial/relationship-attributes/cascade-delete-relationships/)을 기준으로 구성했습니다.
