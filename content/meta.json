@@ -1,6 +1,7 @@
 {
   "pages": [
     "sql",
-    "sqlmodel"
+    "sqlmodel",
+    "dataclass"
   ]
 }

@@ -1,0 +1,158 @@
+---
+title: "Part 3. 고급: 불변 값 객체와 상속 설계하기"
+---
+
+## frozen=True로 변경되지 않는 좌표 만들기
+
+생성 뒤 바뀌면 안 되는 좌표·통화·설정 값에는 `@dataclass(frozen=True)`를 사용합니다. 일반적인 필드 대입을 막아 값 객체의 불변 의도를 코드로 드러냅니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Point:
+    x: int
+    y: int
+
+
+origin = Point(0, 0)
+print(origin)
+```
+
+```text
+Point(x=0, y=0)
+```
+
+`origin.x = 1`은 `FrozenInstanceError`로 실패합니다. 다만 필드가 목록처럼 변경 가능한 객체라면 그 내부까지 자동으로 불변이 되지는 않습니다.
+
+## frozen dataclass를 dict 키로 사용하기
+
+좌표처럼 같은 값이면 같은 키여야 하는 값을 사전 키나 집합에 넣을 때 불변 dataclass를 사용합니다. 기본 `eq=True`와 `frozen=True` 조합에서는 안전한 해시가 자동 생성됩니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Currency:
+    code: str
+
+
+rates = {Currency('KRW'): 1, Currency('USD'): 1_350}
+print(rates[Currency('USD')])
+```
+
+```text
+1350
+```
+
+해시된 객체의 값이 바뀌면 컬렉션 규칙이 깨질 수 있으므로, 변경 가능한 dataclass에 `unsafe_hash=True`를 쉽게 붙이지 않습니다.
+
+## slots=True로 많은 작은 객체의 속성 공간 줄이기
+
+대량으로 만드는 작은 값 객체에서 동적 속성이 필요 없을 때 `slots=True`를 지정합니다. 슬롯 기반 인스턴스는 기본적으로 인스턴스별 `__dict__`를 만들지 않습니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class Rgb:
+    red: int
+    green: int
+    blue: int
+
+
+color = Rgb(255, 200, 0)
+print((color.red, color.green, color.blue))
+```
+
+```text
+(255, 200, 0)
+```
+
+프레임워크가 동적 속성이나 약한 참조를 요구한다면 먼저 호환성을 확인합니다. `slots=True`는 클래스 객체를 새로 만들어 반환하므로 데코레이터 사용 패턴도 단순하게 유지합니다.
+
+## order=True로 우선순위 큐의 정렬 기준 만들기
+
+작업 우선순위와 생성 순서로 정렬할 때 `order=True`로 비교 메서드를 생성합니다. 비교에 포함하고 싶은 필드를 선언 순서대로 두고, 작업 내용은 `compare=False`로 제외합니다.
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass(order=True)
+class QueuedTask:
+    priority: int
+    sequence: int
+    payload: str = field(compare=False)
+
+
+tasks = [QueuedTask(2, 1, 'email'), QueuedTask(1, 2, 'report')]
+print([task.payload for task in sorted(tasks)])
+```
+
+```text
+['report', 'email']
+```
+
+`order=True`는 값의 자연스러운 전체 순서가 있을 때만 씁니다. 화면 표시 순서처럼 상황에 따라 바뀌는 기준은 `sorted(..., key=...)`로 호출부에 둡니다.
+
+## 상속에서 기본 필드 순서 지키기
+
+공통 필드를 기반 dataclass에 두고 하위 타입에 필수 필드를 더할 때, 기본값 없는 필드가 기본값 필드 뒤에 오지 않도록 설계합니다. 아래처럼 기반 클래스의 기본 필드를 키워드 전용으로 만들면 하위 클래스의 필수 필드를 안전하게 추가할 수 있습니다.
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Event:
+    created_by: str = field(kw_only=True)
+
+
+@dataclass
+class LoginEvent(Event):
+    user_id: str
+
+
+event = LoginEvent('u-1', created_by='system')
+print(event)
+```
+
+```text
+LoginEvent(created_by='system', user_id='u-1')
+```
+
+기반 클래스의 선택 필드를 일반 위치 인수로 둔 뒤 하위 클래스가 필수 필드를 추가하면 생성자 규칙 위반으로 `TypeError`가 날 수 있습니다.
+
+## match로 이벤트 타입과 필드 구조 분기하기
+
+고정된 이벤트 값 객체의 구조에 따라 분기할 때 패턴 매칭을 쓸 수 있습니다. dataclass는 기본적으로 생성자 위치 인수에 해당하는 `__match_args__`를 제공합니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class PasswordReset:
+    user_id: str
+
+
+def message(event: PasswordReset) -> str:
+    match event:
+        case PasswordReset(user_id):
+            return f'reset requested: {user_id}'
+
+
+print(message(PasswordReset('u-1')))
+```
+
+```text
+reset requested: u-1
+```
+
+분기가 복잡해지면 타입별 메서드나 명시적인 디스패치 테이블이 더 읽기 쉬운지 함께 판단합니다.
+
+공식 Python [dataclasses 문서](https://docs.python.org/3.12/library/dataclasses.html)의 `frozen`, 해시 규칙, `slots`, 상속, `match_args` 설명을 기준으로 Python 3.12 예제를 구성했습니다.

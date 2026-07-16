@@ -1,0 +1,195 @@
+---
+title: "Part 2. 중급: 입력을 안전한 값 객체로 바꾸기"
+---
+
+## __post_init__에서 이메일 형식 정규화하기
+
+대소문자·앞뒤 공백 차이로 같은 이메일이 달라 보이지 않게 하려면 생성 직후 값을 정규화합니다. 변경 가능한 dataclass에서는 `__post_init__()`에서 필드에 정규화 결과를 다시 대입할 수 있습니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class EmailAddress:
+    value: str
+
+    def __post_init__(self) -> None:
+        self.value = self.value.strip().lower()
+        if '@' not in self.value:
+            raise ValueError('이메일 형식이 아닙니다.')
+
+
+email = EmailAddress('  USER@example.com ')
+print(email.value)
+```
+
+```text
+user@example.com
+```
+
+정규화는 저장·비교 전에 한 번만 적용되므로, 이후 코드가 같은 규칙을 반복하지 않아도 됩니다.
+
+## InitVar로 초기화 전용 비밀번호 받기
+
+생성 시에는 평문 비밀번호가 필요하지만 객체에는 보관하지 않을 때 `InitVar`를 사용합니다. `InitVar`는 `__init__()` 매개변수와 `__post_init__()` 인수로만 쓰이며 dataclass 필드가 아닙니다.
+
+```python
+from dataclasses import InitVar, dataclass, field
+
+
+@dataclass
+class User:
+    name: str
+    password: InitVar[str]
+    password_length: int = field(init=False)
+
+    def __post_init__(self, password: str) -> None:
+        if len(password) < 8:
+            raise ValueError('비밀번호는 8자 이상이어야 합니다.')
+        self.password_length = len(password)
+
+
+user = User('min', 'correct-horse')
+print(user)
+```
+
+```text
+User(name='min', password_length=13)
+```
+
+이 예제는 평문을 객체 필드에 남기지 않는 방법만 보입니다. 실제 비밀번호 저장에는 검증된 비밀번호 해시 라이브러리를 사용합니다.
+
+## kw_only=True로 생성자 인수의 의미 드러내기
+
+여러 선택 설정을 위치 인수로 헷갈리지 않게 하려면 `@dataclass(kw_only=True)`를 사용합니다. 모든 필드를 이름과 함께 전달해야 하므로 호출부에서 값의 의미가 보입니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass(kw_only=True)
+class RetryPolicy:
+    attempts: int = 3
+    timeout_seconds: float = 1.0
+
+
+policy = RetryPolicy(attempts=5, timeout_seconds=2.5)
+print(policy)
+```
+
+```text
+RetryPolicy(attempts=5, timeout_seconds=2.5)
+```
+
+Python 3.10 이상에서 쓸 수 있습니다. 필수 위치 인수가 일부 필요하면 특정 필드에만 `field(kw_only=True)`를 지정합니다.
+
+## compare=False로 식별자와 내용 비교 나누기
+
+문서의 동등성을 내용으로 판단하고 저장용 식별자는 무시할 때 `compare=False`를 지정합니다. 자동 `==`은 비교 대상인 필드만 사용합니다.
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Draft:
+    title: str
+    body: str
+    database_id: int | None = field(default=None, compare=False)
+
+
+local = Draft('회의', '10시에 시작', database_id=None)
+saved = Draft('회의', '10시에 시작', database_id=42)
+print(local == saved)
+```
+
+```text
+True
+```
+
+데이터베이스 행의 동일성처럼 ID 자체가 중요하면 `compare=False`를 빼고, 비교 규칙을 명시적으로 메서드로 표현합니다.
+
+## asdict로 중첩 데이터를 경계에서 변환하기
+
+dataclass 값을 JSON 응답처럼 사전 형태로 넘겨야 할 때 `asdict()`를 경계에서 호출합니다. 중첩 dataclass와 목록도 재귀적으로 사전·목록으로 바꿉니다.
+
+```python
+from dataclasses import asdict, dataclass
+
+
+@dataclass
+class Address:
+    city: str
+
+
+@dataclass
+class Customer:
+    name: str
+    address: Address
+
+
+customer = Customer('hana', Address('Seoul'))
+print(asdict(customer))
+```
+
+```text
+{'name': 'hana', 'address': {'city': 'Seoul'}}
+```
+
+`asdict()`는 중첩 컨테이너를 깊게 변환합니다. 외부 API에 필요한 필드만 보내야 한다면 전용 변환 함수를 만들어 공개 범위를 명시합니다.
+
+## replace로 원본을 유지하며 수정본 만들기
+
+기존 주문을 직접 바꾸지 않고 수량만 달라진 복사본을 만들 때 `replace()`를 사용합니다. 지정하지 않은 필드는 원본 값을 유지합니다.
+
+```python
+from dataclasses import dataclass, replace
+
+
+@dataclass
+class OrderLine:
+    product_name: str
+    quantity: int
+
+
+original = OrderLine('notebook', 1)
+updated = replace(original, quantity=2)
+print(original)
+print(updated)
+```
+
+```text
+OrderLine(product_name='notebook', quantity=1)
+OrderLine(product_name='notebook', quantity=2)
+```
+
+`replace()`는 새 객체를 만들기 때문에 `__post_init__()` 검증도 다시 실행됩니다.
+
+## fields로 허용한 필드만 다루기
+
+폼 데이터에서 허용한 이름만 읽어 객체를 만들 때 `fields()`로 dataclass 필드 정보를 확인할 수 있습니다. 내부 속성인 `__dataclass_fields__`에 직접 의존하지 않습니다.
+
+```python
+from dataclasses import dataclass, fields
+
+
+@dataclass
+class Profile:
+    nickname: str
+    bio: str
+
+
+incoming = {'nickname': 'sky', 'bio': 'hello', 'is_admin': True}
+allowed = {item.name for item in fields(Profile)}
+profile = Profile(**{key: value for key, value in incoming.items() if key in allowed})
+print(profile)
+```
+
+```text
+Profile(nickname='sky', bio='hello')
+```
+
+이렇게 입력을 좁혀도 타입 검증과 권한 검사는 별도로 수행해야 합니다.
+
+공식 Python [dataclasses 문서](https://docs.python.org/3.12/library/dataclasses.html)의 `InitVar`, `kw_only`, `asdict`, `replace`, `fields` 설명을 기준으로 Python 3.12 예제를 구성했습니다.

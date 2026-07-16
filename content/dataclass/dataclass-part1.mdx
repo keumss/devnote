@@ -1,0 +1,160 @@
+---
+title: "Part 1. 기초: 데이터 묶음을 dataclass로 표현하기"
+---
+
+## @dataclass로 상품 정보 생성하기
+
+이름·가격·재고처럼 함께 움직이는 값을 짧은 클래스로 표현할 때 `@dataclass`를 사용합니다. 타입이 적힌 필드에서 초기화와 보기 좋은 출력에 필요한 메서드를 자동으로 만들므로, 값을 담는 클래스의 반복 코드를 줄일 수 있습니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class Product:
+    name: str
+    price: int
+    stock: int = 0
+
+
+keyboard = Product('keyboard', 59_000)
+print(keyboard)
+```
+
+```text
+Product(name='keyboard', price=59000, stock=0)
+```
+
+필드의 선언 순서가 생성자 매개변수와 출력 순서를 결정합니다. 기본값이 없는 `name`, `price`는 기본값이 있는 `stock`보다 앞에 둡니다.
+
+## 자동 __eq__로 같은 데이터인지 비교하기
+
+두 상품이 같은 필드 값을 가졌는지 확인할 때는 dataclass가 만들어 주는 `==` 비교를 사용합니다. 같은 dataclass 타입의 각 비교 대상 필드가 모두 같아야 결과가 `True`입니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class Product:
+    name: str
+    price: int
+
+
+print(Product('mouse', 25_000) == Product('mouse', 25_000))
+print(Product('mouse', 25_000) == Product('mouse', 30_000))
+```
+
+```text
+True
+False
+```
+
+값의 동등성이 필요 없는 객체라면 일반 클래스를 쓰거나 `@dataclass(eq=False)`를 선택합니다.
+
+## field(default_factory)로 독립된 목록 만들기
+
+각 주문이 독립된 태그 목록을 가져야 할 때 가변 기본값 대신 `field(default_factory=list)`를 사용합니다. 팩토리는 객체를 만들 때마다 새 목록을 만듭니다.
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Order:
+    order_id: str
+    tags: list[str] = field(default_factory=list)
+
+
+first = Order('A-1')
+second = Order('B-1')
+first.tags.append('gift')
+print(first.tags)
+print(second.tags)
+```
+
+```text
+['gift']
+[]
+```
+
+`tags: list[str] = []`처럼 변경 가능한 값을 직접 기본값으로 두지 않습니다. dataclass는 이 실수를 막기 위해 오류를 냅니다.
+
+## field(repr=False)로 출력에서 민감 값 숨기기
+
+객체를 로그에 출력해도 토큰 같은 민감한 필드가 보이지 않게 하려면 `field(repr=False)`를 지정합니다. 값은 객체에 남아 있고, 자동 `repr`에만 포함되지 않습니다.
+
+```python
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ApiClient:
+    base_url: str
+    token: str = field(repr=False)
+
+
+client = ApiClient('https://api.example.com', 'secret-token')
+print(client)
+```
+
+```text
+ApiClient(base_url='https://api.example.com')
+```
+
+비밀값을 숨기는 것은 출력 범위의 제어일 뿐입니다. 실제 토큰은 환경 변수나 비밀 관리 도구에서 받고 로그에도 전달하지 않습니다.
+
+## __post_init__로 생성 직후 값 검증하기
+
+생성자 입력이 업무 규칙을 만족하는지 바로 확인할 때 `__post_init__()`을 정의합니다. dataclass가 만든 `__init__()`이 필드를 대입한 뒤 이 메서드를 호출합니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class Quantity:
+    value: int
+
+    def __post_init__(self) -> None:
+        if self.value < 0:
+            raise ValueError('수량은 0 이상이어야 합니다.')
+
+
+print(Quantity(3))
+```
+
+```text
+Quantity(value=3)
+```
+
+`Quantity(-1)`은 `ValueError`로 실패하므로, 잘못된 값이 정상 객체로 퍼지는 것을 초기에 막습니다.
+
+## 메서드로 데이터와 계산 규칙 함께 두기
+
+상품의 합계처럼 해당 데이터의 계산 규칙은 dataclass 메서드로 둡니다. 값을 보관하는 역할과 작은 도메인 계산을 함께 두어 호출부가 필드를 직접 조합하지 않게 합니다.
+
+```python
+from dataclasses import dataclass
+
+
+@dataclass
+class CartLine:
+    unit_price: int
+    quantity: int
+
+    def subtotal(self) -> int:
+        return self.unit_price * self.quantity
+
+
+line = CartLine(unit_price=12_000, quantity=3)
+print(line.subtotal())
+```
+
+```text
+36000
+```
+
+네트워크 요청이나 데이터베이스 저장처럼 외부 경계 작업은 별도 함수·클래스로 분리하고, 이 메서드에는 값을 계산하는 규칙을 둡니다.
+
+공식 Python [dataclasses 문서](https://docs.python.org/3.12/library/dataclasses.html)의 `dataclass`, `field`, `__post_init__` 동작을 기준으로 Python 3.12 예제를 구성했습니다.

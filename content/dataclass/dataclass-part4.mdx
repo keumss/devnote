@@ -1,0 +1,138 @@
+---
+title: "Part 4. 실전: 주문 금액 계산 CLI 만들기"
+---
+
+이번에는 `order_total.py` 하나로 주문 항목을 받고 총액을 계산합니다. 목표는 `상품명,단가,수량` 형식의 항목을 여러 개 입력받아 소계·총액을 출력하고, 잘못된 입력에서는 계산하지 않고 실패하는 것입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
+
+## OrderLine dataclass로 주문 항목 규칙 준비하기
+
+첫 단계에서 항목 데이터와 금액 계산을 선언합니다. 수량과 단가는 0보다 커야 하며, 계산에 필요한 규칙은 `OrderLine` 안에 둡니다.
+
+```python
+# order_total.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class OrderLine:
+    name: str
+    unit_price: int
+    quantity: int
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError('상품명은 비어 있을 수 없습니다.')
+        if self.unit_price <= 0:
+            raise ValueError('단가는 0보다 커야 합니다.')
+        if self.quantity <= 0:
+            raise ValueError('수량은 0보다 커야 합니다.')
+
+    def subtotal(self) -> int:
+        return self.unit_price * self.quantity
+```
+
+`frozen=True`은 검증을 끝낸 주문 항목이 계산 중에 바뀌지 않게 합니다.
+
+## parse_line으로 문자열 한 줄을 주문 항목으로 읽기
+
+명령줄 문자열을 도메인 객체로 바꿀 때 입력 형식 확인과 숫자 변환을 한 함수에 모읍니다. 쉼표가 세 개가 아니거나 숫자가 아니면 사용자가 이해할 메시지로 `ValueError`를 냅니다.
+
+```python
+def parse_line(raw: str) -> OrderLine:
+    parts = [part.strip() for part in raw.split(',')]
+    if len(parts) != 3:
+        raise ValueError('항목은 상품명,단가,수량 형식이어야 합니다.')
+
+    name, unit_price_text, quantity_text = parts
+    try:
+        return OrderLine(name, int(unit_price_text), int(quantity_text))
+    except ValueError as error:
+        raise ValueError(f'잘못된 항목: {raw}') from error
+```
+
+이 경계에서 문자열을 검증하면 이후 합계 계산은 `OrderLine` 목록만 다루면 됩니다.
+
+## calculate_total로 항목 목록의 합계 계산하기
+
+여러 주문 항목의 소계를 더할 때 `subtotal()`을 재사용합니다. 합계 함수는 입출력이 단순해 테스트나 다른 인터페이스에서도 그대로 쓸 수 있습니다.
+
+```python
+def calculate_total(lines: list[OrderLine]) -> int:
+    return sum(line.subtotal() for line in lines)
+```
+
+빈 주문을 허용하지 않는 규칙은 다음 출력 함수에서 명확히 처리합니다.
+
+## format_receipt로 영수증 문자열 만들기
+
+계산 결과를 화면에 표시할 때 문자열 형식은 `format_receipt()`에 모읍니다. 이 함수는 주문이 비었는지 먼저 확인한 뒤 각 항목과 총액을 고정된 순서로 반환합니다.
+
+```python
+def format_receipt(lines: list[OrderLine]) -> str:
+    if not lines:
+        raise ValueError('주문 항목이 하나 이상 필요합니다.')
+
+    rows = [f'{line.name}: {line.subtotal()}원' for line in lines]
+    rows.append(f'총액: {calculate_total(lines)}원')
+    return '\n'.join(rows)
+```
+
+출력 형식을 한 곳에 두면 CLI 외에 웹 화면이나 테스트에서도 같은 영수증 규칙을 재사용할 수 있습니다.
+
+## argparse로 반복 입력과 실패 상태 연결하기
+
+파일 끝에 명령줄 해석과 오류 처리를 추가합니다. `--line`은 반복 지정할 수 있고, 하나라도 잘못되면 표준 오류와 상태 코드 1을 반환합니다.
+
+```python
+import argparse
+import sys
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description='주문 총액 계산 도구')
+    parser.add_argument(
+        '--line',
+        action='append',
+        default=[],
+        metavar='상품명,단가,수량',
+    )
+    args = parser.parse_args()
+
+    try:
+        lines = [parse_line(raw) for raw in args.line]
+        print(format_receipt(lines))
+    except ValueError as error:
+        print(f'order-total: {error}', file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+`parse_line()`과 `format_receipt()`이 예외를 만들고 `main()`이 종료 상태와 출력 경계를 담당하므로, 오류 처리 방식이 한곳에 모입니다.
+
+## 실행 결과로 정상 계산과 입력 실패 확인하기
+
+앞 토픽의 코드를 하나의 `order_total.py`로 합친 뒤 실행합니다. 첫 명령은 두 항목의 소계와 총액을 보여 주고, 둘째 명령은 0개 수량을 계산하지 않고 실패합니다.
+
+```bash
+python order_total.py --line 'notebook,2500,2' --line 'pen,1000,3'
+python order_total.py --line 'notebook,2500,0'; echo $?
+```
+
+```text
+notebook: 5000원
+pen: 3000원
+총액: 8000원
+order-total: 잘못된 항목: notebook,2500,0
+1
+```
+
+`from error`로 원래 변환·검증 오류를 연결해 두었지만, CLI 사용자에게는 입력한 항목 중심의 메시지만 보냅니다. 실제 결제에서는 통화 단위·할인·세금·금액 상한을 별도 규칙과 테스트로 확장합니다.
+
+공식 Python [dataclasses 문서](https://docs.python.org/3.12/library/dataclasses.html)의 `frozen`, `__post_init__`, 자동 생성자 규칙을 기준으로 Python 3.12 예제를 구성했습니다.
