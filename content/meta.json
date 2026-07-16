@@ -1,15 +1,10 @@
 {
   "pages": [
     "sql",
-    "sqlalchemy",
-    "pydantic",
-    "sqlmodel",
-    "alembic",
-    "fastapi",
-    "jinja2",
     "dataclasses",
     "itertools",
     "collections",
+    "pydantic",
     "openai",
     "streamlit"
   ]
