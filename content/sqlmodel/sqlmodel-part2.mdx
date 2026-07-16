@@ -1,0 +1,163 @@
+---
+title: "Part 2. 중급: Hero와 Team 관계 및 조인 다루기"
+---
+
+이 노트는 관계가 있는 별도 SQLite 메모리 데이터베이스를 사용합니다. 첫 토픽의 모델·엔진을 한 번 실행한 뒤, 아래 토픽의 세션 코드와 쿼리를 순서대로 추가합니다.
+
+## foreign_key와 Relationship으로 Hero와 Team 연결하기
+
+한 Team에 여러 Hero가 소속되는 구조를 표현할 때 `Hero.team_id`에는 외래 키를, 두 모델에는 `Relationship()` 속성을 선언합니다. 외래 키는 데이터베이스 열의 연결이고, 관계 속성은 `hero.team`과 `team.heroes`로 관련 객체를 탐색하는 경로입니다.
+
+```python
+from sqlmodel import Field, Relationship, SQLModel, create_engine
+
+
+class Team(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    headquarters: str
+    heroes: list['Hero'] = Relationship(back_populates='team')
+
+
+class Hero(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    secret_name: str
+    age: int | None = Field(default=None, index=True)
+    team_id: int | None = Field(default=None, foreign_key='team.id')
+    team: Team | None = Relationship(back_populates='heroes')
+
+
+engine = create_engine('sqlite://')
+SQLModel.metadata.create_all(engine)
+```
+
+`team_id`가 `None`일 수 있으므로 `team`도 `Team | None`입니다. `list['Hero']`는 아직 선언 전인 Hero 클래스를 가리키는 전방 참조입니다.
+
+## 관계 속성으로 Team과 Hero 시작 데이터 연결하기
+
+앞 토픽의 엔진에 연결된 팀·히어로와 미배정 Hero를 저장할 때 관계 속성에 객체를 대입합니다. `Team(heroes=[...])`와 `Hero(team=...)` 모두 같은 연결을 만드는 방식입니다.
+
+```python
+from sqlmodel import Session
+
+
+with Session(engine) as session:
+    preventers = Team(
+        name='Preventers',
+        headquarters='Sharp Tower',
+        heroes=[Hero(name='Rusty-Man', secret_name='Tommy Sharp', age=48)],
+    )
+    z_force = Team(name='Z-Force', headquarters="Sister Margaret's Bar")
+    deadpond = Hero(name='Deadpond', secret_name='Dive Wilson', team=z_force)
+    spider_boy = Hero(name='Spider-Boy', secret_name='Pedro Parqueador', age=16)
+
+    session.add_all([preventers, deadpond, spider_boy])
+    session.commit()
+```
+
+이후 토픽은 이 시작 데이터를 사용합니다. 관계 속성은 테이블 열 자체가 아니고, 실제 연결 값은 `Hero.team_id`에 저장됩니다.
+
+## hero.team과 team.heroes로 연결된 데이터 읽기
+
+Hero 상세의 팀과 Team 상세의 소속 목록을 표시할 때 관계 속성에 접근합니다. 관계 데이터가 아직 읽히지 않았다면 첫 접근에서 추가 조회가 일어날 수 있으므로 세션이 열린 동안 사용합니다.
+
+```python
+from sqlmodel import select
+
+
+with Session(engine) as session:
+    hero = session.exec(select(Hero).where(Hero.name == 'Deadpond')).one()
+    team = hero.team
+    print(team.name if team else None)
+    print([member.name for member in team.heroes] if team else [])
+```
+
+```text
+Z-Force
+['Deadpond']
+```
+
+`one()`은 결과가 정확히 하나여야 할 때 사용합니다. 없을 수도 있는 검색에는 `one_or_none()`이나 `first()`를 요구 사항에 맞춰 고릅니다.
+
+## select.join으로 INNER JOIN해 Team 이름으로 Hero 찾기
+
+팀 이름을 필터로 사용해 Hero를 조회할 때 `select(Hero).join(Hero.team)`을 사용합니다. `join()`의 기본값은 `INNER JOIN`이므로 팀과 연결된 Hero만 결과에 남습니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero).join(Hero.team).where(Team.name == 'Preventers')
+    heroes = session.exec(statement).all()
+
+print([hero.name for hero in heroes])
+```
+
+```text
+['Rusty-Man']
+```
+
+팀이 없는 Spider-Boy는 내부 조인 결과에서 제외됩니다. 미배정 Hero도 보여야 한다면 외부 조인을 사용합니다.
+
+## join의 isouter=True로 LEFT OUTER JOIN해 미배정 Hero 포함하기
+
+명단에서 팀이 없는 Hero까지 모두 보여 줄 때 `join(Team, isouter=True)`로 왼쪽 외부 조인을 만듭니다. 왼쪽인 Hero의 모든 행은 유지되고, 연결된 Team이 없는 행의 팀 값은 `None`입니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero, Team).join(Team, isouter=True).order_by(Hero.name)
+    rows = session.exec(statement).all()
+
+print([(hero.name, team.name if team else None) for hero, team in rows])
+```
+
+```text
+[('Deadpond', 'Z-Force'), ('Rusty-Man', 'Preventers'), ('Spider-Boy', None)]
+```
+
+`isouter=True`은 SQL의 `LEFT OUTER JOIN`을 뜻합니다. 오른쪽 테이블만 남겨야 하는 요구라면 시작 모델을 바꾸는 편이 읽기 쉽습니다.
+
+## 모델 속성을 바꾸고 commit으로 Hero 갱신하기
+
+미배정 Spider-Boy의 나이를 갱신하고 Preventers로 옮길 때, 조회한 객체의 속성을 바꾼 뒤 커밋합니다. 세션은 연결된 모델의 변경을 감지해 필요한 `UPDATE`를 보냅니다.
+
+```python
+with Session(engine) as session:
+    hero = session.exec(select(Hero).where(Hero.name == 'Spider-Boy')).one()
+    team = session.exec(select(Team).where(Team.name == 'Preventers')).one()
+    hero.age = 17
+    hero.team = team
+    session.commit()
+    session.refresh(hero)
+
+print(hero.age, hero.team_id)
+```
+
+```text
+17 1
+```
+
+한 행을 읽어 업무 규칙을 적용한 뒤 변경할 때 이 방식이 읽기 쉽습니다.
+
+## team을 None으로 바꿔 Hero를 팀에서 제외하기
+
+Hero를 삭제하지 않고 팀 소속만 해제할 때 선택적 관계 속성에 `None`을 대입합니다. 앞 토픽에서 Spider-Boy를 옮긴 상태에서 실행합니다.
+
+```python
+with Session(engine) as session:
+    hero = session.exec(select(Hero).where(Hero.name == 'Spider-Boy')).one()
+    print(hero.team_id)
+
+    hero.team = None
+    session.commit()
+    session.refresh(hero)
+    print(hero.team_id)
+```
+
+```text
+1
+None
+```
+
+팀이 필수인 도메인에서는 `team_id: int`와 `team: Team`으로 선언해 이 상태를 허용하지 않습니다.
+
+공식 SQLModel [관계 속성 선언](https://sqlmodel.tiangolo.com/tutorial/relationship-attributes/define-relationships-attributes/)과 [연결된 데이터 조회](https://sqlmodel.tiangolo.com/tutorial/connect/read-connected-data/)를 기준으로 관계 모델을 구성했습니다.

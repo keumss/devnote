@@ -1,0 +1,199 @@
+---
+title: "Part 4. 실전: Hero-Team 명단 관리 CLI 만들기"
+---
+
+이번에는 `roster.py` 하나로 팀 명단을 초기화·조회·이동합니다. 목표는 `init`, `list`, `move HERO TEAM` 명령을 제공하고, 없는 팀으로의 이동은 데이터를 바꾸지 않고 실패시키는 것입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
+
+## 명단 관리의 데이터와 SQLite 연결 준비하기
+
+첫 단계에서 CLI가 사용할 import, Hero·Team 테이블, SQLite 엔진을 모두 선언합니다. Hero는 팀 없이 등록할 수 있고, 팀·히어로 이름은 이 CLI에서 식별자로 사용할 수 있도록 고유하게 둡니다.
+
+```python
+# roster.py
+from __future__ import annotations
+
+from sqlmodel import Field, Relationship, Session, SQLModel, create_engine, select
+
+
+class Team(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    headquarters: str
+    heroes: list['Hero'] = Relationship(back_populates='team')
+
+
+class Hero(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True, unique=True)
+    secret_name: str
+    team_id: int | None = Field(default=None, foreign_key='team.id')
+    team: Team | None = Relationship(back_populates='heroes')
+
+
+engine = create_engine('sqlite:///roster.db')
+```
+
+`unique=True`는 코드 밖에서 데이터가 들어와도 같은 이름이 중복 저장되는 것을 막습니다.
+
+## initialize로 테이블과 시작 명단 준비하기
+
+`init` 명령을 여러 번 실행해도 시작 데이터가 중복되지 않도록 초기화 함수를 추가합니다. 테이블을 준비한 뒤 팀이 하나도 없을 때만 두 팀과 세 Hero를 저장합니다.
+
+```python
+def initialize() -> None:
+    SQLModel.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        has_team = session.exec(select(Team.id).limit(1)).first() is not None
+        if has_team:
+            return
+
+        session.add_all([
+            Team(
+                name='Preventers',
+                headquarters='Sharp Tower',
+                heroes=[
+                    Hero(name='Rusty-Man', secret_name='Tommy Sharp'),
+                    Hero(name='Spider-Boy', secret_name='Pedro Parqueador'),
+                ],
+            ),
+            Team(
+                name='Z-Force',
+                headquarters="Sister Margaret's Bar",
+                heroes=[Hero(name='Deadpond', secret_name='Dive Wilson')],
+            ),
+        ])
+        session.commit()
+```
+
+`first()`는 시작 데이터가 이미 있는지만 확인하는 데 맞습니다. 저장 작업은 하나의 `commit()`으로 확정됩니다.
+
+## list_roster로 팀별 Hero 명단 읽기
+
+`list` 명령의 출력을 만들 때 Team과 Hero를 조인해 한 번에 읽고 팀 이름별로 묶습니다. 팀이 없는 Hero도 함께 표시하려고 별도 조건으로 조회합니다.
+
+```python
+def list_roster() -> list[str]:
+    with Session(engine) as session:
+        rows = session.exec(
+            select(Team.name, Hero.name)
+            .join(Hero, Hero.team_id == Team.id)
+            .order_by(Team.name, Hero.name)
+        ).all()
+        unassigned = session.exec(
+            select(Hero.name).where(Hero.team_id.is_(None)).order_by(Hero.name)
+        ).all()
+
+    lines: list[str] = []
+    current_team: str | None = None
+    for team_name, hero_name in rows:
+        if team_name != current_team:
+            lines.append(f'{team_name}:')
+            current_team = team_name
+        lines.append(f'  - {hero_name}')
+
+    if unassigned:
+        lines.append('Unassigned:')
+        lines.extend(f'  - {hero_name}' for hero_name in unassigned)
+
+    return lines
+```
+
+이 함수는 ORM 모델을 CLI 경계 밖으로 넘기지 않고 필요한 문자열 목록만 반환합니다.
+
+## move_hero로 존재하는 Team에만 Hero 이동시키기
+
+Hero 이름과 대상 팀 이름을 받아 소속을 바꿀 때, 같은 세션에서 둘을 먼저 확인하고 성공할 때만 관계를 변경합니다. `one_or_none()`은 데이터가 없을 때와 중복되었을 때를 구분하게 합니다.
+
+```python
+def move_hero(hero_name: str, team_name: str) -> None:
+    with Session(engine) as session:
+        hero = session.exec(
+            select(Hero).where(Hero.name == hero_name)
+        ).one_or_none()
+        team = session.exec(
+            select(Team).where(Team.name == team_name)
+        ).one_or_none()
+
+        if hero is None:
+            raise ValueError(f'히어로를 찾을 수 없습니다: {hero_name}')
+        if team is None:
+            raise ValueError(f'팀을 찾을 수 없습니다: {team_name}')
+
+        hero.team = team
+        session.commit()
+```
+
+오류를 던지기 전에는 `commit()`을 호출하지 않으므로 실패 요청은 데이터를 바꾸지 않습니다.
+
+## argparse로 init, list, move 명령 연결하기
+
+이제 파일 끝에 명령줄 해석과 종료 상태를 추가합니다. 예상한 업무 오류는 표준 오류와 상태 코드 1로 처리하고, 성공한 이동은 대상 정보를 출력합니다.
+
+```python
+import argparse
+import sys
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description='Hero-Team 명단 관리 도구')
+    commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('init')
+    commands.add_parser('list')
+
+    move_parser = commands.add_parser('move')
+    move_parser.add_argument('hero_name')
+    move_parser.add_argument('team_name')
+    args = parser.parse_args()
+
+    if args.command == 'init':
+        initialize()
+        print('roster initialized')
+        return 0
+
+    if args.command == 'list':
+        print('\n'.join(list_roster()))
+        return 0
+
+    try:
+        move_hero(args.hero_name, args.team_name)
+    except ValueError as error:
+        print(f'roster: {error}', file=sys.stderr)
+        return 1
+
+    print(f'moved hero={args.hero_name} team={args.team_name}')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+명령줄 해석과 출력은 `main()`에, 데이터 규칙은 `move_hero()`에 분리했습니다. 이후 HTTP API나 작업 큐도 같은 도메인 함수를 재사용할 수 있습니다.
+
+## 실행 결과로 초기화와 팀 이동 확인하기
+
+앞 토픽의 코드를 하나의 `roster.py`로 합친 뒤 빈 디렉터리에서 실행합니다. Spider-Boy를 Z-Force로 옮긴 결과가 파일 데이터베이스에 남고, 없는 팀으로의 이동은 실패합니다.
+
+```bash
+python roster.py init
+python roster.py move Spider-Boy Z-Force
+python roster.py list
+python roster.py move Deadpond Unknown; echo $?
+```
+
+```text
+roster initialized
+moved hero=Spider-Boy team=Z-Force
+Preventers:
+  - Rusty-Man
+Z-Force:
+  - Deadpond
+  - Spider-Boy
+roster: 팀을 찾을 수 없습니다: Unknown
+1
+```
+
+처음부터 다시 실행하려면 학습용 `roster.db`를 지운 뒤 `init`을 실행합니다. 실제 서비스에서는 삭제된 팀, 동시 이동 요청, 권한 같은 규칙을 데이터베이스 제약과 테스트로 함께 확인합니다.
+
+공식 SQLModel [세션으로 행 생성](https://sqlmodel.tiangolo.com/tutorial/insert/)과 [관계 연결](https://sqlmodel.tiangolo.com/tutorial/relationship-attributes/)을 기준으로 실행 흐름을 구성했습니다.

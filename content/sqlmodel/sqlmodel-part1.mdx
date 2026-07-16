@@ -1,0 +1,176 @@
+---
+title: "Part 1. 기초: Hero와 Team 테이블 시작하기"
+---
+
+이 노트의 Python 블록은 REPL·노트북·하나의 임시 스크립트에서 위에서 아래 순서로 실행합니다. 모델과 엔진은 한 번만 준비하고, 뒤 토픽에서는 새로 배우는 세션·쿼리 코드만 추가합니다.
+
+## sqlmodel 설치하고 가상 환경 준비하기
+
+프로젝트마다 데이터베이스 라이브러리 버전을 분리해 재현 가능한 예제를 실행하려면 가상 환경에 SQLModel을 설치합니다. SQLModel은 Pydantic과 SQLAlchemy를 함께 사용하므로 `sqlmodel` 하나를 설치하면 필요한 기반 라이브러리도 설치됩니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install sqlmodel
+```
+
+```text
+Successfully installed sqlmodel ...
+```
+
+SQLite는 Python에 포함되어 있어 별도 데이터베이스 서버가 필요 없습니다.
+
+## SQLModel과 Field로 Hero·Team 테이블 선언하기
+
+히어로와 팀 정보를 각각 저장할 때 `SQLModel`을 상속한 테이블 모델을 선언합니다. 타입 힌트는 데이터 모양을, `Field()`는 기본 키와 인덱스 같은 테이블 규칙을 표현합니다.
+
+```python
+from sqlmodel import Field, SQLModel
+
+
+class Team(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    headquarters: str
+
+
+class Hero(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    secret_name: str
+    age: int | None = Field(default=None, index=True)
+```
+
+`id`는 데이터베이스가 저장할 때 만들므로 새 객체에서는 `None`을 기본값으로 둡니다. Hero와 Team은 아직 독립 테이블이고, 관계는 Part 2에서 추가합니다.
+
+## create_engine과 create_all로 SQLite 테이블 만들기
+
+앞 토픽의 모델로 즉시 실험할 테이블을 만들 때 메모리 SQLite 엔진과 `SQLModel.metadata.create_all()`을 사용합니다. 아래 코드를 같은 실행 환경에 이어서 추가합니다.
+
+```python
+from sqlmodel import create_engine
+
+
+engine = create_engine('sqlite://')
+SQLModel.metadata.create_all(engine)
+print('tables ready')
+```
+
+```text
+tables ready
+```
+
+`create_engine()`만으로는 테이블이 만들어지지 않고, `create_all()`이 등록된 모델의 테이블을 만듭니다. 운영 환경의 스키마 변경은 별도 마이그레이션 도구로 관리합니다.
+
+## Session.add와 commit으로 시작 데이터 저장하기
+
+앞 토픽의 엔진에 팀과 히어로를 저장할 때 `Session`에 객체를 등록하고 `commit()`으로 확정합니다. 저장 뒤 ID가 필요하면 `refresh()`로 데이터베이스 값을 다시 읽습니다.
+
+```python
+from sqlmodel import Session
+
+
+with Session(engine) as session:
+    deadpond = Hero(name='Deadpond', secret_name='Dive Wilson')
+    session.add_all([
+        Team(name='Preventers', headquarters='Sharp Tower'),
+        Team(name='Z-Force', headquarters="Sister Margaret's Bar"),
+        deadpond,
+        Hero(name='Rusty-Man', secret_name='Tommy Sharp', age=48),
+        Hero(name='Spider-Boy', secret_name='Pedro Parqueador', age=16),
+    ])
+    session.commit()
+    session.refresh(deadpond)
+
+print(deadpond.id)
+```
+
+```text
+1
+```
+
+`add_all()`은 저장 대상을 세션에 등록하고, `commit()`이 트랜잭션을 확정합니다.
+
+## select와 Session.exec로 Hero 목록 읽기
+
+앞 토픽에서 저장한 Hero 전체를 모델 객체로 읽을 때 `select(Hero)`를 만들고 `Session.exec()`로 실행합니다. `select()`는 실행 전에는 조합 가능한 쿼리 문입니다.
+
+```python
+from sqlmodel import select
+
+
+with Session(engine) as session:
+    heroes = session.exec(select(Hero).order_by(Hero.name)).all()
+
+print([hero.name for hero in heroes])
+```
+
+```text
+['Deadpond', 'Rusty-Man', 'Spider-Boy']
+```
+
+`Session.exec()`는 SQLModel 쿼리 결과를 모델 객체로 다루기 쉽게 만듭니다.
+
+## where와 Session.get으로 필요한 Hero 찾기
+
+나이 조건으로 여러 Hero를 찾을 때는 `where()`를, 이미 아는 기본 키로 한 Hero를 찾을 때는 `Session.get()`을 사용합니다. 앞 토픽의 데이터와 import를 그대로 사용합니다.
+
+```python
+with Session(engine) as session:
+    adults = session.exec(select(Hero).where(Hero.age >= 18)).all()
+    spider_boy = session.get(Hero, 3)
+
+print([hero.name for hero in adults])
+print(spider_boy.name if spider_boy else None)
+```
+
+```text
+['Rusty-Man']
+Spider-Boy
+```
+
+사용자 입력을 SQL 문자열로 이어 붙이지 말고 `Hero.age >= minimum_age`처럼 표현식에 전달합니다. 행이 없을 수 있는 `get()`의 결과는 `None`인지 확인합니다.
+
+## offset과 limit으로 Hero 목록 범위 나누기
+
+목록 화면에서 한 번에 모든 Hero를 보내지 않고 일부만 읽을 때 `offset()`과 `limit()`을 함께 사용합니다. `offset`은 건너뛸 행 수이고, 일정한 결과를 얻으려면 먼저 `order_by()`로 순서를 고정합니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero).order_by(Hero.id).offset(1).limit(2)
+    heroes = session.exec(statement).all()
+
+print([hero.name for hero in heroes])
+```
+
+```text
+['Rusty-Man', 'Spider-Boy']
+```
+
+이 예제에서 첫 번째 Hero를 건너뛰고 다음 두 행을 읽습니다. 페이지 번호와 크기가 입력값이라면 음수·과도한 크기를 호출 전에 제한하고, 데이터가 매우 큰 목록은 키셋 페이지네이션도 검토합니다.
+
+## Session.delete와 commit으로 Hero 삭제하기
+
+한 Hero를 확인한 뒤 삭제할 때 `Session.delete()`에 모델 객체를 전달하고 `commit()`으로 확정합니다. 아래 코드는 앞 토픽의 Spider-Boy 행을 삭제한 뒤, 남은 이름으로 결과를 확인합니다.
+
+```python
+with Session(engine) as session:
+    hero = session.get(Hero, 3)
+    if hero is not None:
+        session.delete(hero)
+        session.commit()
+
+with Session(engine) as session:
+    names = session.exec(select(Hero.name).order_by(Hero.id)).all()
+
+print(names)
+```
+
+```text
+['Deadpond', 'Rusty-Man']
+```
+
+`delete()`는 객체를 삭제 대상으로 표시할 뿐이고, `commit()` 전에는 데이터베이스에 확정되지 않습니다. 이미 다른 코드가 행을 지웠을 수 있는 입력이라면 이 예제처럼 조회 결과가 `None`인지 먼저 확인합니다.
+
+공식 SQLModel [설치 안내](https://sqlmodel.tiangolo.com/install/), [테이블 생성 가이드](https://sqlmodel.tiangolo.com/tutorial/create-db-and-table/), [범위 조회](https://sqlmodel.tiangolo.com/tutorial/limit-and-offset/), [삭제 가이드](https://sqlmodel.tiangolo.com/tutorial/delete/)를 기준으로 Python 3.12 예제를 구성했습니다.

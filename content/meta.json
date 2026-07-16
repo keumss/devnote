@@ -2,6 +2,7 @@
   "pages": [
     "sql",
     "sqlalchemy",
+    "sqlmodel",
     "dataclasses",
     "itertools",
     "collections",
