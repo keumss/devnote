@@ -1,0 +1,143 @@
+---
+title: "Part 4. 실전: 우선순위 설정을 해석하는 CLI 만들기"
+---
+
+이번에는 `app_config.py` 하나에서 기본값, 환경 변수, 명령줄 옵션을 우선순위대로 해석합니다. 목표는 `--host`, `--port`, `--debug`가 있으면 그 값을 사용하고, 없으면 `APP_HOST`, `APP_PORT`, `APP_DEBUG`, 마지막으로 기본값을 사용하는 것입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
+
+## 기본값과 환경 변수 이름 준비하기
+
+먼저 애플리케이션이 지원하는 설정과 환경 변수 이름을 한곳에 둡니다. 기본값은 문자열로 두면 환경 변수와 같은 경계에서 함께 검증할 수 있습니다.
+
+```python
+# app_config.py
+from __future__ import annotations
+
+import argparse
+import os
+from collections import ChainMap
+
+
+DEFAULTS = {
+    'host': '127.0.0.1',
+    'port': '8000',
+    'debug': 'false',
+}
+ENV_NAMES = {
+    'host': 'APP_HOST',
+    'port': 'APP_PORT',
+    'debug': 'APP_DEBUG',
+}
+```
+
+환경 변수에서 값이 오더라도 신뢰하지 않습니다. 다음 단계에서 허용한 키만 읽고, 마지막에 타입과 형식을 검사합니다.
+
+## parse_args로 지정한 명령줄 값만 모으기
+
+명령줄에서 사용자가 실제로 지정한 값만 첫 번째 설정 계층에 넣습니다. `None` 값은 제거해야 기본값이나 환경 변수로 자연스럽게 넘어갑니다.
+
+```python
+def parse_args() -> dict[str, str]:
+    parser = argparse.ArgumentParser(description='우선순위 설정 예제')
+    parser.add_argument('--host')
+    parser.add_argument('--port')
+    parser.add_argument('--debug', choices=['true', 'false'])
+    namespace = parser.parse_args()
+    return {
+        key: value
+        for key, value in vars(namespace).items()
+        if value is not None
+    }
+```
+
+`choices`는 명령줄 경계에서 `debug`의 오타를 막습니다. 환경 변수도 같은 규칙을 만족하는지는 별도로 확인해야 합니다.
+
+## read_environment로 허용한 환경 변수만 읽기
+
+환경 전체를 설정에 넣지 않고, 지원하는 이름만 읽어 내부 키로 바꿉니다. 없는 환경 변수는 사전에 넣지 않아 뒤쪽 기본값이 선택됩니다.
+
+```python
+def read_environment(environ: dict[str, str]) -> dict[str, str]:
+    return {
+        key: environ[env_name]
+        for key, env_name in ENV_NAMES.items()
+        if env_name in environ
+    }
+```
+
+함수에 환경 사전을 인수로 받으면 테스트에서 실제 프로세스 환경을 바꾸지 않고도 입력을 확인할 수 있습니다.
+
+## load_config로 세 입력 소스 연결하기
+
+명령줄, 환경 변수, 기본값을 `ChainMap`에 앞에서 뒤 순서로 전달합니다. `dict()`로 한 번 평탄화하면 이후 검증과 실행은 독립된 설정 결과만 다룹니다.
+
+```python
+def load_config(
+    command_line: dict[str, str],
+    environ: dict[str, str],
+) -> dict[str, str]:
+    settings = ChainMap(command_line, read_environment(environ), DEFAULTS)
+    return dict(settings)
+```
+
+이 함수에서는 명령줄 값이 환경 변수보다, 환경 변수가 기본값보다 우선합니다. `DEFAULTS`를 뒤쪽에 둬서 누락된 키를 항상 채웁니다.
+
+## validate_config로 실행 가능한 값 만들기
+
+문자열 설정을 프로그램이 사용할 타입으로 바꾸고 범위를 확인합니다. 오류 메시지는 어떤 입력 소스를 썼든 같은 규칙으로 반환됩니다.
+
+```python
+def validate_config(settings: dict[str, str]) -> tuple[str, int, bool]:
+    host = settings['host'].strip()
+    if not host:
+        raise ValueError('host는 비어 있을 수 없습니다.')
+
+    try:
+        port = int(settings['port'])
+    except ValueError as error:
+        raise ValueError('port는 정수여야 합니다.') from error
+    if not 1 <= port <= 65_535:
+        raise ValueError('port는 1에서 65535 사이여야 합니다.')
+
+    if settings['debug'] not in {'true', 'false'}:
+        raise ValueError('debug는 true 또는 false여야 합니다.')
+
+    return host, port, settings['debug'] == 'true'
+```
+
+설정 해석과 검증을 나누면 우선순위 문제와 값 형식 문제를 각각 테스트할 수 있습니다.
+
+## main에서 결과와 실패 상태 확인하기
+
+파일 끝에서 실제 입력을 연결하고 성공·실패 출력을 처리합니다. 첫 명령은 명령줄 `--port`가 환경 변수보다 우선하는 결과를, 둘째 명령은 잘못된 환경 변수 값의 실패를 보여 줍니다.
+
+```python
+def main() -> int:
+    try:
+        settings = load_config(parse_args(), dict(os.environ))
+        host, port, debug = validate_config(settings)
+    except ValueError as error:
+        print(f'app-config: {error}')
+        return 1
+
+    print(f'host={host} port={port} debug={debug}')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+```bash
+APP_HOST=0.0.0.0 APP_PORT=9000 python app_config.py --port 8080 --debug true
+APP_PORT=not-a-number python app_config.py; echo $?
+```
+
+```text
+host=0.0.0.0 port=8080 debug=True
+app-config: port는 정수여야 합니다.
+1
+```
+
+`ChainMap`은 입력 소스의 우선순위만 담당하고, `validate_config()`는 실행 가능한 설정을 보장합니다. 실제 서비스에서는 비밀값을 출력하지 않고, 환경 변수에 포함된 토큰도 로그에서 제외합니다.
+
+공식 Python [collections.ChainMap 문서](https://docs.python.org/3.12/library/collections.html#collections.ChainMap)의 명령줄·환경 변수·기본값 우선순위 예제를 기준으로 Python 3.12 예제를 구성했습니다.

@@ -2,6 +2,7 @@
   "pages": [
     "sql",
     "sqlmodel",
-    "dataclass"
+    "dataclass",
+    "chainmap"
   ]
 }

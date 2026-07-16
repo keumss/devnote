@@ -1,0 +1,141 @@
+---
+title: "Part 2. 중급: 현재 계층에만 안전하게 쓰기"
+---
+
+## 대입은 첫 번째 매핑에만 저장하기
+
+기본값을 유지하면서 현재 실행의 재정의 값을 기록할 때 `ChainMap`에 대입합니다. 키가 뒤쪽 매핑에 이미 있어도 대입은 항상 `maps[0]`에 저장됩니다.
+
+```python
+from collections import ChainMap
+
+
+runtime = {}
+defaults = {'timeout': 3}
+settings = ChainMap(runtime, defaults)
+
+settings['timeout'] = 10
+print(runtime)
+print(defaults)
+```
+
+```text
+{'timeout': 10}
+{'timeout': 3}
+```
+
+이 규칙 덕분에 기본 설정을 바꾸지 않고 임시 재정의를 만들 수 있습니다. 공유된 기본값을 수정하려면 `defaults`를 명시적으로 변경합니다.
+
+## del로 현재 재정의만 제거하기
+
+임시 재정의를 취소해 기본값으로 되돌릴 때는 `del`을 사용합니다. 삭제도 첫 번째 매핑에서만 수행하므로, 뒤쪽의 기본값이 다시 보입니다.
+
+```python
+from collections import ChainMap
+
+
+runtime = {'timeout': 10}
+defaults = {'timeout': 3}
+settings = ChainMap(runtime, defaults)
+
+del settings['timeout']
+print(settings['timeout'])
+print(runtime)
+```
+
+```text
+3
+{}
+```
+
+첫 번째 매핑에 없는 키를 `del settings['timeout']`로 지우면, 기본값이 보여도 `KeyError`가 납니다. 기본값 자체를 지우려면 해당 원본 사전에서 삭제해야 합니다.
+
+## update로 여러 재정의 한 번에 적용하기
+
+명령줄 옵션처럼 현재 계층에 여러 값을 모아 적용할 때 `update()`를 사용합니다. `update()`도 첫 번째 매핑만 변경합니다.
+
+```python
+from collections import ChainMap
+
+
+runtime = {}
+defaults = {'theme': 'light', 'page_size': 20}
+settings = ChainMap(runtime, defaults)
+
+settings.update({'theme': 'dark', 'page_size': 50})
+print(runtime)
+```
+
+```text
+{'theme': 'dark', 'page_size': 50}
+```
+
+입력값 검증은 `update()` 전에 합니다. `ChainMap`은 값의 타입이나 허용 범위를 검사하지 않습니다.
+
+## new_child로 요청별 설정 계층 만들기
+
+공통 설정 위에 요청 하나만의 값을 겹쳐야 할 때 `new_child()`를 호출합니다. 새 `ChainMap`의 첫 매핑만 새로 만들고, 기존 매핑들은 부모와 공유합니다.
+
+```python
+from collections import ChainMap
+
+
+base = ChainMap({'theme': 'dark'}, {'page_size': 20})
+request_settings = base.new_child({'page_size': 100})
+
+print(request_settings['page_size'])
+print(base['page_size'])
+```
+
+```text
+100
+20
+```
+
+요청별 값은 `request_settings`에만 쓰고, 공통 설정을 바꾸는 작업은 `base.maps[0]`처럼 의도를 드러내는 원본에서 수행합니다.
+
+## new_child 키워드 인수로 작은 재정의 추가하기
+
+값 하나나 둘만 추가할 때는 `new_child()`의 키워드 인수를 사용합니다. 빈 현재 계층을 만들고 전달한 키워드 값을 그 계층에 넣습니다.
+
+```python
+from collections import ChainMap
+
+
+settings = ChainMap({'theme': 'light'}, {'page_size': 20})
+preview = settings.new_child(theme='dark', page_size=50)
+
+print(preview.maps[0])
+print(preview['theme'])
+```
+
+```text
+{'theme': 'dark', 'page_size': 50}
+dark
+```
+
+이 호출은 Python 3.10 이상에서 지원합니다. 여러 입력 소스를 병합해야 한다면 사전을 먼저 검증한 뒤 `new_child(mapping)`으로 전달하는 편이 명확합니다.
+
+## parents로 한 단계 바깥 설정 읽기
+
+현재 재정의를 무시하고 바로 바깥 설정을 비교해야 할 때 `parents`를 사용합니다. 첫 번째 매핑을 뺀 새 `ChainMap`을 반환합니다.
+
+```python
+from collections import ChainMap
+
+
+base = ChainMap({'theme': 'dark'}, {'theme': 'light'})
+preview = base.new_child({'theme': 'contrast'})
+
+print(preview['theme'])
+print(preview.parents['theme'])
+```
+
+```text
+contrast
+dark
+```
+
+`parents`는 현재 계층을 건너뛸 뿐, 다음 계층의 값을 복사하지 않습니다. 부모 원본이 바뀌면 `parents` 조회 결과에도 반영됩니다.
+
+공식 Python [collections.ChainMap 문서](https://docs.python.org/3.12/library/collections.html#collections.ChainMap)의 쓰기·삭제 대상, `new_child()`, `parents` 동작을 기준으로 Python 3.12 예제를 구성했습니다.

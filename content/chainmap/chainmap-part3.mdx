@@ -1,0 +1,141 @@
+---
+title: "Part 3. 고급: 입력 계층과 변경 경계를 설계하기"
+---
+
+## 명령줄·환경 변수·기본값 우선순위 표현하기
+
+여러 입력에서 설정을 받을 때 각 소스의 우선순위를 코드 순서로 드러내려면 `ChainMap`을 사용합니다. 일반적으로 명령줄 값, 환경 변수, 기본값 순으로 둡니다.
+
+```python
+from collections import ChainMap
+
+
+defaults = {'host': '127.0.0.1', 'port': '8000'}
+environment = {'port': '9000'}
+command_line = {'host': '0.0.0.0'}
+settings = ChainMap(command_line, environment, defaults)
+
+print(settings['host'])
+print(settings['port'])
+```
+
+```text
+0.0.0.0
+9000
+```
+
+값을 실제 타입으로 바꾸고 범위를 검사하는 일은 해석 뒤에 한곳에서 합니다. 환경 변수는 문자열이므로 `int(settings['port'])`처럼 변환 실패도 처리해야 합니다.
+
+## None을 누락으로 착각하지 않기
+
+`ChainMap`은 키가 존재하면 값이 `None`이어도 앞쪽 값을 선택합니다. 따라서 `None`을 “이 값을 무시하고 기본값 사용”이라는 표식으로 쓰면 기대와 다른 결과가 납니다.
+
+```python
+from collections import ChainMap
+
+
+command_line = {'color': None}
+defaults = {'color': 'blue'}
+settings = ChainMap(command_line, defaults)
+
+print(settings['color'])
+```
+
+```text
+None
+```
+
+선택하지 않은 명령줄 인수는 `None`인 항목을 제거한 사전으로 만들어 `ChainMap`에 넣습니다. 그래야 뒤쪽 기본값이 선택됩니다.
+
+## 평탄화 사전과 ChainMap을 용도별로 고르기
+
+한 번 계산한 결과를 독립적으로 보관해야 하면 병합한 사전을, 원본 변경을 계속 반영해야 하면 `ChainMap`을 사용합니다. 두 방식의 차이는 이후 원본 변경에서 드러납니다.
+
+```python
+from collections import ChainMap
+
+
+defaults = {'retries': 3}
+runtime = {}
+settings = ChainMap(runtime, defaults)
+snapshot = dict(settings)
+
+defaults['retries'] = 5
+print(settings['retries'])
+print(snapshot['retries'])
+```
+
+```text
+5
+3
+```
+
+불변에 가까운 배포 설정을 전달할 때는 평탄화한 사전이 예측하기 쉽습니다. 요청별·중첩 범위처럼 계층 자체가 의미를 가질 때 `ChainMap`이 잘 맞습니다.
+
+## maps를 바꿔 우선순위 교체하기
+
+테스트에서 입력 소스를 교체해야 할 때는 `maps` 목록을 바꿀 수 있습니다. 다만 목록의 첫 요소가 쓰기 대상이라는 규칙까지 함께 바뀌므로, 제한된 범위에서만 사용합니다.
+
+```python
+from collections import ChainMap
+
+
+settings = ChainMap({'theme': 'dark'}, {'theme': 'light'})
+settings.maps[0] = {'theme': 'contrast'}
+
+print(settings['theme'])
+```
+
+```text
+contrast
+```
+
+운영 코드에서 우선순위를 조건에 따라 자주 바꿔야 한다면, 새 `ChainMap`을 만들어 의도를 드러내는 편이 안전합니다.
+
+## 병합 연산자로 새 최상위 값 만들기
+
+기존 `ChainMap`을 보존한 채 추가 재정의를 만든다면 `|` 연산자를 사용할 수 있습니다. 결과는 새 체인이고, 추가한 값은 새 첫 번째 매핑에 놓입니다.
+
+```python
+from collections import ChainMap
+
+
+base = ChainMap({'theme': 'dark'}, {'page_size': 20})
+preview = base | {'page_size': 50}
+
+print(base['page_size'])
+print(preview['page_size'])
+```
+
+```text
+20
+50
+```
+
+`|`와 `|=`는 Python 3.9 이상에서 지원합니다. 단순한 범위 추가라면 `new_child()`가 계층을 만든다는 의도를 더 명확히 보여 줍니다.
+
+## 깊은 계층 값을 직접 수정하지 않기
+
+뒤쪽 매핑에서 찾은 키를 `settings[key] = value`로 바꾸면 그 매핑이 아니라 첫 번째 매핑에 새 재정의가 생깁니다. 공유 기본값을 실수로 가리기 쉬우므로, 변경 대상을 명시합니다.
+
+```python
+from collections import ChainMap
+
+
+runtime = {}
+defaults = {'retries': 3}
+settings = ChainMap(runtime, defaults)
+
+settings['retries'] = 5
+print(runtime)
+print(defaults)
+```
+
+```text
+{'retries': 5}
+{'retries': 3}
+```
+
+기본값을 바꾸는 것이 목적이면 `defaults['retries'] = 5`처럼 원본 매핑을 직접 수정합니다. 여러 깊이에서 키를 찾아 수정하는 정책이 필요하면 별도 함수로 대상 선택 규칙을 테스트합니다.
+
+공식 Python [collections.ChainMap 문서](https://docs.python.org/3.12/library/collections.html#collections.ChainMap)의 참조 모델, `maps`, 병합 연산자, 첫 매핑 쓰기 규칙을 기준으로 Python 3.12 예제를 구성했습니다.
