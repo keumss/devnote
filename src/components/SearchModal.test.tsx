@@ -4,34 +4,34 @@ import SearchModal from './SearchModal';
 import type { SearchResult } from '../search';
 
 const searchResults: SearchResult[] = [{
-  sectionId: 'sql',
-  sectionTitle: 'SQL',
-  noteId: 'sql-part1',
-  noteTitle: 'Part 1: 기초',
+  sectionId: 'section-a',
+  sectionTitle: 'Section A',
+  noteId: 'note-1',
+  noteTitle: 'Note 1',
   kind: 'topic',
   matchKind: 'topic-title',
   topic: {
-    id: 'select',
-    title: 'SELECT',
-    description: '데이터 조회',
-    content: 'SELECT * FROM posts',
+    id: 'topic-a',
+    title: 'Topic A',
+    description: 'Example topic',
+    content: 'Example topic content',
   },
 }];
 
 const multipleSearchResults: SearchResult[] = [
   ...searchResults,
   {
-    sectionId: 'sql',
-    sectionTitle: 'SQL',
-    noteId: 'sql-part2',
-    noteTitle: 'Part 2: 결합',
+    sectionId: 'section-a',
+    sectionTitle: 'Section A',
+    noteId: 'note-2',
+    noteTitle: 'Note 2',
     kind: 'topic',
     matchKind: 'topic-title',
     topic: {
-      id: 'join',
-      title: 'JOIN',
-      description: '테이블 결합',
-      content: 'SELECT * FROM users JOIN posts',
+      id: 'topic-b',
+      title: 'Topic B',
+      description: 'Another example topic',
+      content: 'Another example topic content',
     },
   },
 ];
@@ -73,14 +73,14 @@ describe('SearchModal', () => {
       <SearchModal
         isOpen
         onClose={vi.fn()}
-        searchQuery="select"
+        searchQuery="topic"
         setSearchQuery={vi.fn()}
         searchResults={searchResults}
         onSelectResult={vi.fn()}
       />,
     );
 
-    const result = screen.getByRole('button', { name: /sql.*part 1.*select/i });
+    const result = screen.getByRole('button', { name: /section a.*note 1.*topic a/i });
     expect(result).toHaveClass('hover:bg-indigo-50', 'focus:bg-indigo-50');
     expect(result).not.toHaveClass('hover:bg-emerald-50', 'focus:bg-emerald-50');
   });
@@ -99,7 +99,7 @@ describe('SearchModal', () => {
     );
 
     const input = getByLabelText('Search query');
-    await waitFor(() => expect(getByRole('button', { name: /part 1.*select/i })).toHaveAttribute(
+    await waitFor(() => expect(getByRole('button', { name: /note 1.*topic a/i })).toHaveAttribute(
       'aria-current',
       'true',
     ));

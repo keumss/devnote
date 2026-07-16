@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { HashRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { navData } from '../content';
+import { getNotePath, getTopicHash } from '../navigation';
 import Layout from './Layout';
 
 function LocationProbe() {
@@ -19,6 +21,11 @@ describe('Layout search flow', () => {
   });
 
   it('loads the search index, displays results, and navigates to a heading', async () => {
+    const target = navData.flatMap(section => (
+      section.notes.flatMap(note => note.topics.map(topic => ({ section, note, topic })))
+    ))[0];
+    if (!target) throw new Error('Layout search tests require a topic.');
+
     const { findByRole, getByLabelText } = render(
       <StrictMode>
         <HashRouter>
@@ -30,18 +37,32 @@ describe('Layout search flow', () => {
     );
 
     fireEvent.click(getByLabelText('Open search dialog'));
-    fireEvent.change(getByLabelText('Search query'), { target: { value: 'SELECT' } });
+    fireEvent.change(getByLabelText('Search query'), { target: { value: target.topic.title } });
 
-    const result = await findByRole('button', { name: /조회 및 정렬.*SELECT/i });
+    const result = await findByRole('button', {
+      name: name => (
+        name.includes(target.section.title)
+        && name.includes(target.note.displayTitle)
+        && name.includes(target.topic.title)
+      ),
+    });
     fireEvent.click(result);
 
     await waitFor(() => {
-      expect(getByLabelText('current location').textContent).toMatch(/^\/sql\/sql-part1#.+/);
-      expect(window.location.hash).toMatch(/^#\/sql\/sql-part1#.+/);
+      expect(getByLabelText('current location').textContent).toBe(
+        `${getNotePath(target.section.id, target.note.id)}${getTopicHash(target.topic.id)}`,
+      );
+      expect(window.location.hash).toBe(
+        `#${getNotePath(target.section.id, target.note.id)}${getTopicHash(target.topic.id)}`,
+      );
     });
   });
 
   it('opens a section result at its first note without adding a topic hash', async () => {
+    const section = navData[0];
+    const note = section?.notes[0];
+    if (!section || !note) throw new Error('Layout search tests require a section with a note.');
+
     const { findByText, getByLabelText } = render(
       <StrictMode>
         <HashRouter>
@@ -53,12 +74,12 @@ describe('Layout search flow', () => {
     );
 
     fireEvent.click(getByLabelText('Open search dialog'));
-    fireEvent.change(getByLabelText('Search query'), { target: { value: 'SQLModel' } });
-    fireEvent.click((await findByText('SQLModel (Python) 섹션')).closest('button')!);
+    fireEvent.change(getByLabelText('Search query'), { target: { value: section.title } });
+    fireEvent.click((await findByText(`${section.title} 섹션`)).closest('button')!);
 
     await waitFor(() => {
-      expect(getByLabelText('current location').textContent).toBe('/sqlmodel/sm-part1');
-      expect(window.location.hash).toBe('#/sqlmodel/sm-part1');
+      expect(getByLabelText('current location').textContent).toBe(getNotePath(section.id, note.id));
+      expect(window.location.hash).toBe(`#${getNotePath(section.id, note.id)}`);
     });
   });
 });

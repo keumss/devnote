@@ -16,15 +16,15 @@ describe('continue learning storage', () => {
 
   it('stores the last note and optional topic', () => {
     saveContinueLearningItem({
-      sectionId: 'sql',
-      noteId: 'sql-part1',
-      topicId: 'select',
+      sectionId: 'section-a',
+      noteId: 'note-1',
+      topicId: 'topic-a',
     });
 
     expect(getContinueLearningItem()).toEqual({
-      sectionId: 'sql',
-      noteId: 'sql-part1',
-      topicId: 'select',
+      sectionId: 'section-a',
+      noteId: 'note-1',
+      topicId: 'topic-a',
     });
 
     clearContinueLearningItem();

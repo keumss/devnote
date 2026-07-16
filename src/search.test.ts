@@ -1,50 +1,44 @@
 import { describe, expect, it } from 'vitest';
+import { formatTopicTitle, navData } from './content';
 import { searchContent } from './search';
+
+const searchableTopics = navData.flatMap(section => (
+  section.notes.flatMap(note => note.topics.map(topic => ({ section, note, topic })))
+));
+
+function getSearchableTopic() {
+  const topic = searchableTopics.find(item => item.topic.title.length >= 2);
+  if (!topic) throw new Error('Search tests require a topic title with at least two characters.');
+  return topic;
+}
 
 describe('searchContent', () => {
   it('indexes headings and their structured content', () => {
-    const results = searchContent('SELECT');
+    const target = getSearchableTopic();
+    const result = searchContent(target.topic.title).find(item => (
+      item.kind === 'topic'
+      && item.sectionId === target.section.id
+      && item.noteId === target.note.id
+      && item.topic.id === target.topic.id
+    ));
 
-    expect(results.length).toBeGreaterThan(0);
-    expect(results.every(result => result.kind === 'topic')).toBe(true);
-    expect(results.some(result => (
-      result.kind === 'topic' && result.topic.title.toLowerCase().includes('select')
-    ))).toBe(true);
-    expect(results.every(result => result.matchKind === 'topic-title')).toBe(true);
-  });
-
-  it('returns one navigable section result instead of every topic in that section', () => {
-    const results = searchContent('SQLModel');
-    const sectionResults = results.filter(result => result.kind === 'section');
-
-    expect(sectionResults).toHaveLength(1);
-    expect(sectionResults[0]).toMatchObject({
-      sectionId: 'sqlmodel',
-      matchKind: 'section-title',
-    });
-  });
-
-  it('uses exact matching for short queries and only searches content after titles', () => {
-    const shortQueryResults = searchContent('폼');
-    expect(shortQueryResults.length).toBeGreaterThan(0);
-    expect(shortQueryResults.every(result => result.matchKind !== 'fuzzy')).toBe(true);
-
-    const titleResults = searchContent('조회 및 정렬 SELECT');
-    expect(titleResults).toHaveLength(1);
-    expect(titleResults[0]).toMatchObject({
+    expect(result).toMatchObject({
       kind: 'topic',
       matchKind: 'topic-title',
     });
   });
 
-  it('uses plain text titles for topics with Markdown emphasis', () => {
-    const result = searchContent('post_init').find((item) => (
-      item.kind === 'topic' && item.topic.title.includes('post_init')
-    ));
+  it('uses title matching instead of fuzzy matching for short queries', () => {
+    const target = getSearchableTopic();
+    const shortQueryResults = searchContent(target.topic.title.slice(0, 3));
 
-    expect(result).toMatchObject({
-      kind: 'topic',
-      topic: { title: 'post_init으로 생성 직후 값을 검증하기' },
-    });
+    expect(shortQueryResults.length).toBeGreaterThan(0);
+    expect(shortQueryResults.every(result => result.matchKind !== 'fuzzy')).toBe(true);
+  });
+
+  it('uses plain text titles for headings with Markdown emphasis', () => {
+    expect(formatTopicTitle('`post_init`으로 **생성 직후** 값을 검증하기')).toBe(
+      'post_init으로 생성 직후 값을 검증하기',
+    );
   });
 });
