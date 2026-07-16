@@ -3,6 +3,7 @@
     "sql",
     "sqlmodel",
     "dataclass",
-    "chainmap"
+    "chainmap",
+    "fastapi"
   ]
 }

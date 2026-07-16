@@ -1,0 +1,248 @@
+---
+title: "Part 4. 실전: 사진 블로그 포스트 발행 API 완성하기"
+---
+
+이번에는 인증된 작성자가 사진이 포함된 포스트를 발행하고, 자신의 포스트만 수정·삭제하는 API를 완성합니다. 이미지 파일 자체는 업로드 저장소가 URL을 돌려줬다고 가정하고, API는 그 URL·대체 텍스트·순서를 SQLModel로 관리합니다. 첫 토픽의 모델과 앱 준비를 한 번 실행한 뒤, 뒤의 코드를 같은 API에 순서대로 연결합니다.
+
+## Author·BlogPost·PostImage 모델과 요청 세션 준비하기
+
+발행 기능에 필요한 세 테이블, SQLite 엔진, 요청별 세션을 준비합니다. 작성자와 포스트의 관계, 포스트와 사진의 관계를 모두 명시해 한 포스트가 여러 사진을 갖게 합니다.
+
+```python
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from sqlmodel import Field, Relationship, Session, SQLModel, create_engine, select
+
+
+class Author(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    posts: list['BlogPost'] = Relationship(back_populates='author')
+
+
+class BlogPost(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    content: str
+    thumbnail_url: str | None = None
+    author_id: int = Field(foreign_key='author.id', index=True)
+    author: Author = Relationship(back_populates='posts')
+    images: list['PostImage'] = Relationship(back_populates='post')
+
+
+class PostImage(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    url: str
+    alt_text: str
+    position: int
+    post_id: int = Field(foreign_key='blogpost.id', index=True)
+    post: BlogPost = Relationship(back_populates='images')
+
+
+engine = create_engine('sqlite:///blog.db', connect_args={'check_same_thread': False})
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    SQLModel.metadata.create_all(engine)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+```
+
+`author_id`와 `post_id`는 데이터베이스의 연결 값이고, `author`, `images`, `post`는 API 코드가 관련 객체를 읽는 관계 속성입니다.
+
+## X-Author-Id 의존성으로 현재 작성자 확인하기
+
+학습용 API에서 로그인 시스템 대신 요청 헤더의 `X-Author-Id`로 현재 작성자를 식별합니다. 실제 서비스에서는 검증된 세션이나 액세스 토큰에서 같은 `Author`를 얻어야 하며, 클라이언트가 보낸 임의 ID를 신뢰하면 안 됩니다.
+
+```python
+def get_current_author(request: Request, session: SessionDep) -> Author:
+    author_id_text = request.headers.get('X-Author-Id')
+    if author_id_text is None or not author_id_text.isdecimal():
+        raise HTTPException(status_code=401, detail='로그인이 필요합니다.')
+
+    author = session.get(Author, int(author_id_text))
+    if author is None:
+        raise HTTPException(status_code=401, detail='로그인한 작성자를 찾을 수 없습니다.')
+    return author
+
+
+CurrentAuthor = Annotated[Author, Depends(get_current_author)]
+```
+
+`CurrentAuthor`를 엔드포인트 매개변수에 쓰면 모든 발행·수정·삭제 경로가 같은 인증 결과를 사용합니다.
+
+## BlogPostPublish로 발행 요청의 입력 경계 만들기
+
+발행 요청은 제목, 본문, 썸네일, 사진 URL과 대체 텍스트만 받습니다. 데이터베이스 ID, 사진 위치, 작성자 ID는 서버가 정하므로 입력 모델에 넣지 않습니다.
+
+```python
+class PostImageInput(SQLModel):
+    url: str
+    alt_text: str
+
+
+class BlogPostPublish(SQLModel):
+    title: str
+    content: str
+    thumbnail_url: str | None = None
+    images: list[PostImageInput] = Field(default_factory=list)
+
+
+class AuthorPublic(SQLModel):
+    id: int
+    name: str
+
+
+class PostImagePublic(SQLModel):
+    id: int
+    url: str
+    alt_text: str
+    position: int
+
+
+class BlogPostDetail(SQLModel):
+    id: int
+    title: str
+    content: str
+    thumbnail_url: str | None
+    author: AuthorPublic
+    images: list[PostImagePublic]
+```
+
+응답 모델도 관계 테이블을 그대로 노출하지 않고 화면에 필요한 필드만 선언합니다. 사진 URL을 받을 때는 실제 제품에서 허용한 저장소 도메인인지 검증하는 규칙도 추가합니다.
+
+## POST /posts와 read_detail로 발행·상세 응답 맞추기
+
+발행 API와 상세 조회가 같은 JSON 구조를 반환하도록 포스트·작성자·사진을 읽는 작업을 `read_detail()`에 모읍니다. `POST /posts`는 현재 작성자의 ID로 포스트와 사진을 한 트랜잭션에 저장하고, 사진은 항상 `position` 순으로 응답합니다.
+
+```python
+def read_detail(post_id: int, session: Session) -> BlogPostDetail:
+    post = session.get(BlogPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail='포스트를 찾을 수 없습니다.')
+
+    images = session.exec(
+        select(PostImage).where(PostImage.post_id == post_id).order_by(PostImage.position)
+    ).all()
+    return BlogPostDetail(
+        id=post.id,
+        title=post.title,
+        content=post.content,
+        thumbnail_url=post.thumbnail_url,
+        author=AuthorPublic.model_validate(post.author),
+        images=[PostImagePublic.model_validate(image) for image in images],
+    )
+
+
+@app.get('/posts/{post_id}', response_model=BlogPostDetail)
+def get_post(post_id: int, session: SessionDep) -> BlogPostDetail:
+    return read_detail(post_id, session)
+```
+
+`read_detail()` 아래에 발행 경로를 추가합니다.
+
+```python
+@app.post('/posts', response_model=BlogPostDetail, status_code=201)
+def publish_post(
+    data: BlogPostPublish,
+    current_author: CurrentAuthor,
+    session: SessionDep,
+) -> BlogPostDetail:
+    try:
+        post = BlogPost(
+            title=data.title,
+            content=data.content,
+            thumbnail_url=data.thumbnail_url,
+            author_id=current_author.id,
+        )
+        session.add(post)
+        session.flush()
+        session.add_all([
+            PostImage(post_id=post.id, url=image.url, alt_text=image.alt_text, position=index)
+            for index, image in enumerate(data.images, start=1)
+        ])
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+
+    session.refresh(post)
+    return read_detail(post.id, session)
+```
+
+`flush()`는 트랜잭션을 확정하지 않고 새 포스트의 ID를 데이터베이스에 반영해 사진의 `post_id`에 쓸 수 있게 합니다. 현재 작성자를 읽는 의존성이 이미 세션 트랜잭션을 시작할 수 있으므로, 이 경로는 작업을 마친 뒤 `commit()`하고 실패하면 `rollback()`합니다. 상세 모델을 조립하는 위치가 하나라서 응답 필드를 추가하거나 사진 정렬 규칙을 바꿀 때 발행 응답과 조회 응답이 어긋나지 않습니다.
+
+## PATCH `/posts/{post_id}`에서 소유자만 제목·본문·썸네일 수정하기
+
+발행한 작성자만 자신의 포스트를 수정하도록 현재 작성자와 `post.author_id`를 비교합니다. 부분 수정 모델과 `exclude_unset=True`을 사용하면 요청에 없는 필드는 보존됩니다.
+
+```python
+class BlogPostPatch(SQLModel):
+    title: str | None = None
+    content: str | None = None
+    thumbnail_url: str | None = None
+
+
+@app.patch('/posts/{post_id}', response_model=BlogPostDetail)
+def patch_post(
+    post_id: int,
+    data: BlogPostPatch,
+    current_author: CurrentAuthor,
+    session: SessionDep,
+) -> BlogPostDetail:
+    post = session.get(BlogPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail='포스트를 찾을 수 없습니다.')
+    if post.author_id != current_author.id:
+        raise HTTPException(status_code=403, detail='수정 권한이 없습니다.')
+
+    post.sqlmodel_update(data.model_dump(exclude_unset=True))
+    session.add(post)
+    session.commit()
+    return read_detail(post_id, session)
+```
+
+사진 교체도 같은 소유자 확인 뒤 `Session.begin()` 안에서 기존 `PostImage`를 삭제하고 새 배열을 저장하는 방식으로 구현합니다.
+
+## TestClient로 발행과 권한 규칙 확인하기
+
+발행 API가 생성된 포스트 ID, 사진 순서, 다른 작성자의 수정 거부를 모두 지키는지 API 수준에서 테스트합니다. 테스트에서는 `get_session`과 `get_current_author`를 메모리 데이터베이스와 고정 작성자로 교체합니다.
+
+```python
+def test_publish_assigns_the_current_author_and_photo_order() -> None:
+    response = client.post(
+        '/posts',
+        headers={'X-Author-Id': '1'},
+        json={
+            'title': '봄 산책',
+            'content': '꽃이 피었습니다.',
+            'thumbnail_url': 'https://images.example.com/spring-cover.jpg',
+            'images': [
+                {'url': 'https://images.example.com/spring-1.jpg', 'alt_text': '벚꽃'},
+                {'url': 'https://images.example.com/spring-2.jpg', 'alt_text': '산책로'},
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body['author']['id'] == 1
+    assert [image['position'] for image in body['images']] == [1, 2]
+```
+
+테스트마다 작성자와 데이터베이스를 새로 준비하면 이전 테스트의 포스트가 검색·권한 결과에 영향을 주지 않습니다. 업로드 저장소를 붙일 때도 저장소 클라이언트를 의존성으로 분리해 성공·실패를 독립적으로 시험합니다.
+
+공식 FastAPI [의존성](https://fastapi.tiangolo.com/tutorial/dependencies/), [테스트](https://fastapi.tiangolo.com/tutorial/testing/), SQLModel [관계 API 모델](https://sqlmodel.tiangolo.com/tutorial/fastapi/relationships/)을 기준으로 구성했습니다.

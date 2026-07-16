@@ -1,0 +1,217 @@
+---
+title: "Part 2. 중급: 작성자와 여러 사진 관계 다루기"
+---
+
+블로그 포스트에는 한 명의 작성자와 여러 장의 본문 사진이 연결됩니다. 이 노트에서는 SQLModel 관계를 선언하고, 목록·상세 API가 필요한 모양만 응답하도록 만듭니다. 첫 토픽의 모델과 엔진을 한 번 준비한 뒤 뒤의 코드를 순서대로 더합니다.
+
+## foreign_key와 Relationship으로 Author·BlogPost·PostImage 연결하기
+
+한 작성자가 여러 포스트를 쓰고 한 포스트가 여러 사진을 가질 때 외래 키와 관계 속성을 함께 선언합니다. `post.images`의 사진 순서는 `position` 열로 따로 관리합니다.
+
+```python
+from sqlmodel import Field, Relationship, SQLModel, create_engine
+
+
+class Author(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    posts: list['BlogPost'] = Relationship(back_populates='author')
+
+
+class BlogPost(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str = Field(index=True)
+    content: str
+    thumbnail_url: str | None = None
+    author_id: int = Field(foreign_key='author.id', index=True)
+    author: Author = Relationship(back_populates='posts')
+    images: list['PostImage'] = Relationship(back_populates='post')
+
+
+class PostImage(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    url: str
+    alt_text: str
+    position: int
+    post_id: int = Field(foreign_key='blogpost.id', index=True)
+    post: BlogPost = Relationship(back_populates='images')
+
+
+engine = create_engine('sqlite://', connect_args={'check_same_thread': False})
+SQLModel.metadata.create_all(engine)
+```
+
+외래 키 열은 실제 데이터베이스 연결을 저장하고, `Relationship()`은 파이썬에서 관련 객체를 탐색하는 경로를 만듭니다. 작성자가 필수이므로 `author_id`와 `author`에 `None`을 허용하지 않습니다.
+
+## 관계 속성으로 작성자·포스트·사진을 함께 저장하기
+
+새 포스트와 그 사진을 한 작업으로 만들 때 포스트의 `author`, `images` 관계에 객체를 연결해 저장합니다. 연결된 객체를 세션에 추가하면 필요한 새 행도 함께 등록됩니다.
+
+```python
+from sqlmodel import Session
+
+
+with Session(engine) as session:
+    minji = Author(name='민지')
+    post = BlogPost(
+        title='제주에서 찍은 세 장',
+        content='바람이 강했던 오후의 기록입니다.',
+        thumbnail_url='https://images.example.com/jeju-cover.jpg',
+        author=minji,
+        images=[
+            PostImage(url='https://images.example.com/jeju-1.jpg', alt_text='해안 절벽', position=1),
+            PostImage(url='https://images.example.com/jeju-2.jpg', alt_text='돌담길', position=2),
+        ],
+    )
+    session.add(post)
+    session.commit()
+    session.refresh(post)
+
+print(post.id, post.author_id)
+```
+
+```text
+1 1
+```
+
+한 요청이 작성자·포스트·사진을 모두 새로 만들지는 제품 규칙에 따라 다릅니다. 일반적인 블로그에서는 작성자는 먼저 만들어져 있고, 포스트 작성 시 그 ID만 연결합니다.
+
+## BlogPostCreate에서 사진 입력을 별도 모델로 받기
+
+포스트 작성 API가 여러 사진을 받되 클라이언트가 데이터베이스 ID나 다른 작성자의 ID를 정하지 못하게 하려면 입력 모델을 분리합니다. 사진의 위치는 배열 순서에서 서버가 결정합니다.
+
+```python
+class PostImageCreate(SQLModel):
+    url: str
+    alt_text: str
+
+
+class BlogPostCreate(SQLModel):
+    title: str
+    content: str
+    thumbnail_url: str | None = None
+    images: list[PostImageCreate] = Field(default_factory=list)
+```
+
+`BlogPostCreate`에는 `author_id`를 넣지 않습니다. 작성자 식별은 인증된 요청에서 얻어야 하므로, 클라이언트가 요청 본문으로 다른 사람의 ID를 넣을 수 없게 합니다.
+
+## POST /posts에서 사진 배열을 PostImage 행으로 저장하기
+
+인증에서 얻은 작성자 ID로 포스트를 만들고 입력 사진 배열을 `PostImage` 행으로 바꿉니다. 모든 행을 같은 세션에서 커밋하므로 중간에 오류가 나면 실패 처리를 한곳에서 할 수 있습니다.
+
+```python
+from fastapi import HTTPException
+from sqlmodel import select
+
+
+def create_post_for_author(
+    data: BlogPostCreate,
+    author_id: int,
+    session: Session,
+) -> BlogPost:
+    author = session.get(Author, author_id)
+    if author is None:
+        raise HTTPException(status_code=401, detail='인증된 작성자를 찾을 수 없습니다.')
+
+    post = BlogPost(
+        title=data.title,
+        content=data.content,
+        thumbnail_url=data.thumbnail_url,
+        author_id=author.id,
+    )
+    post.images = [
+        PostImage(url=image.url, alt_text=image.alt_text, position=index)
+        for index, image in enumerate(data.images, start=1)
+    ]
+    session.add(post)
+    session.commit()
+    session.refresh(post)
+    return post
+```
+
+`enumerate(..., start=1)`로 첫 사진의 위치를 1로 정합니다. 위치를 클라이언트가 직접 보내게 하려면 중복·누락·음수 위치를 저장 전에 검증해야 합니다.
+
+## response_model로 목록에 필요한 작성자 정보만 보내기
+
+포스트 목록에는 작성자 이름과 썸네일만 필요할 때 테이블의 관계 객체를 그대로 반환하지 않고 중첩 공개 모델을 사용합니다. 응답 구조가 양방향 관계를 따라가며 불필요하게 커지는 것도 막습니다.
+
+```python
+class AuthorPublic(SQLModel):
+    id: int
+    name: str
+
+
+class BlogPostListItem(SQLModel):
+    id: int
+    title: str
+    thumbnail_url: str | None
+    author: AuthorPublic
+
+
+@app.get('/posts', response_model=list[BlogPostListItem])
+def list_posts(session: SessionDep) -> list[BlogPost]:
+    statement = select(BlogPost).order_by(BlogPost.id.desc())
+    return session.exec(statement).all()
+```
+
+`BlogPostListItem`에는 본문과 사진 목록이 없으므로 홈 목록 응답이 작고 목적이 분명합니다. SQLModel과 FastAPI는 반환한 테이블 모델에서 응답 모델에 선언된 관계 속성을 읽습니다.
+
+## selectinload로 목록의 작성자를 미리 읽기
+
+포스트 목록에서 각 포스트의 작성자 이름을 접근할 때 포스트 수만큼 추가 조회가 생기지 않게 `selectinload()`를 사용합니다. 관계 데이터는 응답을 만들기 전에 같은 세션 안에서 준비됩니다.
+
+```python
+from sqlalchemy.orm import selectinload
+
+
+@app.get('/posts/with-authors', response_model=list[BlogPostListItem])
+def list_posts_with_authors(session: SessionDep) -> list[BlogPost]:
+    statement = (
+        select(BlogPost)
+        .options(selectinload(BlogPost.author))
+        .order_by(BlogPost.id.desc())
+    )
+    return session.exec(statement).all()
+```
+
+SQLModel의 `select()`와 `Session.exec()`에 SQLAlchemy ORM의 로딩 옵션을 함께 사용할 수 있습니다. 목록에서 관계 컬렉션까지 필요하면 `selectinload(BlogPost.images)`도 추가합니다.
+
+## GET `/posts/{post_id}`에서 사진을 위치 순서로 응답하기
+
+상세 페이지가 본문 사진을 정확한 순서로 보여 줄 때 별도 쿼리로 사진을 `position` 순으로 읽고 공개 모델을 조립합니다. 관계 컬렉션의 기본 순서에 화면 규칙을 맡기지 않습니다.
+
+```python
+class PostImagePublic(SQLModel):
+    id: int
+    url: str
+    alt_text: str
+    position: int
+
+
+class BlogPostDetail(BlogPostListItem):
+    content: str
+    images: list[PostImagePublic]
+
+
+@app.get('/posts/{post_id}', response_model=BlogPostDetail)
+def get_post(post_id: int, session: SessionDep) -> BlogPostDetail:
+    post = session.get(BlogPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail='포스트를 찾을 수 없습니다.')
+
+    images = session.exec(
+        select(PostImage).where(PostImage.post_id == post_id).order_by(PostImage.position)
+    ).all()
+    return BlogPostDetail(
+        id=post.id,
+        title=post.title,
+        content=post.content,
+        thumbnail_url=post.thumbnail_url,
+        author=AuthorPublic.model_validate(post.author),
+        images=[PostImagePublic.model_validate(image) for image in images],
+    )
+```
+
+사진 URL과 대체 텍스트는 모두 응답에 포함해 클라이언트가 접근 가능한 이미지를 렌더링하게 합니다. 실제 파일 업로드와 저장소 연동은 Part 4에서 외부 경계로 분리합니다.
+
+공식 SQLModel [FastAPI 관계 모델](https://sqlmodel.tiangolo.com/tutorial/fastapi/relationships/), [관계 속성 선언](https://sqlmodel.tiangolo.com/tutorial/relationship-attributes/define-relationships-attributes/), [여러 API 모델](https://sqlmodel.tiangolo.com/tutorial/fastapi/multiple-models/)을 기준으로 구성했습니다.
