@@ -2,8 +2,8 @@
   "pages": [
     "sql",
     "sqlmodel",
+    "fastapi",
     "dataclass",
-    "chainmap",
-    "fastapi"
+    "chainmap"
   ]
 }
