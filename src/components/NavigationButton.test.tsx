@@ -32,4 +32,16 @@ describe('NavigationButton', () => {
     fireEvent.click(button);
     expect(onClick).toHaveBeenCalledOnce();
   });
+
+  it('places a next-note card in the second grid column at every viewport size', () => {
+    const { getByRole } = render(
+      <NavigationButton
+        direction="next"
+        info={{ sectionId: section.id, sectionTitle: section.title, note }}
+        onClick={vi.fn()}
+      />,
+    );
+
+    expect(getByRole('button', { name: `다음 노트로 이동: ${note.title}` })).toHaveClass('col-start-2');
+  });
 });

@@ -28,7 +28,7 @@ export default function NavigationButton({ direction, info, onClick }: Navigatio
       className={`group flex min-h-32 w-full flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-4 outline-none transition-[border-color,background-color,box-shadow,color] duration-200 hover:border-indigo-300 hover:bg-indigo-50/70 hover:shadow-md focus-visible:border-indigo-500 focus-visible:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-slate-800 dark:bg-slate-900/40 dark:hover:border-indigo-400/60 dark:hover:bg-indigo-500/10 dark:hover:shadow-indigo-950/20 dark:focus-visible:border-indigo-400 dark:focus-visible:bg-indigo-500/10 dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-slate-950 ${
         isPrev
           ? 'items-start text-left sm:justify-self-start'
-          : 'items-end text-right sm:col-start-2 sm:justify-self-end'
+          : 'items-end text-right col-start-2 sm:justify-self-end'
       }`}
     >
       <span className="flex items-center gap-1.5 text-xs font-bold tracking-[0.14em] text-slate-500 transition-colors duration-200 group-hover:text-indigo-700 group-focus-visible:text-indigo-700 dark:text-slate-400 dark:group-hover:text-indigo-300 dark:group-focus-visible:text-indigo-300">
