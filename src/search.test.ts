@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { formatTopicTitle, navData, parseNoteNavigationTitle } from './content';
-import { createSearchSnippet, searchContent } from './search';
+import {
+  createSearchSnippet,
+  decomposeHangulText,
+  getHangulInitials,
+  rankSearchCandidates,
+  searchContent,
+  searchFuzzyTopicDocuments,
+  type SearchRankingCandidate,
+} from './search';
 
 const searchableTopics = navData.flatMap(section => (
   section.notes.flatMap(note => note.topics.map(topic => ({ section, note, topic })))
@@ -10,6 +18,24 @@ function getSearchableTopic() {
   const topic = searchableTopics.find(item => item.topic.title.length >= 2);
   if (!topic) throw new Error('Search tests require a topic title with at least two characters.');
   return topic;
+}
+
+function createTopicResult(id: string, matchKind: 'topic-title' | 'description' | 'content') {
+  return {
+    kind: 'topic' as const,
+    sectionId: 'section-example',
+    sectionTitle: 'Example section',
+    noteId: 'note-example',
+    noteTitle: 'Example note',
+    matchKind,
+    snippet: 'Example snippet',
+    topic: {
+      id,
+      title: `Example ${id}`,
+      description: 'Example description',
+      content: 'Example content',
+    },
+  };
 }
 
 describe('searchContent', () => {
@@ -35,6 +61,62 @@ describe('searchContent', () => {
 
     expect(shortQueryResults.length).toBeGreaterThan(0);
     expect(shortQueryResults.every(result => result.matchKind !== 'fuzzy')).toBe(true);
+  });
+
+  it('merges field matches, keeps the best match per topic, and prioritizes match quality', () => {
+    const exactContent = createTopicResult('content-exact', 'content');
+    const weakTitle = createTopicResult('title-contains', 'topic-title');
+    const duplicateTitle = createTopicResult('duplicate-topic', 'topic-title');
+    const exactDescription = createTopicResult('duplicate-topic', 'description');
+    const candidates: SearchRankingCandidate[] = [
+      {
+        result: weakTitle,
+        dedupeKey: 'topic:title-contains',
+        matchRank: 2,
+        fieldRank: 0,
+      },
+      {
+        result: duplicateTitle,
+        dedupeKey: 'topic:duplicate-topic',
+        matchRank: 2,
+        fieldRank: 0,
+      },
+      {
+        result: exactContent,
+        dedupeKey: 'topic:content-exact',
+        matchRank: 0,
+        fieldRank: 4,
+      },
+      {
+        result: exactDescription,
+        dedupeKey: 'topic:duplicate-topic',
+        matchRank: 0,
+        fieldRank: 3,
+      },
+    ];
+
+    expect(rankSearchCandidates(candidates)).toEqual([
+      exactDescription,
+      exactContent,
+      weakTitle,
+    ]);
+  });
+
+  it('finds Hangul typo and initial-consonant queries through the fuzzy index', () => {
+    const documents = [{
+      topic: {
+        id: 'topic-hangul',
+        title: '데코레이터 적용',
+        description: '클래스 동작을 확장합니다.',
+        content: '데코레이터로 공통 처리를 추가합니다.',
+      },
+    }];
+
+    expect(decomposeHangulText('데코')).toBe('데코');
+    expect(getHangulInitials('데코레이터 적용')).toBe('ㄷㅋㄹㅇㅌㅈㅇ');
+    expect(searchFuzzyTopicDocuments(documents, '데코레이타')).toEqual(documents);
+    expect(searchFuzzyTopicDocuments(documents, 'ㄷㅋㄹㅇㅌ')).toEqual(documents);
+    expect(searchFuzzyTopicDocuments(documents, 'ㄷ')).toEqual([]);
   });
 
   it('uses plain text titles for headings with Markdown emphasis', () => {

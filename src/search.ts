@@ -124,29 +124,60 @@ const sectionDocuments: SectionDocument[] = navData.map(section => {
   return { section, targetNote };
 });
 
-const fuzzySearchIndex = new Fuse<TopicDocument>(topicDocuments, {
-  keys: [
-    { name: 'topic.title', weight: 0.7 },
-    { name: 'topic.description', weight: 0.2 },
-    { name: 'topic.content', weight: 0.1 },
-  ],
-  includeScore: true,
-  threshold: FUZZY_SCORE_LIMIT,
-  ignoreLocation: true,
-  minMatchCharLength: 3,
-});
-
 function normalize(value: string) {
   return value.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+const HANGUL_BASE = 0xac00;
+const HANGUL_LAST = 0xd7a3;
+const JUNGSEONG_COUNT = 21;
+const JONGSEONG_COUNT = 28;
+const CHOSEONG = Array.from({ length: 19 }, (_, index) => String.fromCharCode(0x1100 + index));
+const JUNGSEONG = Array.from({ length: JUNGSEONG_COUNT }, (_, index) => String.fromCharCode(0x1161 + index));
+const JONGSEONG = ['', ...Array.from({ length: JONGSEONG_COUNT - 1 }, (_, index) => String.fromCharCode(0x11a8 + index))];
+const COMPATIBILITY_CHOSEONG = [
+  'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ',
+  'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
+];
+
+function getHangulParts(character: string) {
+  const codePoint = character.codePointAt(0);
+  if (codePoint === undefined || codePoint < HANGUL_BASE || codePoint > HANGUL_LAST) {
+    return null;
+  }
+
+  const offset = codePoint - HANGUL_BASE;
+  return {
+    choseong: Math.floor(offset / (JUNGSEONG_COUNT * JONGSEONG_COUNT)),
+    jungseong: Math.floor(offset / JONGSEONG_COUNT) % JUNGSEONG_COUNT,
+    jongseong: offset % JONGSEONG_COUNT,
+  };
+}
+
+export function decomposeHangulText(value: string) {
+  return [...value].map(character => {
+    const parts = getHangulParts(character);
+    if (!parts) return character;
+
+    return `${CHOSEONG[parts.choseong]}${JUNGSEONG[parts.jungseong]}${JONGSEONG[parts.jongseong]}`;
+  }).join('');
+}
+
+export function getHangulInitials(value: string) {
+  return [...value].flatMap(character => {
+    const parts = getHangulParts(character);
+    if (parts) return COMPATIBILITY_CHOSEONG[parts.choseong];
+    return /\s/.test(character) ? [] : character;
+  }).join('');
 }
 
 function getMatchRank(value: string, query: string, queryTerms: string[]) {
   const normalizedValue = normalize(value);
 
   if (normalizedValue === query) return 0;
-  if (normalizedValue.startsWith(query)) return 0.1;
-  if (normalizedValue.includes(query)) return 0.2;
-  if (queryTerms.every(term => normalizedValue.includes(term))) return 0.3;
+  if (normalizedValue.startsWith(query)) return 1;
+  if (normalizedValue.includes(query)) return 2;
+  if (queryTerms.every(term => normalizedValue.includes(term))) return 3;
   return null;
 }
 
@@ -226,68 +257,178 @@ function createSectionResult(document: SectionDocument): SectionSearchResult {
   };
 }
 
-function sortByRank<T>(results: Array<{ result: T; rank: number }>) {
-  return results
-    .sort((a, b) => a.rank - b.rank)
-    .map(({ result }) => result);
+export interface SearchRankingCandidate {
+  result: SearchResult;
+  dedupeKey: string;
+  matchRank: number;
+  fieldRank: number;
 }
 
-function isFuzzyQuery(query: string) {
-  return query.length >= 4 && /^[a-z0-9 ._/-]+$/i.test(query);
+export function rankSearchCandidates(candidates: SearchRankingCandidate[]) {
+  const sortedCandidates = candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((a, b) => (
+      a.candidate.matchRank - b.candidate.matchRank
+      || a.candidate.fieldRank - b.candidate.fieldRank
+      || a.index - b.index
+    ));
+  const seenKeys = new Set<string>();
+
+  return sortedCandidates.flatMap(({ candidate }) => {
+    if (seenKeys.has(candidate.dedupeKey)) return [];
+    seenKeys.add(candidate.dedupeKey);
+    return [candidate.result];
+  });
 }
+
+interface FuzzySearchDocument {
+  topic: Pick<Topic, 'title' | 'description' | 'content'>;
+}
+
+interface IndexedFuzzyDocument<T extends FuzzySearchDocument> {
+  document: T;
+  title: string;
+  description: string;
+  content: string;
+  titleInitials: string;
+  descriptionInitials: string;
+  contentInitials: string;
+}
+
+interface FuzzySearchIndexes<T extends FuzzySearchDocument> {
+  text: Fuse<IndexedFuzzyDocument<T>>;
+  initials: Fuse<IndexedFuzzyDocument<T>>;
+}
+
+function createFuzzySearchIndexes<T extends FuzzySearchDocument>(documents: readonly T[]): FuzzySearchIndexes<T> {
+  const indexedDocuments = documents.map(document => ({
+    document,
+    title: decomposeHangulText(normalize(document.topic.title)),
+    description: decomposeHangulText(normalize(document.topic.description)),
+    content: decomposeHangulText(normalize(document.topic.content)),
+    titleInitials: getHangulInitials(normalize(document.topic.title)),
+    descriptionInitials: getHangulInitials(normalize(document.topic.description)),
+    contentInitials: getHangulInitials(normalize(document.topic.content)),
+  }));
+  const options = {
+    includeScore: true,
+    threshold: FUZZY_SCORE_LIMIT,
+    ignoreLocation: true,
+    ignoreFieldNorm: true,
+    minMatchCharLength: 3,
+  };
+
+  return {
+    text: new Fuse(indexedDocuments, {
+      ...options,
+      keys: [
+        { name: 'title', weight: 0.7 },
+        { name: 'description', weight: 0.2 },
+        { name: 'content', weight: 0.1 },
+      ],
+    }),
+    initials: new Fuse(indexedDocuments, {
+      ...options,
+      keys: [
+        { name: 'titleInitials', weight: 0.7 },
+        { name: 'descriptionInitials', weight: 0.2 },
+        { name: 'contentInitials', weight: 0.1 },
+      ],
+    }),
+  };
+}
+
+function getFuzzySearchQuery(query: string) {
+  const compactQuery = query.replace(/\s+/g, '');
+  if (compactQuery.length >= 2 && /^[ㄱ-ㅎ]+$/.test(compactQuery)) {
+    return { index: 'initials' as const, value: compactQuery };
+  }
+
+  const hangulSyllableCount = [...query].filter(character => getHangulParts(character)).length;
+  const isAsciiQuery = /^[a-z0-9 ._/-]+$/i.test(query) && compactQuery.length >= 4;
+  if (!isAsciiQuery && hangulSyllableCount < 2) return null;
+
+  return { index: 'text' as const, value: decomposeHangulText(query) };
+}
+
+function findFuzzyDocuments<T extends FuzzySearchDocument>(
+  indexes: FuzzySearchIndexes<T>,
+  rawQuery: string,
+  limit = RESULT_LIMIT,
+) {
+  const query = normalize(rawQuery);
+  const fuzzyQuery = getFuzzySearchQuery(query);
+  if (!fuzzyQuery) return [];
+
+  return indexes[fuzzyQuery.index]
+    .search(fuzzyQuery.value, { limit })
+    .filter(result => (result.score ?? 1) <= FUZZY_SCORE_LIMIT)
+    .map(result => result.item.document);
+}
+
+export function searchFuzzyTopicDocuments<T extends FuzzySearchDocument>(
+  documents: readonly T[],
+  rawQuery: string,
+) {
+  return findFuzzyDocuments(createFuzzySearchIndexes(documents), rawQuery);
+}
+
+const fuzzySearchIndexes = createFuzzySearchIndexes(topicDocuments);
 
 export function searchContent(rawQuery: string): SearchResult[] {
   const query = normalize(rawQuery);
   if (!query) return [];
 
   const queryTerms = query.split(' ');
-  const titleResults = sortByRank<SearchResult>([
-    ...topicDocuments.flatMap(document => {
-      const rank = getMatchRank(document.topic.title, query, queryTerms);
-      return rank === null
-        ? []
-        : [{ result: createTopicResult(document, 'topic-title', query), rank }];
-    }),
-    ...noteDocuments.flatMap(document => {
-      const rank = getMatchRank(document.note.title, query, queryTerms);
-      return rank === null
-        ? []
-        : [{ result: createNoteResult(document), rank: rank + 0.01 }];
-    }),
-    ...sectionDocuments.flatMap(document => {
-      const rank = getMatchRank(document.section.title, query, queryTerms);
-      return rank === null
-        ? []
-        : [{ result: createSectionResult(document), rank: rank + 0.02 }];
-    }),
-  ]);
+  const candidates: SearchRankingCandidate[] = [];
+  const addTopicCandidate = (
+    document: TopicDocument,
+    value: string,
+    matchKind: TopicSearchResult['matchKind'],
+    fieldRank: number,
+  ) => {
+    const matchRank = getMatchRank(value, query, queryTerms);
+    if (matchRank === null) return;
 
-  if (titleResults.length > 0) return titleResults.slice(0, RESULT_LIMIT);
+    candidates.push({
+      result: createTopicResult(document, matchKind, query),
+      dedupeKey: `topic:${document.sectionId}/${document.noteId}/${document.topic.id}`,
+      matchRank,
+      fieldRank,
+    });
+  };
 
-  const descriptionResults = sortByRank<TopicSearchResult>(
-    topicDocuments.flatMap(document => {
-      const rank = getMatchRank(document.topic.description, query, queryTerms);
-      return rank === null
-        ? []
-        : [{ result: createTopicResult(document, 'description', query), rank }];
-    }),
-  );
-  if (descriptionResults.length > 0) return descriptionResults.slice(0, RESULT_LIMIT);
+  for (const document of topicDocuments) {
+    addTopicCandidate(document, document.topic.title, 'topic-title', 0);
+    addTopicCandidate(document, document.topic.description, 'description', 3);
+    addTopicCandidate(document, document.topic.content, 'content', 4);
+  }
 
-  const contentResults = sortByRank<TopicSearchResult>(
-    topicDocuments.flatMap(document => {
-      const rank = getMatchRank(document.topic.content, query, queryTerms);
-      return rank === null
-        ? []
-        : [{ result: createTopicResult(document, 'content', query), rank }];
-    }),
-  );
-  if (contentResults.length > 0) return contentResults.slice(0, RESULT_LIMIT);
+  for (const document of noteDocuments) {
+    const matchRank = getMatchRank(document.note.title, query, queryTerms);
+    if (matchRank === null) continue;
+    candidates.push({
+      result: createNoteResult(document),
+      dedupeKey: `note:${document.section.id}/${document.note.id}`,
+      matchRank,
+      fieldRank: 1,
+    });
+  }
 
-  if (!isFuzzyQuery(query)) return [];
+  for (const document of sectionDocuments) {
+    const matchRank = getMatchRank(document.section.title, query, queryTerms);
+    if (matchRank === null) continue;
+    candidates.push({
+      result: createSectionResult(document),
+      dedupeKey: `section:${document.section.id}`,
+      matchRank,
+      fieldRank: 2,
+    });
+  }
 
-  return fuzzySearchIndex
-    .search(query, { limit: RESULT_LIMIT })
-    .filter(result => (result.score ?? 1) <= FUZZY_SCORE_LIMIT)
-    .map(result => createTopicResult(result.item, 'fuzzy', query));
+  const directResults = rankSearchCandidates(candidates);
+  if (directResults.length > 0) return directResults.slice(0, RESULT_LIMIT);
+
+  return findFuzzyDocuments(fuzzySearchIndexes, query)
+    .map(document => createTopicResult(document, 'fuzzy', query));
 }
