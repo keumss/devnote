@@ -17,6 +17,7 @@ export type { SearchResult } from './content';
 
 const RESULT_LIMIT = 12;
 const FUZZY_SCORE_LIMIT = 0.2;
+const SNIPPET_LENGTH = 160;
 
 const contentStructuredData = import.meta.glob<StructuredData>(
   '/content/**/*.{md,mdx}',
@@ -76,6 +77,7 @@ interface TopicDocument {
   sectionId: string;
   sectionTitle: string;
   noteId: string;
+  noteNavigationLabel?: string;
   noteTitle: string;
   topic: Topic;
 }
@@ -103,6 +105,7 @@ for (const [filePath, structuredData] of Object.entries(contentStructuredData)) 
       sectionId,
       sectionTitle: metadata.section.title,
       noteId,
+      noteNavigationLabel: metadata.note.navigationLabel,
       noteTitle: metadata.note.displayTitle,
       topic,
     });
@@ -147,14 +150,55 @@ function getMatchRank(value: string, query: string, queryTerms: string[]) {
   return null;
 }
 
+export function createSearchSnippet(source: string, rawQuery: string) {
+  const content = source.replace(/\s+/g, ' ').trim();
+  if (!content || content.length <= SNIPPET_LENGTH) return content;
+
+  const query = normalize(rawQuery);
+  const normalizedContent = content.toLocaleLowerCase();
+  const queryTerms = query.split(' ').filter(Boolean);
+  const phraseIndex = normalizedContent.indexOf(query);
+  const termMatches = queryTerms
+    .map(term => ({ index: normalizedContent.indexOf(term), length: term.length }))
+    .filter(match => match.index >= 0)
+    .sort((a, b) => a.index - b.index);
+  const match = phraseIndex >= 0
+    ? { index: phraseIndex, length: query.length }
+    : termMatches[0] ?? { index: 0, length: 0 };
+
+  let hasPrefix = false;
+  let hasSuffix = true;
+  let start = 0;
+  let end = SNIPPET_LENGTH - 1;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const textLength = SNIPPET_LENGTH - Number(hasPrefix) - Number(hasSuffix);
+    const matchLength = Math.min(match.length, textLength);
+    const contextBeforeMatch = Math.floor((textLength - matchLength) / 2);
+    const maxStart = Math.max(0, content.length - textLength);
+    start = Math.min(Math.max(0, match.index - contextBeforeMatch), maxStart);
+    end = Math.min(content.length, start + textLength);
+    hasPrefix = start > 0;
+    hasSuffix = end < content.length;
+  }
+
+  return `${hasPrefix ? '…' : ''}${content.slice(start, end).trim()}${hasSuffix ? '…' : ''}`;
+}
+
 function createTopicResult(
   document: TopicDocument,
   matchKind: TopicSearchResult['matchKind'],
+  query: string,
 ): TopicSearchResult {
+  const snippetSource = matchKind === 'content'
+    ? document.topic.content
+    : document.topic.description || document.topic.content;
+
   return {
     ...document,
     kind: 'topic',
     matchKind,
+    snippet: createSearchSnippet(snippetSource, query),
   };
 }
 
@@ -164,7 +208,8 @@ function createNoteResult(document: NoteDocument): NoteSearchResult {
     sectionId: document.section.id,
     sectionTitle: document.section.title,
     noteId: document.note.id,
-    noteTitle: document.note.title,
+    noteNavigationLabel: document.note.navigationLabel,
+    noteTitle: document.note.displayTitle,
     matchKind: 'note-title',
   };
 }
@@ -175,6 +220,7 @@ function createSectionResult(document: SectionDocument): SectionSearchResult {
     sectionId: document.section.id,
     sectionTitle: document.section.title,
     noteId: document.targetNote.id,
+    noteNavigationLabel: document.targetNote.navigationLabel,
     noteTitle: document.targetNote.displayTitle,
     matchKind: 'section-title',
   };
@@ -200,7 +246,7 @@ export function searchContent(rawQuery: string): SearchResult[] {
       const rank = getMatchRank(document.topic.title, query, queryTerms);
       return rank === null
         ? []
-        : [{ result: createTopicResult(document, 'topic-title'), rank }];
+        : [{ result: createTopicResult(document, 'topic-title', query), rank }];
     }),
     ...noteDocuments.flatMap(document => {
       const rank = getMatchRank(document.note.title, query, queryTerms);
@@ -223,7 +269,7 @@ export function searchContent(rawQuery: string): SearchResult[] {
       const rank = getMatchRank(document.topic.description, query, queryTerms);
       return rank === null
         ? []
-        : [{ result: createTopicResult(document, 'description'), rank }];
+        : [{ result: createTopicResult(document, 'description', query), rank }];
     }),
   );
   if (descriptionResults.length > 0) return descriptionResults.slice(0, RESULT_LIMIT);
@@ -233,7 +279,7 @@ export function searchContent(rawQuery: string): SearchResult[] {
       const rank = getMatchRank(document.topic.content, query, queryTerms);
       return rank === null
         ? []
-        : [{ result: createTopicResult(document, 'content'), rank }];
+        : [{ result: createTopicResult(document, 'content', query), rank }];
     }),
   );
   if (contentResults.length > 0) return contentResults.slice(0, RESULT_LIMIT);
@@ -243,5 +289,5 @@ export function searchContent(rawQuery: string): SearchResult[] {
   return fuzzySearchIndex
     .search(query, { limit: RESULT_LIMIT })
     .filter(result => (result.score ?? 1) <= FUZZY_SCORE_LIMIT)
-    .map(result => createTopicResult(result.item, 'fuzzy'));
+    .map(result => createTopicResult(result.item, 'fuzzy', query));
 }

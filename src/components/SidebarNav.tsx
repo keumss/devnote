@@ -25,6 +25,7 @@ const NavNoteItem = memo(({
       <button
         type="button"
         onClick={onClick}
+        aria-label={`${note.navigationLabel ? `${note.navigationLabel} ` : ''}${note.displayTitle}`}
         className={`relative w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-colors duration-200 ${
           isActive
             ? 'text-indigo-700 dark:text-indigo-300 font-medium'
@@ -36,8 +37,15 @@ const NavNoteItem = memo(({
             className="absolute inset-0 bg-indigo-50 dark:bg-indigo-500/10 rounded-lg border border-indigo-100 dark:border-indigo-500/20 shadow-sm"
           />
         )}
-        <span className={`text-sm leading-snug relative z-10 transition-all duration-200`}>
-          {note.displayTitle}
+        <span className="relative z-10 min-w-0">
+          {note.navigationLabel && (
+            <span className="mb-0.5 block text-[10px] font-bold tracking-wide text-indigo-500 dark:text-indigo-400">
+              {note.navigationLabel}
+            </span>
+          )}
+          <span className="block text-sm leading-snug transition-all duration-200">
+            {note.displayTitle}
+          </span>
         </span>
         {isActive && (
           <ChevronRight size={14} className="text-indigo-500 min-w-4 relative z-10" />

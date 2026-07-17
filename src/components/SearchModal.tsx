@@ -19,9 +19,34 @@ function getResultTitle(result: SearchResult) {
 }
 
 function getResultDescription(result: SearchResult) {
-  if (result.kind === 'topic') return result.topic.description;
+  if (result.kind === 'topic') return result.snippet;
   if (result.kind === 'note') return '노트 제목에서 찾음';
   return '섹션 제목에서 찾음';
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  const terms = [...new Set(query.trim().split(/\s+/).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  if (terms.length === 0) return text;
+
+  const termPattern = terms.map(escapeRegExp).join('|');
+  const splitPattern = new RegExp(`(${termPattern})`, 'gi');
+  const matchPattern = new RegExp(`^(?:${termPattern})$`, 'i');
+
+  return text.split(splitPattern).map((part, index) => (
+    matchPattern.test(part) ? (
+      <mark
+        key={`${part}-${index}`}
+        className="rounded-sm bg-amber-200/80 px-0.5 text-inherit dark:bg-amber-400/25"
+      >
+        {part}
+      </mark>
+    ) : part
+  ));
 }
 
 function getMatchLabel(result: SearchResult) {
@@ -246,7 +271,20 @@ export default function SearchModal({
                       <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex-wrap">
                          <span>{result.sectionTitle}</span>
                          <ChevronRight size={12} className="text-slate-400" />
-                         <span>{result.kind === 'section' ? '섹션' : result.noteTitle}</span>
+                         {result.kind === 'section' ? (
+                           <span>섹션</span>
+                         ) : (
+                           <span className="flex items-center gap-1.5 normal-case tracking-normal">
+                             {result.noteNavigationLabel && (
+                               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                 {result.noteNavigationLabel}
+                               </span>
+                             )}
+                             <span>
+                               <HighlightedText text={result.noteTitle} query={searchQuery} />
+                             </span>
+                           </span>
+                         )}
                          <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300 normal-case tracking-normal">
                            {getMatchLabel(result)}
                          </span>
@@ -260,11 +298,11 @@ export default function SearchModal({
                           <BookOpenText size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0" />
                         )}
                         <span className="font-bold text-sm sm:text-base text-slate-900 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300 transition-colors">
-                          {getResultTitle(result)}
+                          <HighlightedText text={getResultTitle(result)} query={searchQuery} />
                         </span>
                       </div>
                       <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
-                        {getResultDescription(result)}
+                        <HighlightedText text={getResultDescription(result)} query={searchQuery} />
                       </p>
                     </button>
                   ))}

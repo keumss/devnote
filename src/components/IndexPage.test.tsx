@@ -53,10 +53,17 @@ describe('IndexPage', () => {
 
       expect(sectionCard).not.toBeNull();
       for (const note of section.notes) {
-        expect(within(sectionCard!).getByRole('link', { name: note.displayTitle })).toHaveAttribute(
+        const accessibleTitle = note.navigationLabel
+          ? `${note.navigationLabel} ${note.displayTitle}`
+          : note.displayTitle;
+        const noteLink = within(sectionCard!).getByRole('link', { name: accessibleTitle });
+        expect(noteLink).toHaveAttribute(
           'href',
           `#${getNotePath(section.id, note.id)}`,
         );
+        if (note.navigationLabel) {
+          expect(within(noteLink).getByText(note.navigationLabel)).toBeInTheDocument();
+        }
       }
     }
   });

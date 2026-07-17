@@ -160,10 +160,18 @@ export default function IndexPage() {
                       <Link
                         key={note.id}
                         to={getNotePath(section.id, note.id)}
-                        className="group flex min-h-11 items-center justify-between gap-3 rounded-xl px-3 py-2.5 outline-none transition-colors hover:bg-indigo-50 focus-visible:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 dark:hover:bg-indigo-500/10 dark:focus-visible:bg-indigo-500/10"
+                        aria-label={`${note.navigationLabel ? `${note.navigationLabel} ` : ''}${note.displayTitle}`}
+                        className="group flex min-h-14 items-center justify-between gap-3 rounded-xl px-3 py-2.5 outline-none transition-colors hover:bg-indigo-50 focus-visible:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 dark:hover:bg-indigo-500/10 dark:focus-visible:bg-indigo-500/10"
                       >
-                        <span className="text-sm font-medium text-slate-600 transition-colors group-hover:text-indigo-700 group-focus-visible:text-indigo-700 dark:text-slate-300 dark:group-hover:text-indigo-300 dark:group-focus-visible:text-indigo-300">
-                          {note.displayTitle}
+                        <span className="min-w-0">
+                          {note.navigationLabel && (
+                            <span className="mb-0.5 block text-[10px] font-bold tracking-wide text-indigo-500 dark:text-indigo-400">
+                              {note.navigationLabel}
+                            </span>
+                          )}
+                          <span className="block text-sm font-medium leading-snug text-slate-600 transition-colors group-hover:text-indigo-700 group-focus-visible:text-indigo-700 dark:text-slate-300 dark:group-hover:text-indigo-300 dark:group-focus-visible:text-indigo-300">
+                            {note.displayTitle}
+                          </span>
                         </span>
                         <ArrowUpRight className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-indigo-600 group-focus-visible:translate-x-0.5 group-focus-visible:-translate-y-0.5 group-focus-visible:text-indigo-600 dark:text-slate-500 dark:group-hover:text-indigo-300 dark:group-focus-visible:text-indigo-300" />
                       </Link>

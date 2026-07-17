@@ -63,7 +63,7 @@ describe('Layout search flow', () => {
     const note = section?.notes[0];
     if (!section || !note) throw new Error('Layout search tests require a section with a note.');
 
-    const { findByText, getByLabelText } = render(
+    const { findByRole, getByLabelText } = render(
       <StrictMode>
         <HashRouter>
           <Layout>
@@ -75,7 +75,9 @@ describe('Layout search flow', () => {
 
     fireEvent.click(getByLabelText('Open search dialog'));
     fireEvent.change(getByLabelText('Search query'), { target: { value: section.title } });
-    fireEvent.click((await findByText(`${section.title} 섹션`)).closest('button')!);
+    fireEvent.click(await findByRole('button', {
+      name: name => name.includes(section.title) && name.includes('섹션'),
+    }));
 
     await waitFor(() => {
       expect(getByLabelText('current location').textContent).toBe(getNotePath(section.id, note.id));

@@ -7,9 +7,11 @@ const searchResults: SearchResult[] = [{
   sectionId: 'section-a',
   sectionTitle: 'Section A',
   noteId: 'note-1',
+  noteNavigationLabel: 'Part 1 · 기초',
   noteTitle: 'Note 1',
   kind: 'topic',
   matchKind: 'topic-title',
+  snippet: 'Example topic',
   topic: {
     id: 'topic-a',
     title: 'Topic A',
@@ -27,6 +29,7 @@ const multipleSearchResults: SearchResult[] = [
     noteTitle: 'Note 2',
     kind: 'topic',
     matchKind: 'topic-title',
+    snippet: 'Another example topic',
     topic: {
       id: 'topic-b',
       title: 'Topic B',
@@ -83,6 +86,24 @@ describe('SearchModal', () => {
     const result = screen.getByRole('button', { name: /section a.*note 1.*topic a/i });
     expect(result).toHaveClass('hover:bg-indigo-50', 'focus:bg-indigo-50');
     expect(result).not.toHaveClass('hover:bg-emerald-50', 'focus:bg-emerald-50');
+  });
+
+  it('shows the note label and highlights matches in the title and snippet', () => {
+    render(
+      <SearchModal
+        isOpen
+        onClose={vi.fn()}
+        searchQuery="topic"
+        setSearchQuery={vi.fn()}
+        searchResults={searchResults}
+        onSelectResult={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Part 1 · 기초')).toBeInTheDocument();
+    const highlightedTerms = screen.getAllByText(/topic/i, { selector: 'mark' });
+    expect(highlightedTerms).toHaveLength(2);
+    expect(highlightedTerms[1].closest('p')).toHaveTextContent('Example topic');
   });
 
   it('selects the highlighted result with Arrow keys and Enter', async () => {

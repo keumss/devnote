@@ -47,6 +47,7 @@ export interface NoteTopic {
 export interface Note {
   id: string;
   title: string;
+  navigationLabel?: string;
   displayTitle: string;
   topics: NoteTopic[];
   Component: NoteContentComponent;
@@ -70,6 +71,7 @@ interface SearchResultBase {
   sectionId: string;
   sectionTitle: string;
   noteId: string;
+  noteNavigationLabel?: string;
   noteTitle: string;
   matchKind: SearchMatchKind;
 }
@@ -77,6 +79,7 @@ interface SearchResultBase {
 export interface TopicSearchResult extends SearchResultBase {
   kind: 'topic';
   topic: Topic;
+  snippet: string;
 }
 
 export interface NoteSearchResult extends SearchResultBase {
@@ -244,9 +247,21 @@ function validateNoteFiles(sectionOrder: string[]) {
   }
 }
 
-export function formatNoteNavigationTitle(title: string) {
-  const prefix = title.split(':', 1)[0].trim();
-  return prefix || title.trim();
+export function parseNoteNavigationTitle(title: string) {
+  const trimmedTitle = title.trim();
+  const separatorIndex = trimmedTitle.indexOf(':');
+  if (separatorIndex < 0) {
+    return { displayTitle: trimmedTitle };
+  }
+
+  const rawLabel = trimmedTitle.slice(0, separatorIndex).trim();
+  const displayTitle = trimmedTitle.slice(separatorIndex + 1).trim();
+  if (!rawLabel || !displayTitle) {
+    return { displayTitle: trimmedTitle };
+  }
+
+  const navigationLabel = rawLabel.replace(/^(Part\s+\d+)\.\s*(.+)$/i, '$1 · $2');
+  return { navigationLabel, displayTitle };
 }
 
 export function formatTopicTitle(title: string) {
@@ -308,11 +323,12 @@ for (const [filePath, loadNote] of Object.entries(noteLoaders)) {
     notes: [],
   };
   const title = frontmatter.title.trim();
+  const navigationTitle = parseNoteNavigationTitle(title);
 
   section.notes.push({
     id: noteId,
     title,
-    displayTitle: formatNoteNavigationTitle(title),
+    ...navigationTitle,
     topics: getNoteTopics(filePath),
     Component: createLazyNoteContent(loadNote),
   });
