@@ -214,7 +214,7 @@ export default function SearchModal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -10 }}
             transition={{ duration: 0.2 }}
-            className="relative w-full max-w-2xl bg-white dark:bg-[#0d1117] rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[80vh]"
+            className="relative w-full max-w-2xl bg-white dark:bg-surface-raised rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[80vh]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="search-dialog-title"

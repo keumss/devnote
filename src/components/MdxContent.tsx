@@ -7,7 +7,7 @@ function Heading({ children, className, ...props }: ComponentProps<'h2'>) {
   return (
     <h2
       {...props}
-      className={`topic-heading scroll-mt-24 text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 ${className ?? ''}`}
+      className={`topic-heading scroll-mt-24 text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-slate-300 ${className ?? ''}`}
     >
       {children}
     </h2>
@@ -61,7 +61,7 @@ export function NoteLink({ children, ...props }: ComponentProps<'a'>) {
 export const mdxComponents: MDXComponents = {
   h2: Heading,
   h3: ({ children, ...props }) => (
-    <h3 {...props} className="mt-8 mb-3 text-lg font-bold text-slate-900 dark:text-slate-100">
+    <h3 {...props} className="mt-8 mb-3 text-lg font-bold text-slate-900 dark:text-slate-300">
       {children}
     </h3>
   ),

@@ -33,7 +33,7 @@ export default function IndexPage() {
 
   return (
     <Layout>
-      <main className="flex-1 bg-slate-50 px-4 py-8 dark:bg-[#090b10] sm:px-6 sm:py-12 lg:px-8">
+      <main className="flex-1 bg-slate-50 px-4 py-8 dark:bg-surface-canvas sm:px-6 sm:py-12 lg:px-8">
         <div className="mx-auto max-w-7xl">
           <motion.section
             initial={{ opacity: 0, y: -16 }}
@@ -47,7 +47,7 @@ export default function IndexPage() {
                 <BookOpen className="h-3.5 w-3.5" strokeWidth={2.5} />
                 DEVNOTE LIBRARY
               </p>
-              <h1 id="index-page-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-white sm:text-2xl">
+              <h1 id="index-page-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-slate-200 sm:text-2xl">
                 개발 학습 노트
               </h1>
               <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">
@@ -60,14 +60,14 @@ export default function IndexPage() {
                 <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
                 <div>
                   <dt className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">학습 섹션</dt>
-                  <dd className="font-bold text-slate-900 dark:text-white">{navData.length}개</dd>
+                  <dd className="font-bold text-slate-900 dark:text-slate-200">{navData.length}개</dd>
                 </div>
               </div>
               <div className="flex flex-1 items-center gap-2 px-3 py-2.5 sm:px-4">
                 <FileText className="h-4 w-4 shrink-0 text-indigo-500" />
                 <div>
                   <dt className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">학습 노트</dt>
-                  <dd className="font-bold text-slate-900 dark:text-white">{totalNotes}개</dd>
+                  <dd className="font-bold text-slate-900 dark:text-slate-200">{totalNotes}개</dd>
                 </div>
               </div>
             </dl>
@@ -86,7 +86,7 @@ export default function IndexPage() {
                   <Clock3 className="h-3.5 w-3.5" strokeWidth={2.5} />
                   CONTINUE LEARNING
                 </p>
-                <h2 id="continue-learning-title" className="text-lg font-bold tracking-tight text-slate-900 dark:text-white sm:text-xl">
+                <h2 id="continue-learning-title" className="text-lg font-bold tracking-tight text-slate-900 dark:text-slate-200 sm:text-xl">
                   이어서 학습하기
                 </h2>
                 <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">
@@ -120,7 +120,7 @@ export default function IndexPage() {
             >
               <div>
                 <p className="text-xs font-bold tracking-[0.16em] text-indigo-600 dark:text-indigo-400">EXPLORE BY TOPIC</p>
-                <h2 id="section-list-title" className="mt-1 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-50 sm:text-2xl">
+                <h2 id="section-list-title" className="mt-1 text-xl font-bold tracking-tight text-slate-900 dark:text-slate-200 sm:text-2xl">
                   학습 노트 둘러보기
                 </h2>
               </div>
@@ -136,7 +136,7 @@ export default function IndexPage() {
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3, delay: idx * 0.03 }}
-                  className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-[#131620]"
+                  className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-surface-raised"
                 >
                   <div className="flex items-start justify-between border-b border-slate-100 p-5 dark:border-slate-800/80">
                     <div className="flex items-start gap-3">
@@ -145,7 +145,7 @@ export default function IndexPage() {
                       </span>
                       <div>
                         <p className="text-xs font-semibold tracking-wide text-slate-500 dark:text-slate-400">학습 섹션</p>
-                        <h3 className="mt-1 text-base font-bold leading-tight text-slate-900 dark:text-slate-50">
+                        <h3 className="mt-1 text-base font-bold leading-tight text-slate-900 dark:text-slate-300">
                           {section.title}
                         </h3>
                       </div>

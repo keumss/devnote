@@ -104,7 +104,7 @@ export default function NotePage() {
 
   return (
     <Layout activeSectionId={activeSectionId} activeNoteId={activeNoteId}>
-      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-sm bg-white dark:bg-[#090b10] transition-colors duration-200">
+      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-sm bg-white dark:bg-surface-canvas transition-colors duration-200">
         
         {/* Desktop Left Sidebar Navigation */}
         <aside className="hidden lg:block w-72 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-950/50 min-h-[calc(100vh-4rem)] transition-colors duration-200">
@@ -132,7 +132,7 @@ export default function NotePage() {
                 <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-xs font-semibold uppercase tracking-widest mb-4 border border-slate-200 dark:border-slate-700/50 shadow-sm">
                   {activeSection.title}
                 </span>
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-50 tracking-tight leading-tight">
+                <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-200 tracking-tight leading-tight">
                   {activeNote.title}
                 </h2>
               </div>
