@@ -61,6 +61,8 @@ describe('IndexPage', () => {
           'href',
           `#${getNotePath(section.id, note.id)}`,
         );
+        expect(noteLink).toHaveClass('transition-[color]', 'dark:hover:bg-dark-indigo-500/10');
+        expect(noteLink).not.toHaveClass('transition-colors');
         if (note.navigationLabel) {
           expect(within(noteLink).getByText(note.navigationLabel)).toBeInTheDocument();
         }
@@ -98,9 +100,12 @@ describe('IndexPage', () => {
     );
 
     expect(getByRole('heading', { name: '이어서 학습하기' })).toBeInTheDocument();
-    expect(getByRole('link', { name: '이어서 읽기' })).toHaveAttribute(
+    const continueLink = getByRole('link', { name: '이어서 읽기' });
+    expect(continueLink).toHaveAttribute(
       'href',
       `#${getNotePath(section.id, note.id)}#${encodeURIComponent(topic.id)}`,
     );
+    expect(continueLink).toHaveClass('transition-[color]', 'dark:hover:bg-dark-indigo-500/25');
+    expect(continueLink).not.toHaveClass('transition-colors');
   });
 });

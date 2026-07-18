@@ -6,6 +6,28 @@
 @theme {
   --font-sans: "Pretendard", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-dark-slate-50: #f0f3f7;
+  --color-dark-slate-100: #e2e7ed;
+  --color-dark-slate-200: #d1d8e0;
+  --color-dark-slate-300: #b9c3ce;
+  --color-dark-slate-400: #97a4b2;
+  --color-dark-slate-500: #7e8a98;
+  --color-dark-slate-600: #66727f;
+  --color-dark-slate-700: #505b68;
+  --color-dark-slate-800: #3b4653;
+  --color-dark-slate-900: #2b3540;
+  --color-dark-slate-950: #1a1d24;
+  --color-dark-indigo-50: #eef1ff;
+  --color-dark-indigo-100: #dfe4ff;
+  --color-dark-indigo-200: #c7d2fe;
+  --color-dark-indigo-300: #a5b4fc;
+  --color-dark-indigo-400: #8b9cf5;
+  --color-dark-indigo-500: #7489e8;
+  --color-dark-indigo-600: #5d6dcc;
+  --color-dark-indigo-700: #4f5fb1;
+  --color-dark-indigo-800: #424f90;
+  --color-dark-indigo-900: #353f73;
+  --color-dark-indigo-950: #282f52;
   --color-surface-canvas: #1a1d24;
   --color-surface-raised: #252a34;
   --color-surface-code: #1d2129;
@@ -19,28 +41,6 @@
 
   html.dark {
     color-scheme: dark;
-    --color-slate-50: #f0f3f7;
-    --color-slate-100: #e2e7ed;
-    --color-slate-200: #d1d8e0;
-    --color-slate-300: #b9c3ce;
-    --color-slate-400: #97a4b2;
-    --color-slate-500: #7e8a98;
-    --color-slate-600: #66727f;
-    --color-slate-700: #505b68;
-    --color-slate-800: #3b4653;
-    --color-slate-900: #2b3540;
-    --color-slate-950: #1a1d24;
-    --color-indigo-50: #eef1ff;
-    --color-indigo-100: #dfe4ff;
-    --color-indigo-200: #c7d2fe;
-    --color-indigo-300: #a5b4fc;
-    --color-indigo-400: #8b9cf5;
-    --color-indigo-500: #7489e8;
-    --color-indigo-600: #5d6dcc;
-    --color-indigo-700: #4f5fb1;
-    --color-indigo-800: #424f90;
-    --color-indigo-900: #353f73;
-    --color-indigo-950: #282f52;
   }
 
   html, body {
@@ -48,16 +48,7 @@
   }
   
   html.dark body {
-    @apply text-slate-100 bg-slate-950;
-  }
-
-  body,
-  #root,
-  #root > div,
-  #root :where(header, nav, aside, main, article, section, button, a, input, textarea, select, [role='dialog']),
-  .topic-heading,
-  .topic-heading::before {
-    @apply transition-colors duration-200 ease-in-out;
+    @apply text-dark-slate-100 bg-dark-slate-950;
   }
 
   /* Exclude syntax highlighter spans from transition to prevent jank */
@@ -76,13 +67,23 @@
 }
 
 @layer utilities {
+  html.theme-transition body,
+  html.theme-transition #root,
+  html.theme-transition #root * {
+    @apply transition-colors duration-200 ease-in-out;
+  }
+
   .note-content {
     counter-reset: topic;
   }
 
   .topic-heading {
-    @apply relative mt-10 mb-3 border-t border-dashed border-slate-200 pt-10 pl-10 dark:border-slate-800;
+    @apply relative mt-10 mb-3 border-t border-dashed border-slate-200 pt-10 pl-10;
     counter-increment: topic;
+  }
+
+  html.dark .topic-heading {
+    @apply border-dark-slate-800;
   }
 
   .topic-heading:first-child {
@@ -91,7 +92,11 @@
 
   .topic-heading::before {
     content: counter(topic);
-    @apply absolute left-0 top-9 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-500 shadow-sm dark:border-slate-700/50 dark:bg-slate-800/50 dark:text-slate-400;
+    @apply absolute left-0 top-9 flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-xs font-bold text-slate-500 shadow-sm;
+  }
+
+  html.dark .topic-heading::before {
+    @apply border-dark-slate-700/50 bg-dark-slate-800/50 text-dark-slate-400;
   }
 
   .topic-heading:first-child::before {
@@ -106,10 +111,16 @@
     background: transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-slate-300 dark:bg-slate-700 rounded-full;
+    @apply bg-slate-300 rounded-full;
+  }
+  html.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-dark-slate-700;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    @apply bg-slate-400 dark:bg-slate-600;
+    @apply bg-slate-400;
+  }
+  html.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-dark-slate-600;
   }
   
   .hide-scrollbar::-webkit-scrollbar {

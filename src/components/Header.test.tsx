@@ -11,6 +11,7 @@ describe('Header', () => {
           isDark={false}
           toggleDark={vi.fn()}
           onOpenSearch={vi.fn()}
+          onOpenMobileNav={vi.fn()}
         />
       </HashRouter>,
     );
@@ -22,5 +23,11 @@ describe('Header', () => {
     const homeIcon = homeLink.firstElementChild;
     expect(homeIcon).toHaveClass('group-active:-translate-y-0.5', 'group-active:scale-105');
     expect(homeIcon).not.toHaveClass('group-hover:-translate-y-0.5', 'group-hover:scale-105');
+
+    for (const label of ['Open Mobile Navigation', 'Open search dialog', '다크 모드 사용']) {
+      const interactive = getByLabelText(label);
+      expect(interactive).toHaveClass('transition-[color]');
+      expect(interactive).not.toHaveClass('transition-colors');
+    }
   });
 });

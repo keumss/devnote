@@ -7,7 +7,7 @@ function Heading({ children, className, ...props }: ComponentProps<'h2'>) {
   return (
     <h2
       {...props}
-      className={`topic-heading scroll-mt-24 text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-slate-300 ${className ?? ''}`}
+      className={`topic-heading scroll-mt-24 text-lg sm:text-xl font-bold tracking-tight text-slate-900 dark:text-dark-slate-300 ${className ?? ''}`}
     >
       {children}
     </h2>
@@ -30,7 +30,7 @@ function InlineCode({ children, className, ...props }: ComponentProps<'code'>) {
   return (
     <code
       {...props}
-      className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.9em] text-indigo-700 dark:bg-slate-800 dark:text-indigo-300"
+      className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.9em] text-indigo-700 dark:bg-dark-slate-800 dark:text-dark-indigo-300"
     >
       {children}
     </code>
@@ -39,7 +39,7 @@ function InlineCode({ children, className, ...props }: ComponentProps<'code'>) {
 
 function Paragraph({ children }: { children?: ReactNode }) {
   return (
-    <p className="mb-5 text-sm sm:text-base text-slate-600 dark:text-slate-400 leading-relaxed">
+    <p className="mb-5 text-sm sm:text-base text-slate-600 dark:text-dark-slate-400 leading-relaxed">
       {children}
     </p>
   );
@@ -51,7 +51,7 @@ export function NoteLink({ children, ...props }: ComponentProps<'a'>) {
       {...props}
       target="_blank"
       rel="noreferrer"
-      className="font-medium text-indigo-600 underline underline-offset-4 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+      className="font-medium text-indigo-600 underline underline-offset-4 hover:text-indigo-700 dark:text-dark-indigo-400 dark:hover:text-dark-indigo-300"
     >
       {children}
     </a>
@@ -61,7 +61,7 @@ export function NoteLink({ children, ...props }: ComponentProps<'a'>) {
 export const mdxComponents: MDXComponents = {
   h2: Heading,
   h3: ({ children, ...props }) => (
-    <h3 {...props} className="mt-8 mb-3 text-lg font-bold text-slate-900 dark:text-slate-300">
+    <h3 {...props} className="mt-8 mb-3 text-lg font-bold text-slate-900 dark:text-dark-slate-300">
       {children}
     </h3>
   ),
@@ -70,12 +70,12 @@ export const mdxComponents: MDXComponents = {
   code: InlineCode,
   a: NoteLink,
   ul: ({ children, ...props }) => (
-    <ul {...props} className="mb-5 ml-6 list-disc space-y-2 text-slate-600 dark:text-slate-400">
+    <ul {...props} className="mb-5 ml-6 list-disc space-y-2 text-slate-600 dark:text-dark-slate-400">
       {children}
     </ul>
   ),
   ol: ({ children, ...props }) => (
-    <ol {...props} className="mb-5 ml-6 list-decimal space-y-2 text-slate-600 dark:text-slate-400">
+    <ol {...props} className="mb-5 ml-6 list-decimal space-y-2 text-slate-600 dark:text-dark-slate-400">
       {children}
     </ol>
   ),

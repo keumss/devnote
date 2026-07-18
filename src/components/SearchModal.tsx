@@ -214,13 +214,13 @@ export default function SearchModal({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: -10 }}
             transition={{ duration: 0.2 }}
-            className="relative w-full max-w-2xl bg-white dark:bg-surface-raised rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col max-h-[80vh]"
+            className="relative w-full max-w-2xl bg-white dark:bg-surface-raised rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-dark-slate-800 flex flex-col max-h-[80vh]"
             role="dialog"
             aria-modal="true"
             aria-labelledby="search-dialog-title"
           >
             <h2 id="search-dialog-title" className="sr-only">노트 검색</h2>
-            <div className="flex items-center px-4 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center px-4 border-b border-slate-200 dark:border-dark-slate-800">
               <Search size={20} className="text-slate-400 shrink-0" />
               <input
                 ref={inputRef}
@@ -229,7 +229,7 @@ export default function SearchModal({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={handleInputKeyDown}
-                className="flex-1 outline-none bg-transparent px-4 py-4 text-base sm:text-lg text-slate-900 dark:text-slate-100 placeholder-slate-400"
+                className="flex-1 outline-none bg-transparent px-4 py-4 text-base sm:text-lg text-slate-900 dark:text-dark-slate-100 placeholder-slate-400"
                 aria-label="Search query"
                 aria-controls="search-results"
                 aria-describedby="search-keyboard-hint"
@@ -241,17 +241,17 @@ export default function SearchModal({
                      setSearchQuery('');
                      inputRef.current?.focus();
                    }}
-                   className="mr-2 p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500/50"
+                   className="mr-2 p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-dark-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-dark-slate-300 transition-[color] focus:outline-none focus:ring-2 focus:ring-slate-500/50"
                    aria-label="Clear search"
                  >
                    <X size={16} />
                  </button>
               )}
-              <div className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-400 tracking-widest hidden sm:block">ESC</div>
+              <div className="px-2 py-1 rounded bg-slate-100 dark:bg-dark-slate-800 text-[10px] font-bold text-slate-400 tracking-widest hidden sm:block">ESC</div>
               <button
                 type="button"
                 onClick={onClose}
-                className="ml-2 p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors focus:outline-none focus:ring-2 focus:ring-slate-500/50"
+                className="ml-2 p-1.5 rounded-md hover:bg-slate-100 dark:hover:bg-dark-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-dark-slate-300 transition-[color] focus:outline-none focus:ring-2 focus:ring-slate-500/50"
                 aria-label="검색 닫기"
               >
                 <X size={18} />
@@ -263,13 +263,13 @@ export default function SearchModal({
                 화살표 키로 검색 결과를 고르고 Enter 키로 엽니다.
               </p>
               {searchQuery.trim() === '' ? (
-                <div className="py-12 px-6 text-center text-slate-500 dark:text-slate-400">
+                <div className="py-12 px-6 text-center text-slate-500 dark:text-dark-slate-400">
                   <Search size={32} className="mx-auto mb-3 opacity-20" />
                   <p>검색어를 입력하시면 관련 노트와 주제를 찾아드립니다.</p>
                 </div>
               ) : searchResults.length === 0 ? (
-                <div className="py-12 px-6 text-center text-slate-500 dark:text-slate-400">
-                  <p className="font-medium text-slate-900 dark:text-slate-100 mb-1">검색 결과가 없습니다.</p>
+                <div className="py-12 px-6 text-center text-slate-500 dark:text-dark-slate-400">
+                  <p className="font-medium text-slate-900 dark:text-dark-slate-100 mb-1">검색 결과가 없습니다.</p>
                   <p className="text-sm">다른 조합으로 검색해보세요.</p>
                 </div>
               ) : (
@@ -287,13 +287,13 @@ export default function SearchModal({
                       onClick={() => onSelectResult(result)}
                       aria-current={activeResultIndex === index ? 'true' : undefined}
                       data-active={activeResultIndex === index}
-                      className={`w-full text-left px-4 py-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-slate-800/80 transition-colors group flex flex-col gap-1.5 focus:outline-none focus:bg-indigo-50 dark:focus:bg-slate-800/80 ${
+                      className={`w-full text-left px-4 py-3 rounded-xl hover:bg-indigo-50 dark:hover:bg-dark-slate-800/80 transition-[color] group flex flex-col gap-1.5 focus:outline-none focus:bg-indigo-50 dark:focus:bg-dark-slate-800/80 ${
                         activeResultIndex === index
-                          ? 'bg-indigo-50 dark:bg-slate-800/80'
+                          ? 'bg-indigo-50 dark:bg-dark-slate-800/80'
                           : ''
                       }`}
                     >
-                      <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex-wrap">
+                      <div className="flex items-center gap-2 text-[10px] sm:text-xs font-semibold text-indigo-600 dark:text-dark-indigo-400 uppercase tracking-widest flex-wrap">
                          <span>{result.sectionTitle}</span>
                          <ChevronRight size={12} className="text-slate-400" />
                          {result.kind === 'section' ? (
@@ -301,7 +301,7 @@ export default function SearchModal({
                          ) : (
                            <span className="flex items-center gap-1.5 normal-case tracking-normal">
                              {result.noteNavigationLabel && (
-                               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] text-slate-500 dark:bg-dark-slate-800 dark:text-dark-slate-400">
                                  {result.noteNavigationLabel}
                                </span>
                              )}
@@ -310,7 +310,7 @@ export default function SearchModal({
                              </span>
                            </span>
                          )}
-                         <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300 normal-case tracking-normal">
+                         <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] text-indigo-700 dark:bg-dark-indigo-500/20 dark:text-dark-indigo-300 normal-case tracking-normal">
                            {getMatchLabel(result)}
                          </span>
                       </div>
@@ -322,14 +322,14 @@ export default function SearchModal({
                         ) : (
                           <BookOpenText size={16} className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0" />
                         )}
-                        <span className="font-bold text-sm sm:text-base text-slate-900 dark:text-slate-100 group-hover:text-indigo-700 dark:group-hover:text-indigo-300 transition-colors">
+                        <span className="font-bold text-sm sm:text-base text-slate-900 dark:text-dark-slate-100 group-hover:text-indigo-700 dark:group-hover:text-dark-indigo-300 transition-colors">
                           <HighlightedText text={getResultTitle(result)} query={searchQuery} />
                         </span>
                       </div>
-                      <p className="sm:hidden text-xs text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
+                      <p className="sm:hidden text-xs text-slate-500 dark:text-dark-slate-400 line-clamp-2 pl-6">
                         <HighlightedText text={getMobileResultDescription(result, searchQuery)} query={searchQuery} />
                       </p>
-                      <p className="hidden sm:block text-sm text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
+                      <p className="hidden sm:block text-sm text-slate-500 dark:text-dark-slate-400 line-clamp-2 pl-6">
                         <HighlightedText text={getResultDescription(result)} query={searchQuery} />
                       </p>
                     </button>

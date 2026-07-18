@@ -17,14 +17,14 @@ export default function Header({
   isMobileNavOpen = false,
 }: HeaderProps) {
   return (
-    <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-white/80 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 transition-colors duration-200">
+    <header className="sticky top-0 z-50 w-full backdrop-blur-xl bg-white/80 dark:bg-dark-slate-950/80 border-b border-slate-200 dark:border-dark-slate-800">
       <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-3 sm:gap-6">
         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
           {onOpenMobileNav && (
             <button
               type="button"
               onClick={onOpenMobileNav}
-              className="lg:hidden p-2 -ml-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shrink-0"
+              className="lg:hidden p-2 -ml-2 rounded-full hover:bg-slate-100 dark:hover:bg-dark-slate-800 text-slate-600 dark:text-dark-slate-400 transition-[color] focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shrink-0"
               aria-label="Open Mobile Navigation"
               aria-controls="mobile-navigation"
               aria-expanded={isMobileNavOpen}
@@ -41,10 +41,10 @@ export default function Header({
               <BookOpenText size={18} strokeWidth={2.25} className="sm:size-5" />
             </div>
             <div className="hidden sm:block text-left leading-none">
-              <h1 className="text-[1.15rem] font-bold tracking-[-0.04em] text-slate-950 dark:text-slate-50">
-                Dev<span className="text-indigo-600 dark:text-indigo-400">Note</span>
+              <h1 className="text-[1.15rem] font-bold tracking-[-0.04em] text-slate-950 dark:text-dark-slate-50">
+                Dev<span className="text-indigo-600 dark:text-dark-indigo-400">Note</span>
               </h1>
-              <p className="mt-1.5 text-[10px] font-semibold tracking-[0.14em] text-slate-500 dark:text-slate-400">
+              <p className="mt-1.5 text-[10px] font-semibold tracking-[0.14em] text-slate-500 dark:text-dark-slate-400">
                 개발 학습 노트
               </p>
             </div>
@@ -55,14 +55,14 @@ export default function Header({
            <button
              type="button"
              onClick={onOpenSearch}
-             className="w-full sm:max-w-xs xl:max-w-sm flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-100/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-surface-raised text-sm text-slate-500 dark:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-colors"
+             className="w-full sm:max-w-xs xl:max-w-sm flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full border border-slate-200 dark:border-dark-slate-800 bg-slate-100/50 dark:bg-dark-slate-900/50 hover:bg-white dark:hover:bg-surface-raised text-sm text-slate-500 dark:text-dark-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-[color]"
              aria-label="Open search dialog"
              aria-haspopup="dialog"
              aria-keyshortcuts="Meta+K Control+K"
            >
              <Search size={16} className="text-slate-400 shrink-0" />
              <span className="flex-1 text-left truncate">검색어 (예: select...)</span>
-             <span className="hidden sm:flex items-center gap-0.5 text-[10px] font-medium bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400">
+             <span className="hidden sm:flex items-center gap-0.5 text-[10px] font-medium bg-slate-200 dark:bg-dark-slate-800 px-1.5 py-0.5 rounded text-slate-500 dark:text-dark-slate-400">
                 <span className="text-xs">⌘</span>K
              </span>
            </button>
@@ -71,7 +71,7 @@ export default function Header({
         <button 
           type="button"
           onClick={toggleDark}
-          className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shrink-0"
+          className="p-2.5 rounded-full hover:bg-slate-100 dark:hover:bg-dark-slate-800 text-slate-600 dark:text-dark-slate-400 transition-[color] focus:outline-none focus:ring-2 focus:ring-indigo-500/50 shrink-0"
           aria-label={isDark ? '라이트 모드 사용' : '다크 모드 사용'}
           aria-pressed={isDark}
         >

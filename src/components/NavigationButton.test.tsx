@@ -28,6 +28,11 @@ describe('NavigationButton', () => {
     expect(within(button).getByText(label)).toBeInTheDocument();
     expect(within(button).getByText(section.title)).toBeInTheDocument();
     expect(within(button).getByText(note.title)).toBeInTheDocument();
+    expect(button).toHaveClass(
+      'transition-[border-color,box-shadow,color]',
+      'dark:hover:bg-dark-indigo-500/10',
+    );
+    expect(button).not.toHaveClass('transition-[border-color,background-color,box-shadow,color]');
 
     fireEvent.click(button);
     expect(onClick).toHaveBeenCalledOnce();

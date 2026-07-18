@@ -6,7 +6,7 @@ const NotePage = React.lazy(() => import('./components/NotePage'));
 
 // Simple loading fallback
 const PageLoader = () => (
-  <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+  <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-dark-slate-950">
     <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
   </div>
 );

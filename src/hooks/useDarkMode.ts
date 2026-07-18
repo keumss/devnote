@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 const STORAGE_KEY = 'theme';
 const DARK_MODE_QUERY = '(prefers-color-scheme: dark)';
+const THEME_TRANSITION_DURATION_MS = 200;
 
 type ThemePreference = 'dark' | 'light' | null;
 
@@ -9,6 +10,7 @@ const listeners = new Set<() => void>();
 let mediaQuery: MediaQueryList | null = null;
 let isListeningToSystemTheme = false;
 let isListeningToStorage = false;
+let themeTransitionTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function normalizePreference(value: string | null): ThemePreference {
   return value === 'dark' || value === 'light' ? value : null;
@@ -46,9 +48,26 @@ function resolveIsDark(preference: ThemePreference) {
   return preference === null ? prefersDarkMode() : preference === 'dark';
 }
 
-function applyTheme(isDark: boolean) {
+function startThemeTransition() {
   if (typeof document === 'undefined') return;
 
+  if (themeTransitionTimeout !== null) {
+    clearTimeout(themeTransitionTimeout);
+  }
+
+  document.documentElement.classList.add('theme-transition');
+  themeTransitionTimeout = setTimeout(() => {
+    document.documentElement.classList.remove('theme-transition');
+    themeTransitionTimeout = null;
+  }, THEME_TRANSITION_DURATION_MS);
+}
+
+function applyTheme(isDark: boolean, withTransition = false) {
+  if (typeof document === 'undefined') return;
+
+  if (withTransition) {
+    startThemeTransition();
+  }
   document.documentElement.classList.toggle('dark', isDark);
   document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
 }
@@ -60,17 +79,20 @@ let globalIsDark = resolveIsDark(themePreference);
 // browser, the inline script in index.html has already done this before paint.
 applyTheme(globalIsDark);
 
-function setGlobalIsDark(next: boolean) {
-  applyTheme(next);
-  if (globalIsDark === next) return;
+function setGlobalIsDark(next: boolean, withTransition = false) {
+  if (globalIsDark === next) {
+    applyTheme(next);
+    return;
+  }
 
+  applyTheme(next, withTransition);
   globalIsDark = next;
   listeners.forEach(listener => listener());
 }
 
 function handleSystemThemeChange(event: MediaQueryListEvent) {
   if (themePreference === null) {
-    setGlobalIsDark(event.matches);
+    setGlobalIsDark(event.matches, true);
   }
 }
 
@@ -114,7 +136,7 @@ function handleStorageChange(event: StorageEvent) {
     ? normalizePreference(event.newValue)
     : readStoredPreference();
   syncSystemThemeListener();
-  setGlobalIsDark(resolveIsDark(themePreference));
+  setGlobalIsDark(resolveIsDark(themePreference), true);
 }
 
 function startStorageListener() {
@@ -170,7 +192,7 @@ function toggleDarkMode() {
   }
 
   syncSystemThemeListener();
-  setGlobalIsDark(nextPreference === 'dark');
+  setGlobalIsDark(nextPreference === 'dark', true);
 }
 
 export function useDarkMode() {

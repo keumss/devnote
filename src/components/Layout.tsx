@@ -71,7 +71,7 @@ export default function Layout({ children, activeSectionId, activeNoteId }: Layo
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="min-h-screen flex flex-col transition-colors duration-200 bg-slate-50 dark:bg-slate-950">
+      <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-dark-slate-950">
         <Header
           isDark={isDark}
           toggleDark={toggle}

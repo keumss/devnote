@@ -85,7 +85,15 @@ describe('SearchModal', () => {
 
     const result = screen.getByRole('button', { name: /section a.*note 1.*topic a/i });
     expect(result).toHaveClass('hover:bg-indigo-50', 'focus:bg-indigo-50');
+    expect(result).toHaveClass('transition-[color]');
+    expect(result).not.toHaveClass('transition-colors');
     expect(result).not.toHaveClass('hover:bg-emerald-50', 'focus:bg-emerald-50');
+
+    for (const label of ['Clear search', '검색 닫기']) {
+      const button = screen.getByRole('button', { name: label });
+      expect(button).toHaveClass('transition-[color]');
+      expect(button).not.toHaveClass('transition-colors');
+    }
   });
 
   it('shows the note label and highlights matches in the title and snippet', () => {

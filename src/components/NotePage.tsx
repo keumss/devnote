@@ -36,9 +36,9 @@ function ScrollToTopic({ hash, navigationKey }: { hash: string; navigationKey: s
 function NoteLoader() {
   return (
     <div className="space-y-4 py-4" role="status" aria-label="노트 불러오는 중">
-      <div className="h-7 w-2/3 animate-pulse rounded bg-slate-200 dark:bg-slate-800" />
-      <div className="h-4 w-full animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
-      <div className="h-4 w-5/6 animate-pulse rounded bg-slate-100 dark:bg-slate-900" />
+      <div className="h-7 w-2/3 animate-pulse rounded bg-slate-200 dark:bg-dark-slate-800" />
+      <div className="h-4 w-full animate-pulse rounded bg-slate-100 dark:bg-dark-slate-900" />
+      <div className="h-4 w-5/6 animate-pulse rounded bg-slate-100 dark:bg-dark-slate-900" />
     </div>
   );
 }
@@ -104,12 +104,12 @@ export default function NotePage() {
 
   return (
     <Layout activeSectionId={activeSectionId} activeNoteId={activeNoteId}>
-      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-sm bg-white dark:bg-surface-canvas transition-colors duration-200">
+      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-sm bg-white dark:bg-surface-canvas">
         
         {/* Desktop Left Sidebar Navigation */}
-        <aside className="hidden lg:block w-72 shrink-0 border-r border-slate-200 dark:border-slate-800 bg-white/50 dark:bg-slate-950/50 min-h-[calc(100vh-4rem)] transition-colors duration-200">
+        <aside className="hidden lg:block w-72 shrink-0 border-r border-slate-200 dark:border-dark-slate-800 bg-white/50 dark:bg-dark-slate-950/50 min-h-[calc(100vh-4rem)]">
           <div className="sticky top-16 pt-8 px-6 pb-12 max-h-[calc(100vh-4rem)] overflow-y-auto custom-scrollbar">
-            <div className="flex items-center gap-2 mb-6 px-1 text-slate-800 dark:text-slate-200 font-semibold text-sm uppercase tracking-wider">
+            <div className="flex items-center gap-2 mb-6 px-1 text-slate-800 dark:text-dark-slate-200 font-semibold text-sm uppercase tracking-wider">
               <BookOpen size={16} />
               <span>학습 노트</span>
             </div>
@@ -129,19 +129,19 @@ export default function NotePage() {
               className="max-w-3xl mx-auto"
             >
               <div className="mb-10 block">
-                <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 text-xs font-semibold uppercase tracking-widest mb-4 border border-slate-200 dark:border-slate-700/50 shadow-sm">
+                <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-dark-slate-800/80 text-slate-600 dark:text-dark-slate-300 text-xs font-semibold uppercase tracking-widest mb-4 border border-slate-200 dark:border-dark-slate-700/50 shadow-sm">
                   {activeSection.title}
                 </span>
-                <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-200 tracking-tight leading-tight">
+                <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-dark-slate-200 tracking-tight leading-tight">
                   {activeNote.title}
                 </h2>
               </div>
 
-              <details className="mb-8 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-slate-800 dark:bg-slate-900/40 xl:hidden">
-                <summary className="cursor-pointer text-sm font-semibold text-slate-700 marker:text-indigo-500 dark:text-slate-200">
+              <details className="mb-8 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-dark-slate-800 dark:bg-dark-slate-900/40 xl:hidden">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-700 marker:text-indigo-500 dark:text-dark-slate-200">
                   이 노트의 목차 · {activeNote.topics.length}개 토픽
                 </summary>
-                <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+                <div className="mt-3 border-t border-slate-200 pt-3 dark:border-dark-slate-800">
                   <TopicNav
                     topics={activeNote.topics}
                     onSelectTopic={handleSelectTopic}
@@ -159,7 +159,7 @@ export default function NotePage() {
               </div>
               
               {/* Note navigation */}
-              <div className="mt-16 grid grid-cols-2 gap-3 border-t border-slate-200 pt-8 dark:border-slate-800 sm:gap-4">
+              <div className="mt-16 grid grid-cols-2 gap-3 border-t border-slate-200 pt-8 dark:border-dark-slate-800 sm:gap-4">
                 {prevNoteInfo ? (
                   <NavigationButton 
                     direction="prev"
@@ -180,9 +180,9 @@ export default function NotePage() {
           </AnimatePresence>
         </main>
 
-        <aside className="hidden xl:block w-64 shrink-0 border-l border-slate-200 bg-white/50 dark:border-slate-800 dark:bg-slate-950/50 transition-colors duration-200">
+        <aside className="hidden xl:block w-64 shrink-0 border-l border-slate-200 bg-white/50 dark:border-dark-slate-800 dark:bg-dark-slate-950/50">
           <div className="sticky top-16 max-h-[calc(100vh-4rem)] overflow-y-auto px-5 py-8 custom-scrollbar">
-            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">이 노트의 목차</p>
+            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-dark-slate-400">이 노트의 목차</p>
             <TopicNav
               topics={activeNote.topics}
               onSelectTopic={handleSelectTopic}
