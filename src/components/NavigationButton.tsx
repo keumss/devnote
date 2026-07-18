@@ -1,6 +1,8 @@
 import { ChevronRight, ChevronLeft } from 'lucide-react';
 import { motion } from 'motion/react';
+import { Link } from 'react-router-dom';
 import type { Note } from '../content';
+import { getNotePath } from '../navigation';
 
 type NoteInfo = {
   sectionId: string;
@@ -11,16 +13,16 @@ type NoteInfo = {
 interface NavigationButtonProps {
   direction: 'prev' | 'next';
   info: NoteInfo;
-  onClick: () => void;
 }
 
-export default function NavigationButton({ direction, info, onClick }: NavigationButtonProps) {
+const MotionLink = motion.create(Link);
+
+export default function NavigationButton({ direction, info }: NavigationButtonProps) {
   const isPrev = direction === 'prev';
 
   return (
-    <motion.button
-      type="button"
-      onClick={onClick}
+    <MotionLink
+      to={getNotePath(info.sectionId, info.note.id)}
       aria-label={`${isPrev ? '이전' : '다음'} 노트로 이동: ${info.note.title}`}
       whileHover={{ y: -2 }}
       whileTap={{ scale: 0.99 }}
@@ -42,6 +44,6 @@ export default function NavigationButton({ direction, info, onClick }: Navigatio
           {info.note.title}
         </span>
       </div>
-    </motion.button>
+    </MotionLink>
   );
 }

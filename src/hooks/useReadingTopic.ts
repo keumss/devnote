@@ -30,21 +30,25 @@ export function useReadingTopic(
   }, [selectedTopicId, topics, updateReadingTopicId]);
 
   useEffect(() => {
-    const getTopicElements = () => {
+    let availableTopics: HTMLElement[] = [];
+
+    const refreshTopicElements = () => {
       const contentRoot = contentRootRef.current;
-      if (!contentRoot) return [];
+      if (!contentRoot) {
+        availableTopics = [];
+        return;
+      }
 
       const elementsById = new Map(
         Array.from(contentRoot.querySelectorAll<HTMLElement>('h2[id]'))
           .map(element => [element.id, element]),
       );
-      return topics
+      availableTopics = topics
         .map(topic => elementsById.get(topic.id))
         .filter((element): element is HTMLElement => element !== undefined);
     };
 
     const updateReadingTopic = () => {
-      const availableTopics = getTopicElements();
       if (availableTopics.length === 0) return;
 
       const readingTopic = availableTopics.reduce<HTMLElement | null>((currentTopic, topic) => (
@@ -63,12 +67,14 @@ export function useReadingTopic(
       });
     };
 
+    refreshTopicElements();
     scheduleReadingTopicUpdate();
 
     const contentRoot = contentRootRef.current;
     const mutationObserver = typeof MutationObserver === 'undefined' || !contentRoot
       ? null
       : new MutationObserver(() => {
+        refreshTopicElements();
         updateReadingTopic();
       });
     mutationObserver?.observe(contentRoot, { childList: true, subtree: true });

@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { BookOpen, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import SidebarNav from './SidebarNav';
+import { useDialogFocus } from '../hooks/useDialogFocus';
 
 interface MobileNavDrawerProps {
   isOpen: boolean;
@@ -13,50 +14,13 @@ interface MobileNavDrawerProps {
 export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, activeNoteId }: MobileNavDrawerProps) {
   const drawerRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
-  useEffect(() => {
-    if (!isOpen) return;
-
-    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
-    const focusFrame = window.requestAnimationFrame(() => {
-      closeButtonRef.current?.focus();
-    });
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-
-      if (event.key !== 'Tab' || !drawerRef.current) return;
-      const focusableElements = drawerRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-      );
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
-
-      if (!firstElement || !lastElement) {
-        event.preventDefault();
-      } else if (event.shiftKey && document.activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (!event.shiftKey && document.activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.cancelAnimationFrame(focusFrame);
-      document.removeEventListener('keydown', handleKeyDown);
-      previouslyFocusedRef.current?.focus();
-    };
-  }, [isOpen, onClose]);
+  useDialogFocus({
+    isOpen,
+    onClose,
+    dialogRef: drawerRef,
+    initialFocusRef: closeButtonRef,
+  });
 
   return (
     <AnimatePresence>

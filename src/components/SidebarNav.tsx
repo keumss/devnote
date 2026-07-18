@@ -1,5 +1,5 @@
-import { useState, useEffect, memo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { navData, type Note, type Section } from '../content';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -11,21 +11,24 @@ interface SidebarNavProps {
   onNavigate?: () => void;
 }
 
-const NavNoteItem = memo(({
+function NavNoteItem({
+  sectionId,
   note,
-  isActive, 
-  onClick 
-}: { 
-  note: Note,
-  isActive: boolean, 
-  onClick: () => void 
-}) => {
+  isActive,
+  onNavigate,
+}: {
+  sectionId: string;
+  note: Note;
+  isActive: boolean;
+  onNavigate?: () => void;
+}) {
   return (
     <li>
-      <button
-        type="button"
-        onClick={onClick}
+      <Link
+        to={getNotePath(sectionId, note.id)}
+        onClick={onNavigate}
         aria-label={`${note.navigationLabel ? `${note.navigationLabel} ` : ''}${note.displayTitle}`}
+        aria-current={isActive ? 'page' : undefined}
         className={`relative w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-[color] duration-200 ${
           isActive
             ? 'text-indigo-700 dark:text-dark-indigo-300 font-medium'
@@ -50,12 +53,12 @@ const NavNoteItem = memo(({
         {isActive && (
           <ChevronRight size={14} className="text-indigo-500 min-w-4 relative z-10" />
         )}
-      </button>
+      </Link>
     </li>
   );
-});
+}
 
-const NavSectionItem = memo(({ 
+function NavSectionItem({
   section, 
   isExpanded, 
   activeNoteId,
@@ -66,10 +69,8 @@ const NavSectionItem = memo(({
   isExpanded: boolean, 
   activeNoteId?: string,
   onToggle: () => void, 
-  onNavigate?: () => void 
-}) => {
-  const navigate = useNavigate();
-
+  onNavigate?: () => void;
+}) {
   return (
     <div>
       <button
@@ -97,12 +98,10 @@ const NavSectionItem = memo(({
               {section.notes.map((note) => (
                 <NavNoteItem
                   key={note.id}
+                  sectionId={section.id}
                   note={note}
                   isActive={activeNoteId === note.id}
-                  onClick={() => {
-                    navigate(getNotePath(section.id, note.id));
-                    if (onNavigate) onNavigate();
-                  }}
+                  onNavigate={onNavigate}
                 />
               ))}
             </ul>
@@ -111,7 +110,7 @@ const NavSectionItem = memo(({
       </AnimatePresence>
     </div>
   );
-});
+}
 
 export default function SidebarNav({ activeSectionId, activeNoteId, onNavigate }: SidebarNavProps) {
   const [expandedSectionId, setExpandedSectionId] = useState<string | null>(activeSectionId || null);

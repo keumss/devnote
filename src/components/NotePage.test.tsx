@@ -31,15 +31,15 @@ describe('NotePage note navigation', () => {
       </StrictMode>,
     );
 
-    const previousButton = await findByRole('button', { name: `이전 노트로 이동: ${previousNote.note.title}` });
-    const nextButton = await findByRole('button', { name: `다음 노트로 이동: ${nextNote.note.title}` });
+    const previousLink = await findByRole('link', { name: `이전 노트로 이동: ${previousNote.note.title}` });
+    const nextLink = await findByRole('link', { name: `다음 노트로 이동: ${nextNote.note.title}` });
 
-    expect(previousButton.parentElement).toBe(nextButton.parentElement);
-    expect(previousButton.parentElement).toHaveClass('grid-cols-2');
-    expect(within(previousButton).getByText(previousNote.section.title)).toBeInTheDocument();
-    expect(within(nextButton).getByText(nextNote.section.title)).toBeInTheDocument();
+    expect(previousLink.parentElement).toBe(nextLink.parentElement);
+    expect(previousLink.parentElement).toHaveClass('grid-cols-2');
+    expect(within(previousLink).getByText(previousNote.section.title)).toBeInTheDocument();
+    expect(within(nextLink).getByText(nextNote.section.title)).toBeInTheDocument();
 
-    fireEvent.click(nextButton);
+    fireEvent.click(nextLink);
 
     await waitFor(() => {
       expect(window.location.hash).toBe(`#${getNotePath(nextNote.section.id, nextNote.note.id)}`);

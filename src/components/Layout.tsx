@@ -10,6 +10,8 @@ import { useSearch } from '../hooks/useSearch';
 import type { SearchResult } from '../search';
 import { getNotePath, getTopicHash } from '../navigation';
 
+type ActiveOverlay = 'search' | 'mobile-nav' | null;
+
 interface LayoutProps {
   children: React.ReactNode;
   activeSectionId?: string;
@@ -19,55 +21,51 @@ interface LayoutProps {
 export default function Layout({ children, activeSectionId, activeNoteId }: LayoutProps) {
   const { isDark, toggle } = useDarkMode();
   const navigate = useNavigate();
-  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [activeOverlay, setActiveOverlay] = useState<ActiveOverlay>(null);
+
+  const openSearch = useCallback(() => {
+    setActiveOverlay('search');
+  }, []);
 
   const handleSelectResult = useCallback((result: SearchResult) => {
     navigate({
       pathname: getNotePath(result.sectionId, result.noteId),
       hash: result.kind === 'topic' ? getTopicHash(result.topic.id) : '',
     });
+    setActiveOverlay(null);
   }, [navigate]);
-
-  const closeMobileNavBeforeSearch = useCallback(() => {
-    setIsMobileNavOpen(false);
-  }, []);
 
   const {
     searchQuery,
     setSearchQuery,
-    isSearchModalOpen,
-    setIsSearchModalOpen,
     searchResults,
     handleSelectSearchResult
-  } = useSearch(handleSelectResult, closeMobileNavBeforeSearch);
+  } = useSearch(handleSelectResult, openSearch);
 
   useEffect(() => {
-    if (!isSearchModalOpen && !isMobileNavOpen) return;
+    if (activeOverlay === null) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [isMobileNavOpen, isSearchModalOpen]);
-
-  const openSearch = useCallback(() => {
-    setIsMobileNavOpen(false);
-    setIsSearchModalOpen(true);
-  }, [setIsSearchModalOpen]);
+  }, [activeOverlay]);
 
   const closeSearch = useCallback(() => {
-    setIsSearchModalOpen(false);
-  }, [setIsSearchModalOpen]);
+    setActiveOverlay(null);
+  }, []);
 
   const openMobileNav = useCallback(() => {
-    setIsSearchModalOpen(false);
-    setIsMobileNavOpen(true);
-  }, [setIsSearchModalOpen]);
+    setActiveOverlay('mobile-nav');
+  }, []);
 
   const closeMobileNav = useCallback(() => {
-    setIsMobileNavOpen(false);
+    setActiveOverlay(null);
   }, []);
+
+  const isSearchModalOpen = activeOverlay === 'search';
+  const isMobileNavOpen = activeOverlay === 'mobile-nav';
 
   return (
     <MotionConfig reducedMotion="user">

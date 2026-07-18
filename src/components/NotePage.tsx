@@ -164,7 +164,6 @@ export default function NotePage() {
                   <NavigationButton 
                     direction="prev"
                     info={prevNoteInfo}
-                    onClick={() => navigate(getNotePath(prevNoteInfo.sectionId, prevNoteInfo.note.id))}
                   />
                 ) : null}
                 
@@ -172,7 +171,6 @@ export default function NotePage() {
                   <NavigationButton 
                     direction="next"
                     info={nextNoteInfo}
-                    onClick={() => navigate(getNotePath(nextNoteInfo.sectionId, nextNoteInfo.note.id))}
                   />
                 ) : null}
               </div>

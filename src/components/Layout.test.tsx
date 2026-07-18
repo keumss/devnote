@@ -14,10 +14,12 @@ function LocationProbe() {
 describe('Layout search flow', () => {
   afterEach(() => {
     cleanup();
+    document.body.style.overflow = '';
   });
 
   beforeEach(() => {
     window.history.replaceState(null, '', '/#/');
+    document.body.style.overflow = '';
   });
 
   it('loads the search index, displays results, and navigates to a heading', async () => {
@@ -83,5 +85,29 @@ describe('Layout search flow', () => {
       expect(getByLabelText('current location').textContent).toBe(getNotePath(section.id, note.id));
       expect(window.location.hash).toBe(`#${getNotePath(section.id, note.id)}`);
     });
+  });
+
+  it('keeps only one overlay open and restores body scrolling after close', async () => {
+    const { getByLabelText, getByRole, queryByRole } = render(
+      <HashRouter>
+        <Layout>
+          <LocationProbe />
+        </Layout>
+      </HashRouter>,
+    );
+
+    fireEvent.click(getByLabelText('Open Mobile Navigation'));
+    expect(getByRole('dialog', { name: '학습 노트' })).toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('hidden');
+
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(getByRole('dialog', { name: '노트 검색' })).toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('hidden');
+    await waitFor(() => {
+      expect(queryByRole('dialog', { name: '학습 노트' })).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(getByLabelText('검색 닫기'));
+    await waitFor(() => expect(document.body.style.overflow).toBe(''));
   });
 });
