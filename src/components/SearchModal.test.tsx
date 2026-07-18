@@ -102,8 +102,43 @@ describe('SearchModal', () => {
 
     expect(screen.getByText('Part 1 · 기초')).toBeInTheDocument();
     const highlightedTerms = screen.getAllByText(/topic/i, { selector: 'mark' });
-    expect(highlightedTerms).toHaveLength(2);
-    expect(highlightedTerms[1].closest('p')).toHaveTextContent('Example topic');
+    expect(highlightedTerms).toHaveLength(3);
+    expect(highlightedTerms.filter(term => term.closest('p'))).toHaveLength(2);
+  });
+
+  it('keeps a content match visible in the compact mobile description', () => {
+    const longResult: SearchResult = {
+      sectionId: 'section-a',
+      sectionTitle: 'Section A',
+      noteId: 'note-1',
+      noteNavigationLabel: 'Part 1 · 기초',
+      noteTitle: 'Note 1',
+      kind: 'topic',
+      matchKind: 'content',
+      snippet: '이 설명은 모바일 카드에서 앞부분이 잘릴 만큼 충분히 길고, 검색어 앞뒤의 맥락도 함께 보여 주어야 합니다. joinedload는 관계 데이터를 미리 읽을 때 사용합니다. 이후 설명도 계속됩니다.',
+      topic: {
+        id: 'topic-a',
+        title: 'Topic A',
+        description: '',
+        content: '',
+      },
+    };
+
+    render(
+      <SearchModal
+        isOpen
+        onClose={vi.fn()}
+        searchQuery="joinedload"
+        setSearchQuery={vi.fn()}
+        searchResults={[longResult]}
+        onSelectResult={vi.fn()}
+      />,
+    );
+
+    const mobileDescription = document.querySelector('p.sm\\:hidden');
+    expect(mobileDescription).toHaveTextContent('joinedload');
+    expect(mobileDescription?.textContent?.length).toBeLessThanOrEqual(74);
+    expect(mobileDescription?.querySelector('mark')).toHaveTextContent('joinedload');
   });
 
   it('selects the highlighted result with Arrow keys and Enter', async () => {

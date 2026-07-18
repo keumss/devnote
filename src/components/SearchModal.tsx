@@ -24,6 +24,31 @@ function getResultDescription(result: SearchResult) {
   return '섹션 제목에서 찾음';
 }
 
+const MOBILE_DESCRIPTION_LENGTH = 72;
+
+function getMobileResultDescription(result: SearchResult, query: string) {
+  const description = getResultDescription(result);
+  if (description.length <= MOBILE_DESCRIPTION_LENGTH) return description;
+
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const normalizedDescription = description.toLocaleLowerCase();
+  const terms = normalizedQuery.split(/\s+/).filter(Boolean);
+  const phraseIndex = normalizedDescription.indexOf(normalizedQuery);
+  const matchedTerm = terms.find(term => normalizedDescription.includes(term));
+  const matchIndex = phraseIndex >= 0
+    ? phraseIndex
+    : matchedTerm ? normalizedDescription.indexOf(matchedTerm) : -1;
+  const matchLength = phraseIndex >= 0 ? normalizedQuery.length : matchedTerm?.length ?? 0;
+
+  if (matchIndex < 0) return description.slice(0, MOBILE_DESCRIPTION_LENGTH).trimEnd() + '…';
+
+  const contextLength = MOBILE_DESCRIPTION_LENGTH - matchLength;
+  const start = Math.max(0, matchIndex - Math.floor(contextLength / 2));
+  const end = Math.min(description.length, start + MOBILE_DESCRIPTION_LENGTH);
+
+  return `${start > 0 ? '…' : ''}${description.slice(start, end).trim()}${end < description.length ? '…' : ''}`;
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -301,7 +326,10 @@ export default function SearchModal({
                           <HighlightedText text={getResultTitle(result)} query={searchQuery} />
                         </span>
                       </div>
-                      <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
+                      <p className="sm:hidden text-xs text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
+                        <HighlightedText text={getMobileResultDescription(result, searchQuery)} query={searchQuery} />
+                      </p>
+                      <p className="hidden sm:block text-sm text-slate-500 dark:text-slate-400 line-clamp-2 pl-6">
                         <HighlightedText text={getResultDescription(result)} query={searchQuery} />
                       </p>
                     </button>
