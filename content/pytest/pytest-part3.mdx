@@ -1,0 +1,196 @@
+---
+title: "Part 3. 고급: 외부 경계와 실행 환경 격리하기"
+---
+
+## monkeypatch.setenv로 환경 변수 입력 격리하기
+
+환경 변수에 따라 달라지는 코드를 현재 셸 설정과 분리해 검증할 때 `monkeypatch`를 사용합니다. 바꾼 값은 테스트가 끝나면 자동으로 원래 상태로 복원됩니다.
+
+```python
+import os
+
+
+def read_mode() -> str:
+    return os.getenv('APP_MODE', 'development')
+
+
+def test_reads_production_mode(monkeypatch) -> None:
+    monkeypatch.setenv('APP_MODE', 'production')
+    assert read_mode() == 'production'
+
+
+def test_uses_default_without_mode(monkeypatch) -> None:
+    monkeypatch.delenv('APP_MODE', raising=False)
+    assert read_mode() == 'development'
+```
+
+`setenv`와 `delenv`로 환경 변수의 존재·부재를 모두 명시하면 개발자 컴퓨터나 CI 환경의 값이 테스트 결과에 섞이지 않습니다.
+
+## monkeypatch.setattr로 호출한 외부 함수 교체하기
+
+현재 시간이나 네트워크 클라이언트처럼 결과를 통제할 수 없는 경계를 검증할 때 코드가 실제로 참조하는 이름을 교체합니다.
+
+```python
+# delivery.py
+from datetime import date
+
+
+def today_label() -> str:
+    return date.today().isoformat()
+```
+
+```python
+# test_delivery.py
+import delivery
+
+
+class FixedDate:
+    @classmethod
+    def today(cls):
+        return cls(2026, 7, 19)
+
+    def __new__(cls, year: int, month: int, day: int):
+        from datetime import date
+        return date(year, month, day)
+
+
+def test_today_label(monkeypatch) -> None:
+    monkeypatch.setattr(delivery, 'date', FixedDate)
+    assert delivery.today_label() == '2026-07-19'
+```
+
+`datetime.date` 원본이 아니라 `delivery.date`를 바꾸는 이유는 `today_label()`이 그 이름을 조회하기 때문입니다. 가능하다면 시간이나 외부 클라이언트를 함수 인수로 받아 패치 없이 교체할 수 있게 설계합니다.
+
+## capsys로 표준 출력과 오류 출력 확인하기
+
+CLI가 사용자에게 보이는 메시지를 올바른 출력 스트림에 쓰는지 검증할 때 `capsys`를 사용합니다.
+
+```python
+import sys
+
+
+def print_stock(stock: int) -> int:
+    if stock < 0:
+        print('stock: 재고는 음수일 수 없습니다.', file=sys.stderr)
+        return 1
+    print(f'stock={stock}')
+    return 0
+
+
+def test_print_stock_error(capsys) -> None:
+    exit_code = print_stock(-1)
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert captured.out == ''
+    assert captured.err == 'stock: 재고는 음수일 수 없습니다.\n'
+```
+
+`readouterr()`는 그 시점까지의 `out`과 `err`를 반환하고 캡처 버퍼를 비웁니다. 메시지의 일부가 아니라 사용자 계약인 전체 출력과 개행까지 확인합니다.
+
+## caplog로 로그 수준과 메시지 확인하기
+
+사용자 출력과 분리된 운영 로그를 검증할 때 `caplog`를 사용합니다. 로그 문자열만 찾기보다 수준과 구조화에 사용한 필드를 함께 확인합니다.
+
+```python
+import logging
+
+
+logger = logging.getLogger('inventory')
+
+
+def warn_low_stock(name: str, stock: int) -> None:
+    if stock <= 2:
+        logger.warning('low stock: %s=%d', name, stock)
+
+
+def test_warns_about_low_stock(caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger='inventory'):
+        warn_low_stock('keyboard', 1)
+
+    assert caplog.record_tuples == [
+        ('inventory', logging.WARNING, 'low stock: keyboard=1'),
+    ]
+```
+
+실제 로깅 설정이나 파일 핸들러를 만들지 않고 발생한 로그 레코드만 검사합니다. 비밀값이나 전체 요청 본문이 로그에 들어가지 않는지도 경계 테스트로 확인할 수 있습니다.
+
+## skip·xfail·커스텀 marker로 실행 조건 표현하기
+
+특정 플랫폼에서 실행할 수 없거나 아직 해결되지 않은 결함을 테스트 목록에 남길 때 marker로 이유를 표현합니다.
+
+```python
+import sys
+
+import pytest
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='POSIX 신호가 필요합니다.')
+def test_stops_worker_with_signal() -> None:
+    assert sys.platform != 'win32'
+
+
+@pytest.mark.xfail(reason='반올림 정책 변경 전까지 알려진 실패입니다.', strict=True)
+def test_half_even_rounding() -> None:
+    assert round(2.5) == 3
+
+
+@pytest.mark.integration
+def test_inventory_repository() -> None:
+    assert True
+```
+
+`skip`은 현재 실행할 수 없는 조건, `xfail`은 실행하지만 예상된 실패인 조건에 사용합니다. `strict=True`이면 예상과 달리 성공한 XPASS도 실패로 처리되어 낡은 표시를 발견할 수 있습니다. 단순히 불안정한 테스트를 숨기는 용도로 사용하지 않습니다.
+
+## fixture factory로 테스트별 데이터 변형하기
+
+공통 형태는 같지만 필드가 조금씩 다른 데이터를 여러 개 만들 때 fixture가 생성 함수를 반환하게 합니다.
+
+```python
+from collections.abc import Callable
+
+import pytest
+
+
+@pytest.fixture
+def make_product() -> Callable[..., dict[str, object]]:
+    def factory(
+        name: str = 'keyboard',
+        *,
+        price: int = 50_000,
+        stock: int = 3,
+    ) -> dict[str, object]:
+        return {'name': name, 'price': price, 'stock': stock}
+
+    return factory
+
+
+def test_sold_out_product(make_product) -> None:
+    product = make_product('mouse', stock=0)
+    assert product == {'name': 'mouse', 'price': 50_000, 'stock': 0}
+```
+
+factory는 의미 있는 기본값을 제공하고 테스트는 중요한 차이만 지정합니다. 필드 조합이 테스트의 핵심이라면 숨기지 말고 테스트 본문에 직접 데이터를 작성합니다.
+
+## pyproject.toml로 수집 경로와 marker 검증하기
+
+프로젝트마다 같은 실행 기본값과 marker 이름을 사용하려면 pytest 설정을 버전 관리에 둡니다.
+
+```toml
+# pyproject.toml
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["--strict-markers", "-ra"]
+markers = [
+  "integration: 외부 경계를 함께 확인하는 통합 테스트",
+]
+```
+
+```bash
+python -m pytest
+python -m pytest -m integration
+```
+
+`testpaths`는 기본 수집 위치를 고정하고 `--strict-markers`는 등록하지 않은 marker 오타를 오류로 만듭니다. 개인 디버깅용 필터는 설정에 고정하지 않고 명령줄에서만 사용합니다.
+
+공식 pytest [monkeypatch](https://docs.pytest.org/en/stable/how-to/monkeypatch.html), [로그 캡처](https://docs.pytest.org/en/stable/how-to/logging.html), [marker](https://docs.pytest.org/en/stable/how-to/mark.html), [설정](https://docs.pytest.org/en/stable/reference/customize.html)을 기준으로 구성했습니다.

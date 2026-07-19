@@ -1,0 +1,170 @@
+---
+title: "Part 2. 중급: fixture와 parametrization으로 반복 줄이기"
+---
+
+## @pytest.fixture로 공통 준비 데이터 제공하기
+
+여러 테스트가 같은 형태의 데이터를 준비할 때 fixture로 이름을 붙여 재사용합니다. 테스트 함수의 매개변수 이름과 fixture 이름이 같으면 pytest가 실행 전에 값을 만들어 전달합니다.
+
+```python
+import pytest
+
+
+@pytest.fixture
+def products() -> list[dict[str, object]]:
+    return [
+        {'name': 'keyboard', 'stock': 3},
+        {'name': 'mouse', 'stock': 0},
+    ]
+
+
+def test_counts_available_products(products: list[dict[str, object]]) -> None:
+    count = sum(int(product['stock']) > 0 for product in products)
+    assert count == 1
+```
+
+fixture는 테스트의 준비 단계를 담당하고, assertion은 테스트 함수에 남깁니다. 테스트가 어떤 준비물을 사용하는지는 매개변수에서 바로 확인할 수 있습니다.
+
+## fixture 조합으로 준비 책임 나누기
+
+준비 데이터가 다른 공통 설정에 의존할 때 fixture끼리도 매개변수로 연결합니다. 작은 준비 단위를 조합하면 한 fixture가 모든 상황을 떠안지 않습니다.
+
+```python
+import pytest
+
+
+@pytest.fixture
+def base_stock() -> dict[str, int]:
+    return {'keyboard': 3, 'mouse': 1}
+
+
+@pytest.fixture
+def low_stock_names(base_stock: dict[str, int]) -> list[str]:
+    return [name for name, stock in base_stock.items() if stock <= 1]
+
+
+def test_finds_low_stock(low_stock_names: list[str]) -> None:
+    assert low_stock_names == ['mouse']
+```
+
+의존한 fixture는 필요한 순서대로 실행되며 같은 테스트 안에서는 결과가 재사용됩니다. 숨은 전역 상태 대신 명시적인 fixture 관계로 준비 순서를 표현합니다.
+
+## yield fixture로 사용한 자원 정리하기
+
+파일이나 연결처럼 테스트 뒤에 닫아야 하는 자원을 준비할 때 `yield` fixture를 사용합니다. `yield` 앞은 준비, 뒤는 성공·실패와 관계없이 실행되는 정리 단계입니다.
+
+```python
+from collections.abc import Iterator
+from io import StringIO
+
+import pytest
+
+
+@pytest.fixture
+def report_stream() -> Iterator[StringIO]:
+    stream = StringIO()
+    yield stream
+    stream.close()
+
+
+def test_writes_report(report_stream: StringIO) -> None:
+    report_stream.write('reserved=2')
+    assert report_stream.getvalue() == 'reserved=2'
+```
+
+여러 자원을 한 번에 만든다면 하나가 실패해도 이미 만든 자원은 정리되도록 fixture를 작게 나누거나 context manager를 사용합니다.
+
+## scope로 fixture 공유 범위 정하기
+
+준비 비용이 크고 테스트 사이에서 안전하게 공유할 수 있는 값은 fixture scope를 넓힐 수 있습니다. 기본 `function` scope는 테스트마다 새 값을 만들고 가장 강한 격리를 제공합니다.
+
+```python
+import pytest
+
+
+@pytest.fixture(scope='module')
+def tax_table() -> dict[str, float]:
+    return {'standard': 0.1, 'reduced': 0.05}
+
+
+def test_standard_tax(tax_table: dict[str, float]) -> None:
+    assert 10_000 * tax_table['standard'] == 1_000
+```
+
+`class`, `module`, `package`, `session`으로 범위를 넓힐 수 있지만 변경 가능한 데이터베이스나 목록을 공유하면 테스트 순서에 따라 결과가 달라질 수 있습니다. 먼저 `function`을 사용하고 실제 비용이 확인될 때만 넓힙니다.
+
+## conftest.py로 여러 테스트 파일에서 fixture 공유하기
+
+같은 디렉터리 아래의 여러 테스트 파일이 공통 fixture를 사용할 때 `conftest.py`에 둡니다. 테스트 파일은 별도 import 없이 fixture 이름을 매개변수로 요청합니다.
+
+```python
+# tests/conftest.py
+import pytest
+
+
+@pytest.fixture
+def warehouse() -> dict[str, int]:
+    return {'keyboard': 5, 'mouse': 2}
+```
+
+```python
+# tests/test_inventory.py
+def test_warehouse_has_keyboard(warehouse: dict[str, int]) -> None:
+    assert warehouse['keyboard'] == 5
+```
+
+fixture가 필요한 테스트와 가까운 `conftest.py`에 두어 적용 범위를 좁힙니다. 일반 애플리케이션 코드나 assertion 도우미는 평범한 Python 모듈로 분리해 명시적으로 import합니다.
+
+## parametrize로 같은 규칙의 입력 경계 확인하기
+
+하나의 규칙을 여러 입력과 기대 결과로 확인할 때 `@pytest.mark.parametrize`를 사용합니다. 테스트 본문을 복제하지 않고 정상값과 경곗값을 표로 읽을 수 있습니다.
+
+```python
+import pytest
+
+
+def shipping_fee(total: int) -> int:
+    return 0 if total >= 50_000 else 3_000
+
+
+@pytest.mark.parametrize(
+    ('total', 'expected'),
+    [
+        pytest.param(49_999, 3_000, id='below-threshold'),
+        pytest.param(50_000, 0, id='at-threshold'),
+        pytest.param(70_000, 0, id='above-threshold'),
+    ],
+)
+def test_shipping_fee(total: int, expected: int) -> None:
+    assert shipping_fee(total) == expected
+```
+
+```text
+3 passed
+```
+
+각 매개변수 값은 복사되지 않고 그대로 전달되므로 테스트에서 목록이나 딕셔너리를 변경하지 않습니다. `id`는 실패한 사례의 의미가 출력에서 드러나게 합니다.
+
+## tmp_path로 파일 작업 격리하기
+
+파일을 읽고 쓰는 기능을 실제 작업 폴더와 분리해 검증할 때 내장 `tmp_path` fixture를 사용합니다. 각 테스트는 독립된 `pathlib.Path` 임시 디렉터리를 받습니다.
+
+```python
+from pathlib import Path
+
+
+def save_report(path: Path, lines: list[str]) -> None:
+    path.write_text('\n'.join(lines), encoding='utf-8')
+
+
+def test_saves_report(tmp_path: Path) -> None:
+    report_path = tmp_path / 'report.txt'
+
+    save_report(report_path, ['keyboard=2', 'mouse=1'])
+
+    assert report_path.read_text(encoding='utf-8') == 'keyboard=2\nmouse=1'
+```
+
+고정된 `/tmp` 경로나 프로젝트 안의 테스트 파일을 공유하지 않으므로 병렬 실행과 반복 실행에서도 이전 결과가 섞이지 않습니다.
+
+공식 pytest [fixture 설명](https://docs.pytest.org/en/stable/explanation/fixtures.html), [parametrize](https://docs.pytest.org/en/stable/how-to/parametrize.html), [tmp_path](https://docs.pytest.org/en/stable/how-to/tmp_path.html)를 기준으로 구성했습니다.

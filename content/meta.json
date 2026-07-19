@@ -5,6 +5,7 @@
     "sqlmodel",
     "fastapi",
     "dataclass",
-    "chainmap"
+    "chainmap",
+    "pytest"
   ]
 }

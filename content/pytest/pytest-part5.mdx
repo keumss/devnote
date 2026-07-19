@@ -1,0 +1,225 @@
+---
+title: "Part 5. 실전 2: FastAPI 작업 API 통합 테스트하기"
+---
+
+이번에는 사용자별 작업을 생성하고 목록으로 읽는 작은 FastAPI 애플리케이션을 HTTP 요청부터 데이터베이스까지 통합 테스트합니다. 목표는 운영 데이터베이스를 열지 않고 매 테스트마다 새 메모리 SQLite를 사용하며, FastAPI 의존성 교체도 테스트 뒤에 남기지 않는 것입니다. 첫 토픽의 `main.py`를 준비하고 나머지 코드를 `tests/conftest.py`와 `tests/test_tasks.py`에 순서대로 추가합니다.
+
+## main.py로 Task 모델과 생성·목록 API 준비하기
+
+테스트 대상은 Task 테이블, 요청·응답 모델, 요청별 세션, 현재 사용자 의존성, 생성·목록 경로입니다. 학습용 인증은 `X-User-Id` 헤더를 사용하며 실제 서비스에서는 검증된 세션이나 토큰에서 사용자 ID를 얻어야 합니다.
+
+```python
+# main.py
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Header
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+
+
+class Task(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
+    done: bool = False
+    owner_id: int = Field(index=True)
+
+
+class TaskCreate(SQLModel):
+    title: str = Field(min_length=1, max_length=100)
+
+
+class TaskPublic(SQLModel):
+    id: int
+    title: str
+    done: bool
+
+
+engine = create_engine(
+    'sqlite:///tasks.db',
+    connect_args={'check_same_thread': False},
+)
+
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+
+def get_current_user(
+    x_user_id: Annotated[int, Header(alias='X-User-Id')],
+) -> int:
+    return x_user_id
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+CurrentUser = Annotated[int, Depends(get_current_user)]
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    SQLModel.metadata.create_all(engine)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.post('/tasks', response_model=TaskPublic, status_code=201)
+def create_task(
+    data: TaskCreate,
+    session: SessionDep,
+    owner_id: CurrentUser,
+) -> TaskPublic:
+    task = Task(title=data.title, owner_id=owner_id)
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+    return TaskPublic.model_validate(task)
+
+
+@app.get('/tasks', response_model=list[TaskPublic])
+def list_tasks(session: SessionDep, owner_id: CurrentUser) -> list[TaskPublic]:
+    tasks = session.exec(
+        select(Task).where(Task.owner_id == owner_id).order_by(Task.id)
+    ).all()
+    return [TaskPublic.model_validate(task) for task in tasks]
+```
+
+엔드포인트는 클라이언트가 보낸 소유자 ID를 저장하지 않고 현재 사용자 의존성의 결과를 사용합니다. 테스트에서는 `get_session`과 `get_current_user`를 교체해 운영 파일과 헤더 인증에 의존하지 않게 합니다.
+
+## session fixture로 메모리 SQLite를 매번 준비하기
+
+각 테스트가 빈 데이터베이스에서 시작하게 하려면 기본 `function` scope fixture에서 엔진과 테이블을 만듭니다. `StaticPool`은 여러 스레드가 같은 메모리 SQLite 연결을 사용하게 합니다.
+
+```python
+# tests/conftest.py
+from collections.abc import Iterator
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel.pool import StaticPool
+
+from main import app, get_current_user, get_session
+
+
+@pytest.fixture
+def session() -> Iterator[Session]:
+    test_engine = create_engine(
+        'sqlite://',
+        connect_args={'check_same_thread': False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(test_engine)
+
+    with Session(test_engine) as session:
+        yield session
+```
+
+파일 이름이 없는 `sqlite://`는 데이터를 메모리에만 둡니다. 엔진을 fixture 안에서 만들기 때문에 각 테스트가 별도 데이터베이스를 받고 이전 테스트의 행이 남지 않습니다.
+
+## client fixture로 세션과 현재 사용자 의존성 교체하기
+
+모든 API 테스트에서 같은 교체·정리 코드를 반복하지 않도록 `client` fixture가 `session` fixture를 사용하게 합니다. 아래 코드를 `tests/conftest.py` 끝에 추가합니다.
+
+```python
+@pytest.fixture
+def client(session: Session) -> Iterator[TestClient]:
+    def get_session_override() -> Session:
+        return session
+
+    def get_current_user_override() -> int:
+        return 1
+
+    app.dependency_overrides[get_session] = get_session_override
+    app.dependency_overrides[get_current_user] = get_current_user_override
+    client = TestClient(app)
+
+    try:
+        yield client
+    finally:
+        client.close()
+        app.dependency_overrides.clear()
+```
+
+요청은 실제 FastAPI 라우팅·검증·직렬화를 지나지만 세션은 메모리 DB, 현재 사용자는 ID 1로 고정됩니다. `finally`에서 클라이언트와 모든 override를 정리하므로 assertion 실패가 발생해도 다음 테스트에 전역 앱 상태가 남지 않습니다.
+
+## POST /tasks의 응답과 저장 결과 함께 확인하기
+
+작업 생성 요청이 HTTP 계약을 지키고 같은 세션에 올바른 소유자로 저장되는지 확인합니다.
+
+```python
+# tests/test_tasks.py
+from fastapi.testclient import TestClient
+from sqlmodel import Session, select
+
+from main import Task
+
+
+def test_create_task_persists_current_user_task(
+    client: TestClient,
+    session: Session,
+) -> None:
+    response = client.post('/tasks', json={'title': 'pytest 노트 작성'})
+
+    assert response.status_code == 201
+    assert response.json() == {
+        'id': 1,
+        'title': 'pytest 노트 작성',
+        'done': False,
+    }
+
+    saved = session.exec(select(Task)).one()
+    assert saved.title == 'pytest 노트 작성'
+    assert saved.owner_id == 1
+```
+
+응답만 확인하면 저장이 누락된 구현을 놓칠 수 있고 DB만 확인하면 상태 코드나 공개 필드 오류를 놓칠 수 있습니다. 통합 테스트는 한 요청의 중요한 외부 결과와 저장 결과를 연결합니다.
+
+## GET /tasks에서 현재 사용자의 데이터만 확인하기
+
+다른 사용자의 행이 있어도 현재 사용자에게 노출되지 않는지 확인합니다. API를 준비하는 데 필요 없는 시작 데이터는 같은 `session` fixture로 직접 넣습니다.
+
+```python
+def test_list_tasks_returns_only_current_user_tasks(
+    client: TestClient,
+    session: Session,
+) -> None:
+    session.add(Task(title='내 작업', owner_id=1))
+    session.add(Task(title='다른 사용자 작업', owner_id=2))
+    session.commit()
+
+    response = client.get('/tasks')
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {'id': 1, 'title': '내 작업', 'done': False},
+    ]
+```
+
+응답에 `owner_id`를 공개하지 않더라도 조회 쿼리는 현재 사용자 조건을 반드시 포함해야 합니다. 권한 경계는 결과 개수뿐 아니라 반환된 필드 전체로 확인합니다.
+
+## function fixture로 테스트 간 데이터 격리 확인하기
+
+앞선 테스트가 작업을 저장했더라도 새 테스트는 빈 목록에서 시작해야 합니다. 이 검증은 fixture scope가 넓어지거나 고정 테스트 DB를 재사용하는 회귀를 바로 드러냅니다.
+
+```python
+def test_list_tasks_starts_empty(client: TestClient) -> None:
+    response = client.get('/tasks')
+
+    assert response.status_code == 200
+    assert response.json() == []
+```
+
+```bash
+python -m pip install pytest fastapi sqlmodel httpx2
+python -m pytest -q
+```
+
+```text
+3 passed
+```
+
+이 예제에서는 동기 `TestClient`를 사용하므로 테스트 함수도 일반 `def`로 작성합니다. 애플리케이션이 비동기 DB 드라이버나 비동기 외부 클라이언트를 직접 호출할 때만 async 테스트와 해당 플러그인을 별도 선택합니다.
+
+공식 FastAPI [TestClient 테스트](https://fastapi.tiangolo.com/tutorial/testing/), [의존성 교체](https://fastapi.tiangolo.com/advanced/testing-dependencies/), Starlette [TestClient](https://www.starlette.io/testclient/), SQLModel [메모리 데이터베이스 테스트](https://sqlmodel.tiangolo.com/tutorial/fastapi/tests/)를 기준으로 구성했습니다.

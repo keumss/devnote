@@ -1,0 +1,168 @@
+---
+title: "Part 1. 기초: 작은 동작을 빠르게 검증하기"
+---
+
+## pytest를 설치하고 첫 동작 검증하기
+
+Python 함수가 기대한 결과를 계속 내는지 빠르게 확인할 때 pytest를 사용합니다. 일반 `assert` 문으로 조건을 표현하면 pytest가 테스트를 찾아 실행하고, 실패한 값의 차이를 보여 줍니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install pytest
+```
+
+`test_price.py`에 첫 테스트를 작성합니다.
+
+```python
+def discounted_price(price: int, rate: float) -> int:
+    return round(price * (1 - rate))
+
+
+def test_discounted_price() -> None:
+    assert discounted_price(10_000, 0.2) == 8_000
+```
+
+```bash
+python -m pytest -q
+```
+
+```text
+1 passed
+```
+
+테스트는 입력과 기대 결과를 함께 남기는 실행 가능한 사용 예입니다. 구현을 바꾼 뒤 같은 명령을 실행해 기존 동작이 유지되는지 확인합니다.
+
+## test_ 이름으로 검증 대상을 자동 수집하기
+
+테스트 파일을 일일이 명령에 나열하지 않으려면 pytest의 수집 이름 규칙을 따릅니다. 파일은 `test_*.py` 또는 `*_test.py`, 함수와 메서드는 `test_`로 시작합니다.
+
+```text
+project/
+├── price.py
+└── tests/
+    ├── test_price.py
+    └── shipping_test.py
+```
+
+앞 토픽의 `discounted_price()`를 `price.py`로 옮긴 뒤 테스트에서 가져옵니다.
+
+```python
+# tests/test_price.py
+from price import discounted_price
+
+
+def test_zero_rate_keeps_price() -> None:
+    assert discounted_price(5_000, 0) == 5_000
+```
+
+```bash
+python -m pytest --collect-only -q
+```
+
+```text
+tests/test_price.py::test_zero_rate_keeps_price
+1 test collected
+```
+
+도우미 함수에는 `test_` 접두사를 붙이지 않습니다. 수집 결과를 먼저 확인하면 테스트가 실행되지 않은 문제와 테스트 자체의 실패를 구분할 수 있습니다.
+
+## assert로 실제 값과 기대 값 비교하기
+
+계산 규칙의 결과를 확인할 때는 비교식 자체를 `assert`에 씁니다. 별도 assertion 메서드를 외우지 않아도 숫자, 문자열, 불리언 조건을 같은 방식으로 검증할 수 있습니다.
+
+```python
+def shipping_fee(total: int) -> int:
+    return 0 if total >= 50_000 else 3_000
+
+
+def test_free_shipping_threshold() -> None:
+    actual = shipping_fee(50_000)
+    assert actual == 0
+```
+
+테스트는 준비한 입력, 실행한 동작, 기대 결과가 눈에 보이게 나눠지도록 작성합니다. 실패 메시지를 직접 조립하기 전에 pytest가 실제 값과 비교식을 충분히 보여 주는지 확인합니다.
+
+## 컬렉션 비교로 결과 전체 확인하기
+
+정렬이나 변환 결과의 순서와 내용을 함께 확인할 때 목록이나 딕셔너리 전체를 비교합니다. pytest는 실패 시 서로 다른 위치와 항목을 찾아 보여 줍니다.
+
+```python
+def available_names(products: list[dict[str, object]]) -> list[str]:
+    return [
+        str(product['name'])
+        for product in products
+        if int(product['stock']) > 0
+    ]
+
+
+def test_available_names_keeps_input_order() -> None:
+    products = [
+        {'name': 'keyboard', 'stock': 2},
+        {'name': 'mouse', 'stock': 0},
+        {'name': 'monitor', 'stock': 1},
+    ]
+
+    assert available_names(products) == ['keyboard', 'monitor']
+```
+
+여러 항목의 규칙이 핵심이라면 개별 원소를 반복해서 검사하는 것보다 완성된 결과를 한 번에 비교하는 편이 누락과 순서 오류를 잘 드러냅니다.
+
+## pytest.raises로 예상한 예외 확인하기
+
+잘못된 입력을 거부하는 규칙을 검증할 때 `pytest.raises`를 사용합니다. 예외 타입과 메시지를 함께 확인하면 다른 이유로 발생한 같은 타입의 예외가 테스트를 우연히 통과하지 않습니다.
+
+```python
+import pytest
+
+
+def reserve(stock: int, quantity: int) -> int:
+    if quantity <= 0:
+        raise ValueError('예약 수량은 1 이상이어야 합니다.')
+    if quantity > stock:
+        raise ValueError('재고가 부족합니다.')
+    return stock - quantity
+
+
+def test_reserve_rejects_excess_quantity() -> None:
+    with pytest.raises(ValueError, match='재고가 부족합니다'):
+        reserve(stock=2, quantity=3)
+```
+
+예외가 나야 하는 호출만 `with` 블록 안에 둡니다. 준비 코드까지 포함하면 엉뚱한 위치의 예외가 성공으로 처리될 수 있습니다.
+
+## pytest.approx로 부동소수점 결과 비교하기
+
+세율이나 비율처럼 부동소수점 연산이 포함된 결과를 비교할 때 `pytest.approx`를 사용합니다. 이진 부동소수점 표현의 작은 오차 때문에 올바른 계산이 실패하는 일을 피할 수 있습니다.
+
+```python
+import pytest
+
+
+def tax_rate(tax: float, price: float) -> float:
+    return tax / price
+
+
+def test_tax_rate() -> None:
+    assert tax_rate(0.3, 1.0) == pytest.approx(0.3)
+```
+
+금액처럼 정확한 최소 단위가 중요한 값은 정수나 `Decimal`을 사용합니다. `approx`는 실제로 근삿값 비교가 필요한 계산에만 적용합니다.
+
+## 노드 ID와 -k로 필요한 테스트만 실행하기
+
+특정 실패를 고치는 동안 관련 테스트만 빠르게 반복하려면 노드 ID나 `-k` 표현식으로 대상을 좁힙니다.
+
+```bash
+python -m pytest tests/test_price.py::test_free_shipping_threshold -q
+python -m pytest -k 'shipping and not international' -q
+```
+
+```text
+1 passed
+```
+
+노드 ID는 파일·클래스·함수 경로로 한 테스트를 정확히 고릅니다. `-k`는 수집된 테스트 이름에 표현식을 적용합니다. 작업을 마치기 전에는 필터를 제거하고 전체 테스트를 다시 실행합니다.
+
+공식 pytest [시작하기](https://docs.pytest.org/en/stable/getting-started.html), [assertion](https://docs.pytest.org/en/stable/how-to/assert.html), [실행 방법](https://docs.pytest.org/en/stable/how-to/usage.html)을 기준으로 Python 3.12 예제를 구성했습니다.
