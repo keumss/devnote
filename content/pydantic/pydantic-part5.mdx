@@ -1,0 +1,233 @@
+---
+title: "Part 5. 실전 2: 주문 JSON 가져오기 도구 만들기"
+---
+
+이번에는 여러 주문이 든 JSON 파일을 읽어 정상 주문은 정규화하고, 잘못된 주문은 레코드별 오류로 남기는 CLI를 만듭니다. 한 주문의 실패 때문에 전체 가져오기를 중단하지 않으며, 첫 토픽의 모델과 뒤의 함수를 `import_orders.py` 한 파일에 순서대로 완성합니다.
+
+## OrderLine과 OrderImport로 가져오기 규칙 준비하기
+
+외부 주문 파일의 항목과 주문 구조를 검증할 모델을 선언합니다. 금액은 부동소수점 오차를 피하도록 `Decimal`, 수량과 가격은 양수, 항목 목록은 한 개 이상으로 제한합니다.
+
+```python
+import argparse
+import json
+from datetime import datetime
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    computed_field,
+    field_validator,
+)
+
+
+class OrderLine(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    sku: str
+    unit_price: Decimal = Field(gt=0)
+    quantity: int = Field(gt=0)
+
+
+class OrderImport(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    order_id: str = Field(min_length=1)
+    ordered_at: datetime
+    lines: list[OrderLine] = Field(min_length=1)
+```
+
+`extra='forbid'`로 지원하지 않는 열 이름과 오타를 바로 발견합니다. 파일을 읽는 코드와 모델 규칙을 분리하면 같은 주문 모델을 업로드 API나 메시지 소비자에서도 재사용할 수 있습니다.
+
+## field_validator로 SKU 표현 통일하기
+
+대소문자와 주변 공백이 다른 SKU를 같은 상품 코드로 처리하려면 `OrderLine`에 정규화 validator를 추가합니다. 빈 값은 정규화 뒤 명시적으로 거부합니다.
+
+```python
+class OrderLine(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    sku: str
+    unit_price: Decimal = Field(gt=0)
+    quantity: int = Field(gt=0)
+
+    @field_validator('sku')
+    @classmethod
+    def normalize_sku(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized:
+            raise ValueError('SKU가 비어 있습니다.')
+        return normalized
+
+
+line = OrderLine(sku=' sku-k100 ', unit_price='59000', quantity=2)
+print(line)
+```
+
+```text
+sku='SKU-K100' unit_price=Decimal('59000') quantity=2
+```
+
+앞 토픽의 `OrderLine`을 이 정의로 교체합니다. 정규화가 끝난 모델끼리는 SKU를 추가 변환 없이 비교할 수 있습니다.
+
+## computed_field로 주문 합계 계산하기
+
+파일이 보낸 합계를 믿지 않고 검증된 항목에서 계산하려면 `OrderImport`에 계산 필드를 추가합니다. 입력에는 `total`을 받지 않지만 직렬화 결과에는 포함됩니다.
+
+```python
+class OrderImport(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    order_id: str = Field(min_length=1)
+    ordered_at: datetime
+    lines: list[OrderLine] = Field(min_length=1)
+
+    @computed_field
+    @property
+    def total(self) -> Decimal:
+        return sum(
+            (line.unit_price * line.quantity for line in self.lines),
+            start=Decimal('0'),
+        )
+
+
+order = OrderImport.model_validate({
+    'order_id': 'O-100',
+    'ordered_at': '2026-07-19T10:00:00Z',
+    'lines': [
+        {'sku': 'sku-k100', 'unit_price': '59000', 'quantity': 1},
+        {'sku': 'sku-m100', 'unit_price': '25000', 'quantity': 2},
+    ],
+})
+print(order.total)
+```
+
+```text
+109000
+```
+
+앞 토픽의 `OrderImport`를 이 정의로 교체합니다. 합계를 외부 입력과 별도로 저장하지 않아 항목과 합계가 어긋나는 상태를 만들지 않습니다.
+
+## import_orders로 레코드별 오류 격리하기
+
+배치 파일에서 일부 주문만 잘못됐을 때 정상 주문을 유지하려면 JSON 배열을 순회하며 주문 하나씩 검증합니다. 실패한 배열 위치와 주문 ID, 필드 오류를 보고서에 저장합니다.
+
+```python
+class ImportFailure(BaseModel):
+    index: int
+    order_id: str | None
+    errors: list[dict[str, str]]
+
+
+class ImportReport(BaseModel):
+    accepted: list[OrderImport]
+    rejected: list[ImportFailure]
+
+
+def error_items(exc: ValidationError) -> list[dict[str, str]]:
+    return [
+        {
+            'path': '.'.join(str(part) for part in error['loc']),
+            'code': error['type'],
+        }
+        for error in exc.errors(include_url=False, include_input=False)
+    ]
+
+
+def import_orders(raw_json: str) -> ImportReport:
+    records: Any = json.loads(raw_json)
+    if not isinstance(records, list):
+        raise ValueError('최상위 JSON은 주문 배열이어야 합니다.')
+
+    accepted: list[OrderImport] = []
+    rejected: list[ImportFailure] = []
+
+    for index, record in enumerate(records):
+        try:
+            accepted.append(OrderImport.model_validate(record))
+        except ValidationError as exc:
+            order_id = record.get('order_id') if isinstance(record, dict) else None
+            rejected.append(ImportFailure(
+                index=index,
+                order_id=order_id if isinstance(order_id, str) else None,
+                errors=error_items(exc),
+            ))
+
+    return ImportReport(accepted=accepted, rejected=rejected)
+```
+
+JSON 문법 자체가 잘못됐거나 최상위 구조가 배열이 아니면 파일 전체 실패로 처리합니다. 배열 안 개별 주문의 필드 오류만 격리해 부분 성공과 파일 손상을 구분합니다.
+
+## model_dump_json으로 결과 보고서 직렬화하기
+
+가져오기 결과를 파일로 저장하거나 후속 작업에 전달할 때 전체 보고서를 JSON으로 직렬화합니다. Pydantic은 `datetime`과 `Decimal`, 계산된 합계를 JSON 표현으로 바꿉니다.
+
+```python
+sample = '''[
+  {
+    "order_id": "O-100",
+    "ordered_at": "2026-07-19T10:00:00Z",
+    "lines": [{"sku": " sku-k100 ", "unit_price": "59000", "quantity": 2}]
+  },
+  {
+    "order_id": "O-101",
+    "ordered_at": "2026-07-19T11:00:00Z",
+    "lines": [{"sku": "sku-m100", "unit_price": "25000", "quantity": 0}]
+  }
+]'''
+
+report = import_orders(sample)
+result = json.loads(report.model_dump_json())
+print(result['accepted'][0]['lines'][0]['sku'])
+print(result['accepted'][0]['total'])
+print(result['rejected'][0]['errors'])
+```
+
+```text
+SKU-K100
+118000
+[{'path': 'lines.0.quantity', 'code': 'greater_than'}]
+```
+
+오류 보고서에는 원본 주문 전체 대신 위치와 코드만 남깁니다. 원본 파일의 별도 보관이 필요하면 접근 권한과 삭제 기간을 정해 보고서와 분리합니다.
+
+## argparse로 입력 파일과 보고서 연결하기
+
+운영자가 주문 파일과 결과 경로를 지정해 실행할 수 있도록 CLI 진입점을 추가합니다. 거부된 주문이 있으면 보고서는 저장하되 종료 코드 2로 부분 실패를 알립니다.
+
+```python
+def main() -> int:
+    parser = argparse.ArgumentParser(description='주문 JSON을 검증해 가져옵니다.')
+    parser.add_argument('input', type=Path)
+    parser.add_argument('output', type=Path)
+    args = parser.parse_args()
+
+    report = import_orders(args.input.read_text(encoding='utf-8'))
+    args.output.write_text(report.model_dump_json(indent=2), encoding='utf-8')
+
+    print(f'accepted={len(report.accepted)} rejected={len(report.rejected)}')
+    return 2 if report.rejected else 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+앞 토픽의 `sample` 내용을 `orders.json`에 저장했다면 다음처럼 실행합니다.
+
+```bash
+python import_orders.py orders.json import-report.json
+```
+
+```text
+accepted=1 rejected=1
+```
+
+결과 파일이 성공·실패 레코드를 모두 담으므로 재처리 대상과 정상 반영 대상을 분리할 수 있습니다. 실제 저장소 반영은 검증 보고서를 확인한 뒤 별도 트랜잭션 단계에서 수행합니다.
+
+공식 Pydantic [validator](https://pydantic.dev/docs/validation/latest/concepts/validators/), [계산 필드](https://pydantic.dev/docs/validation/latest/concepts/fields/#the-computed_field-decorator), [직렬화](https://pydantic.dev/docs/validation/latest/concepts/serialization/) 문서를 기준으로 구성했습니다.

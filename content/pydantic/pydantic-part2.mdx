@@ -1,0 +1,250 @@
+---
+title: "Part 2. 중급: 입력 규칙과 데이터 경계 다듬기"
+---
+
+기본 모델로 데이터 모양을 정했다면, 실제 시스템에서 들어오는 표현을 정규화하고 여러 모델에 같은 규칙을 재사용해야 합니다. 이 노트에서는 상품·프로모션 입력을 예로 들어 원시 입력과 검증 완료 데이터의 경계를 다듬습니다.
+
+## Annotated와 Field로 재사용 제약 타입 만들기
+
+여러 모델에서 같은 양수 가격 규칙을 반복하지 않으려면 `Annotated`로 타입과 제약을 묶습니다. 타입 검사기에는 `int`로 보이면서 Pydantic은 추가 제약을 적용합니다.
+
+```python
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+
+PositivePrice = Annotated[int, Field(gt=0)]
+
+
+class Product(BaseModel):
+    name: str
+    price: PositivePrice
+
+
+class Coupon(BaseModel):
+    code: str
+    minimum_order: PositivePrice
+
+
+print(Product(name='keyboard', price=59_000))
+print(Coupon(code='WELCOME', minimum_order=30_000))
+```
+
+```text
+name='keyboard' price=59000
+code='WELCOME' minimum_order=30000
+```
+
+`PositivePrice`처럼 업무 의미가 분명한 이름을 사용합니다. 서로 다른 규칙을 우연히 같은 타입으로 묶지 말고 실제로 함께 바뀌는 제약만 재사용합니다.
+
+## field_validator before로 원시 문자열 정규화하기
+
+CSV나 폼에서 들어온 `'59,000'` 같은 가격 문자열을 숫자 검증 전에 정리할 때 `mode='before'`를 사용합니다. before validator는 아직 타입이 확정되지 않은 원시 값을 받습니다.
+
+```python
+from typing import Any
+
+from pydantic import BaseModel, field_validator
+
+
+class Product(BaseModel):
+    name: str
+    price: int
+
+    @field_validator('price', mode='before')
+    @classmethod
+    def remove_thousands_separator(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.replace(',', '')
+        return value
+
+
+product = Product(name='keyboard', price='59,000')
+print(product.price)
+```
+
+```text
+59000
+```
+
+before validator는 가능한 입력 타입을 모두 고려하고, 처리하지 않는 값은 그대로 반환합니다. 일반 타입 변환 뒤에 확인할 수 있는 규칙은 더 안전한 after validator를 사용합니다.
+
+## field_validator after로 변환된 값 검사하기
+
+Pydantic이 타입 변환을 마친 값에 업무 규칙을 적용할 때 기본 `mode='after'` validator를 사용합니다. 매개변수 타입을 믿고 비교할 수 있어 원시 입력을 다루는 것보다 단순합니다.
+
+```python
+from pydantic import BaseModel, field_validator
+
+
+class Product(BaseModel):
+    name: str
+    sku: str
+
+    @field_validator('sku')
+    @classmethod
+    def require_uppercase_sku(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if not normalized.startswith('SKU-'):
+            raise ValueError('SKU는 SKU-로 시작해야 합니다.')
+        return normalized
+
+
+product = Product(name='mouse', sku=' sku-m100 ')
+print(product.sku)
+```
+
+```text
+SKU-M100
+```
+
+validator는 검증한 값을 반드시 반환해야 합니다. 입력 표현을 통일하는 작은 변환과 해당 필드 하나의 규칙에 집중합니다.
+
+## model_validator로 여러 필드 관계 확인하기
+
+프로모션의 시작일이 종료일보다 늦지 않아야 하는 것처럼 여러 필드가 함께 만족해야 하는 규칙은 `model_validator(mode='after')`에 둡니다. 이 시점에는 모든 필드가 검증된 모델로 준비되어 있습니다.
+
+```python
+from datetime import date
+from typing import Self
+
+from pydantic import BaseModel, model_validator
+
+
+class Promotion(BaseModel):
+    name: str
+    starts_on: date
+    ends_on: date
+
+    @model_validator(mode='after')
+    def check_date_range(self) -> Self:
+        if self.starts_on > self.ends_on:
+            raise ValueError('시작일은 종료일보다 늦을 수 없습니다.')
+        return self
+
+
+promotion = Promotion(
+    name='Summer Sale',
+    starts_on='2026-07-01',
+    ends_on='2026-07-31',
+)
+print(promotion.starts_on, promotion.ends_on)
+```
+
+```text
+2026-07-01 2026-07-31
+```
+
+한 필드만으로 판단할 수 있는 규칙은 `field_validator`에 남깁니다. 모델 validator에는 필드 간 관계처럼 모델 전체가 준비되어야 확인할 수 있는 규칙을 둡니다.
+
+## ConfigDict extra forbid로 알 수 없는 입력 막기
+
+오타 난 필드가 조용히 무시되면 안 되는 API·설정 경계에서는 `extra='forbid'`를 지정합니다. 선언하지 않은 키가 들어오면 즉시 검증 오류가 됩니다.
+
+```python
+from pydantic import BaseModel, ConfigDict, ValidationError
+
+
+class Product(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    name: str
+    price: int
+
+
+try:
+    Product.model_validate({'name': 'monitor', 'price': 320_000, 'prcie': 1})
+except ValidationError as exc:
+    error = exc.errors(include_url=False, include_input=False)[0]
+    print(error['loc'], error['type'])
+```
+
+```text
+('prcie',) extra_forbidden
+```
+
+기본 모델은 알 수 없는 필드를 무시합니다. 클라이언트 계약이나 환경 설정처럼 오타를 빨리 발견하는 편이 중요한 경계에서만 명시적으로 금지합니다.
+
+## validation_alias와 serialization_alias로 경계 이름 나누기
+
+외부 입력의 camelCase 이름을 Python의 snake_case로 쓰고, 출력 계약에는 또 다른 이름이 필요할 때 검증 alias와 직렬화 alias를 따로 지정합니다.
+
+```python
+from pydantic import BaseModel, Field
+
+
+class Product(BaseModel):
+    name: str = Field(
+        validation_alias='productName',
+        serialization_alias='product_name',
+    )
+    price: int
+
+
+product = Product.model_validate({'productName': 'keyboard', 'price': 59_000})
+print(product.name)
+print(product.model_dump(by_alias=True))
+```
+
+```text
+keyboard
+{'product_name': 'keyboard', 'price': 59000}
+```
+
+`validation_alias`는 입력에만, `serialization_alias`는 `by_alias=True` 출력에만 적용됩니다. 내부 필드 이름은 Python 코드가 읽기 좋은 형태로 유지합니다.
+
+## model_validate_json으로 JSON 문자열 직접 검증하기
+
+HTTP 본문이나 파일에서 읽은 JSON 문자열을 곧바로 모델로 바꿀 때 `model_validate_json()`을 사용합니다. 별도의 `json.loads()` 결과를 만들지 않고 JSON 해석과 모델 검증을 한 경계에서 수행합니다.
+
+```python
+from pydantic import BaseModel
+
+
+class Product(BaseModel):
+    name: str
+    price: int
+
+
+body = '{"name":"keyboard","price":59000}'
+product = Product.model_validate_json(body)
+print(product)
+```
+
+```text
+name='keyboard' price=59000
+```
+
+입력이 이미 Python 딕셔너리라면 `model_validate()`, JSON 문자열이나 bytes라면 `model_validate_json()`을 사용해 실제 경계를 코드에 드러냅니다.
+
+## TypeAdapter로 모델 없는 목록 검증하기
+
+최상위 데이터가 상품 목록처럼 단일 모델이 아닐 때 `TypeAdapter`로 `list[Product]` 자체를 검증합니다. 불필요한 래퍼 모델 없이 검증·직렬화·JSON Schema 기능을 사용할 수 있습니다.
+
+```python
+from pydantic import BaseModel, TypeAdapter
+
+
+class Product(BaseModel):
+    name: str
+    price: int
+
+
+products_adapter = TypeAdapter(list[Product])
+products = products_adapter.validate_python([
+    {'name': 'keyboard', 'price': '59000'},
+    {'name': 'mouse', 'price': 25000},
+])
+print([product.price for product in products])
+print(products_adapter.dump_json(products).decode())
+```
+
+```text
+[59000, 25000]
+[{"name":"keyboard","price":59000},{"name":"mouse","price":25000}]
+```
+
+`TypeAdapter.dump_json()`은 `BaseModel.model_dump_json()`과 달리 bytes를 반환합니다. 네트워크 전송에는 그대로 쓰고, 화면 출력이 필요하면 `decode()`합니다.
+
+공식 Pydantic [validator](https://pydantic.dev/docs/validation/latest/concepts/validators/), [alias](https://pydantic.dev/docs/validation/latest/concepts/alias/), [TypeAdapter](https://pydantic.dev/docs/validation/latest/concepts/type_adapter/) 문서를 기준으로 구성했습니다.

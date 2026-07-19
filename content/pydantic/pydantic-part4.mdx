@@ -1,0 +1,163 @@
+---
+title: "Part 4. 실전 1: 웹훅 이벤트 검증·분기 처리기 만들기"
+---
+
+이번에는 결제 서비스가 보내는 결제 완료·주문 취소 웹훅 JSON을 검증하고 이벤트별 처리 결과를 만드는 함수를 완성합니다. 첫 토픽의 모델과 adapter를 한 파일에 준비한 뒤 아래 함수를 순서대로 추가합니다. Pydantic은 본문 구조를 검증하며, 실제 서비스의 서명 검증과 재전송 방지는 그 전에 별도 전송 계층에서 처리해야 합니다.
+
+## Literal 이벤트 모델과 TypeAdapter 준비하기
+
+공통 메타데이터는 기반 모델에 두고 이벤트마다 다른 필드는 하위 모델로 나눕니다. `event` 태그가 정확한 모델을 선택하도록 판별 가능한 union과 `TypeAdapter`를 준비합니다.
+
+```python
+from datetime import datetime
+from typing import Annotated, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+
+
+class WebhookBase(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    event_id: UUID
+    occurred_at: datetime
+
+
+class OrderPaid(WebhookBase):
+    event: Literal['order.paid']
+    order_id: str
+    amount: int = Field(gt=0)
+
+
+class OrderCancelled(WebhookBase):
+    event: Literal['order.cancelled']
+    order_id: str
+    reason: str = Field(min_length=1)
+
+
+WebhookEvent = Annotated[
+    OrderPaid | OrderCancelled,
+    Field(discriminator='event'),
+]
+webhook_adapter = TypeAdapter(WebhookEvent)
+```
+
+두 이벤트에 같은 `event_id`, `occurred_at` 규칙을 적용하면서 각 이벤트는 자신에게 필요한 필드만 허용합니다. `extra='forbid'`는 제공자 계약의 오타나 예상하지 못한 변경을 조용히 넘기지 않게 합니다.
+
+## validate_json으로 웹훅 본문 판별하기
+
+웹 서버가 전달한 bytes 본문을 이벤트 객체로 바꿀 때 adapter의 `validate_json()`을 호출합니다. JSON 해석과 이벤트 태그 판별, 필드 검증이 한 번에 수행됩니다.
+
+```python
+def parse_webhook(body: bytes) -> WebhookEvent:
+    return webhook_adapter.validate_json(body)
+
+
+body = b'''{
+  "event_id": "12345678-1234-5678-1234-567812345678",
+  "event": "order.paid",
+  "occurred_at": "2026-07-19T10:00:00Z",
+  "order_id": "O-100",
+  "amount": 59000
+}'''
+
+event = parse_webhook(body)
+print(type(event).__name__, event.order_id)
+```
+
+```text
+OrderPaid O-100
+```
+
+이미 JSON을 딕셔너리로 해석한 프레임워크에서는 `validate_python()`을 사용합니다. 원본 bytes를 받는 경계라면 `validate_json()`이 입력 형식을 더 정확히 드러냅니다.
+
+## isinstance로 이벤트별 처리 결과 만들기
+
+검증을 마친 이벤트를 업무 처리기로 보낼 때 구체 모델 타입으로 분기합니다. 각 분기에서는 해당 모델의 필드가 존재하고 타입이 맞는다고 믿을 수 있습니다.
+
+```python
+def handle_event(event: WebhookEvent) -> str:
+    if isinstance(event, OrderPaid):
+        return f'order {event.order_id} paid {event.amount}'
+
+    return f'order {event.order_id} cancelled: {event.reason}'
+
+
+print(handle_event(event))
+```
+
+```text
+order O-100 paid 59000
+```
+
+이 함수에는 결제 완료 후 주문 상태 변경처럼 실제 업무 동작을 연결할 수 있습니다. 데이터 검증과 이벤트 처리를 분리하면 잘못된 본문이 업무 함수에 들어가지 않습니다.
+
+## ValidationError를 안전한 오류 목록으로 바꾸기
+
+웹훅 제공자에게 어떤 필드가 잘못됐는지 알리되 원본 본문을 다시 노출하지 않으려면 오류 위치와 코드만 고릅니다. `include_input=False`로 민감할 수 있는 입력값을 제외합니다.
+
+```python
+def format_validation_errors(exc: ValidationError) -> list[dict[str, str]]:
+    return [
+        {
+            'path': '.'.join(str(part) for part in error['loc']),
+            'code': error['type'],
+        }
+        for error in exc.errors(include_url=False, include_input=False)
+    ]
+```
+
+오류 메시지는 Pydantic 버전이나 표시 언어에 따라 달라질 수 있으므로 기계가 처리할 응답에는 안정적인 `type` 코드를 사용합니다. 원본 본문이 필요한 내부 조사 로그도 접근 권한과 보관 기간을 별도로 정합니다.
+
+## process_webhook으로 정상·실패 흐름 확인하기
+
+검증과 처리를 하나의 경계 함수로 연결하고, 정상 이벤트는 처리 결과를, 잘못된 이벤트는 구조화된 오류를 반환합니다. 다음 코드를 앞선 함수 아래에 추가합니다.
+
+```python
+def process_webhook(body: bytes) -> dict[str, object]:
+    try:
+        event = parse_webhook(body)
+    except ValidationError as exc:
+        return {
+            'accepted': False,
+            'errors': format_validation_errors(exc),
+        }
+
+    return {
+        'accepted': True,
+        'result': handle_event(event),
+    }
+
+
+paid_body = b'''{
+  "event_id": "12345678-1234-5678-1234-567812345678",
+  "event": "order.paid",
+  "occurred_at": "2026-07-19T10:00:00Z",
+  "order_id": "O-100",
+  "amount": 59000
+}'''
+invalid_body = b'''{
+  "event_id": "12345678-1234-5678-1234-567812345678",
+  "event": "order.paid",
+  "occurred_at": "2026-07-19T10:00:00Z",
+  "order_id": "O-101",
+  "amount": 0
+}'''
+
+paid_result = process_webhook(paid_body)
+invalid_result = process_webhook(invalid_body)
+
+assert paid_result['accepted'] is True
+assert invalid_result['accepted'] is False
+print(paid_result)
+print(invalid_result)
+```
+
+```text
+{'accepted': True, 'result': 'order O-100 paid 59000'}
+{'accepted': False, 'errors': [{'path': 'order.paid.amount', 'code': 'greater_than'}]}
+```
+
+HTTP에 연결할 때는 `accepted=False`를 4xx 응답으로 변환하고, 처리 중 일시적인 외부 장애는 재시도 가능한 5xx 실패로 구분합니다. 검증 성공은 요청의 진위나 결제 성공을 보장하지 않으므로 서명 확인을 생략하지 않습니다.
+
+공식 Pydantic [판별 가능한 union](https://pydantic.dev/docs/validation/latest/concepts/unions/#discriminated-unions-with-str-discriminators), [TypeAdapter](https://pydantic.dev/docs/validation/latest/concepts/type_adapter/), [오류 처리](https://pydantic.dev/docs/validation/latest/errors/errors/) 문서를 기준으로 구성했습니다.

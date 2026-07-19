@@ -1,0 +1,207 @@
+---
+title: "Part 1. 기초: 외부 데이터를 모델로 검증하기"
+---
+
+Pydantic은 API 요청, JSON 파일, 메시지처럼 신뢰할 수 없는 외부 데이터를 Python 타입에 맞게 검증하고 변환할 때 사용합니다. 이 노트에서는 상품 데이터를 받아 안전한 모델로 바꾸고 다시 JSON으로 내보내는 기본 흐름을 익힙니다.
+
+## pydantic 설치하고 BaseModel로 외부 입력 검증하기
+
+딕셔너리의 필드와 타입을 확인해 애플리케이션에서 믿고 쓸 객체로 바꿀 때 `BaseModel`을 상속합니다. Python 3.12 가상 환경에 Pydantic을 설치하고 타입 힌트로 입력 구조를 선언합니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install pydantic
+```
+
+```python
+from pydantic import BaseModel
+
+
+class Product(BaseModel):
+    name: str
+    price: int
+
+
+product = Product(name='keyboard', price=59_000)
+print(product)
+```
+
+```text
+name='keyboard' price=59000
+```
+
+모델 생성이 성공하면 `product.name`과 `product.price`는 선언한 타입을 따릅니다. Pydantic은 입력 자체가 아니라 검증을 마친 결과가 모델 규칙을 만족하도록 보장합니다.
+
+## 필수 필드와 기본값으로 입력 범위 정하기
+
+반드시 받아야 하는 값과 생략 가능한 값을 구분할 때 필수 필드는 기본값 없이, 선택 필드는 기본값과 함께 선언합니다. `str | None`은 `None`을 허용한다는 뜻일 뿐, 기본값이 없으면 여전히 필수입니다.
+
+```python
+from pydantic import BaseModel
+
+
+class Product(BaseModel):
+    name: str
+    price: int
+    stock: int = 0
+    description: str | None = None
+
+
+product = Product(name='mouse', price=25_000)
+print(product)
+```
+
+```text
+name='mouse' price=25000 stock=0 description=None
+```
+
+입력에서 생략해도 되는 필드에는 명시적으로 기본값을 둡니다. 필수 필드와 `None` 허용 여부를 별개의 결정으로 다루면 데이터 경계가 분명해집니다.
+
+## model_validate로 딕셔너리를 모델로 변환하기
+
+JSON을 해석한 딕셔너리처럼 이미 준비된 데이터를 모델로 바꿀 때 `model_validate()`를 사용합니다. 기본 검증은 실용적인 범위에서 문자열 숫자와 날짜를 선언한 Python 타입으로 변환합니다.
+
+```python
+from datetime import date
+
+from pydantic import BaseModel
+
+
+class Sale(BaseModel):
+    product_id: int
+    sold_on: date
+    quantity: int
+
+
+sale = Sale.model_validate({
+    'product_id': '101',
+    'sold_on': '2026-07-19',
+    'quantity': '3',
+})
+print(sale)
+print(type(sale.product_id).__name__, type(sale.sold_on).__name__)
+```
+
+```text
+product_id=101 sold_on=datetime.date(2026, 7, 19) quantity=3
+int date
+```
+
+문자열을 무조건 허용하는 것이 아니라 해당 타입으로 안전하게 해석할 수 있을 때만 변환합니다. 변환을 금지해야 하는 식별자나 금액은 Part 3의 strict mode로 다룹니다.
+
+## Field로 문자열과 숫자 범위 제한하기
+
+빈 이름, 음수 가격, 지나치게 큰 재고처럼 타입만으로 막을 수 없는 값을 제한할 때 `Field()`에 제약을 선언합니다. 제약은 검증과 JSON Schema에 함께 반영됩니다.
+
+```python
+from pydantic import BaseModel, Field
+
+
+class Product(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    price: int = Field(gt=0)
+    stock: int = Field(default=0, ge=0, le=10_000)
+
+
+product = Product(name='monitor', price=320_000, stock=7)
+print(product)
+```
+
+```text
+name='monitor' price=320000 stock=7
+```
+
+`gt=0`은 0보다 큰 값, `ge=0`은 0 이상인 값을 허용합니다. 업무 의미가 다른 제약은 해당 필드 가까이에 두어 모델만 읽어도 입력 범위를 알 수 있게 합니다.
+
+## 중첩 모델로 묶인 입력 검증하기
+
+주문 안의 배송지처럼 자체 구조를 가진 값을 함께 검증할 때 별도 모델을 필드 타입으로 사용합니다. Pydantic은 중첩 딕셔너리도 안쪽 모델로 재귀적으로 변환합니다.
+
+```python
+from pydantic import BaseModel, Field
+
+
+class Address(BaseModel):
+    city: str
+    postal_code: str = Field(pattern=r'^\d{5}$')
+
+
+class Order(BaseModel):
+    order_id: str
+    shipping_address: Address
+    tags: list[str] = Field(default_factory=list)
+
+
+order = Order.model_validate({
+    'order_id': 'O-100',
+    'shipping_address': {'city': 'Seoul', 'postal_code': '04524'},
+    'tags': ['gift', 'morning'],
+})
+print(order.shipping_address.city)
+print(order.tags)
+```
+
+```text
+Seoul
+['gift', 'morning']
+```
+
+`default_factory=list`는 모델마다 새 목록을 만듭니다. 중첩 모델을 사용하면 배송지 규칙을 다른 주문·고객 모델에서도 재사용할 수 있습니다.
+
+## ValidationError.errors로 실패 위치 확인하기
+
+사용자에게 각 필드의 문제를 알려 주거나 오류 로그를 구조화할 때 `ValidationError.errors()`를 사용합니다. 각 항목의 `loc`는 중첩된 실패 위치를, `type`은 오류 종류를 나타냅니다.
+
+```python
+from pydantic import BaseModel, Field, ValidationError
+
+
+class Product(BaseModel):
+    name: str = Field(min_length=1)
+    price: int = Field(gt=0)
+
+
+try:
+    Product.model_validate({'name': '', 'price': -1})
+except ValidationError as exc:
+    for error in exc.errors(include_url=False, include_input=False):
+        print(error['loc'], error['type'])
+```
+
+```text
+('name',) string_too_short
+('price',) greater_than
+```
+
+검증 실패는 정상 모델이 만들어지기 전에 발생합니다. 외부 응답에는 필요한 위치와 메시지만 고르고, 비밀번호나 토큰이 들어 있을 수 있는 `input`은 그대로 노출하지 않습니다.
+
+## model_dump와 model_dump_json으로 결과 내보내기
+
+검증한 모델을 다른 Python 코드나 JSON 경계로 전달할 때 `model_dump()`와 `model_dump_json()`을 사용합니다. Python 모드는 날짜 객체를 유지하고, JSON 출력은 표준 문자열로 변환합니다.
+
+```python
+from datetime import date
+
+from pydantic import BaseModel
+
+
+class Sale(BaseModel):
+    product_id: int
+    sold_on: date
+
+
+sale = Sale(product_id=101, sold_on=date(2026, 7, 19))
+print(sale.model_dump())
+print(sale.model_dump_json())
+```
+
+```text
+{'product_id': 101, 'sold_on': datetime.date(2026, 7, 19)}
+{"product_id":101,"sold_on":"2026-07-19"}
+```
+
+Python 객체가 필요한 내부 경계에는 `model_dump()`, 파일·HTTP처럼 JSON 문자열이 필요한 경계에는 `model_dump_json()`을 선택합니다.
+
+공식 Pydantic [모델](https://pydantic.dev/docs/validation/latest/concepts/models/), [필드](https://pydantic.dev/docs/validation/latest/concepts/fields/), [오류 처리](https://pydantic.dev/docs/validation/latest/errors/errors/) 문서를 기준으로 구성했습니다.

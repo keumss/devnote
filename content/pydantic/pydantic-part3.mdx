@@ -1,0 +1,232 @@
+---
+title: "Part 3. 고급: 여러 데이터 형식과 출력 스키마 설계하기"
+---
+
+데이터 경계가 늘어나면 같은 값도 Python 객체, JSON, 데이터베이스 행처럼 서로 다른 형태로 들어옵니다. 이 노트에서는 변환 허용 범위를 제어하고 여러 모델을 명확히 구분하며, 출력과 스키마 계약까지 설계합니다.
+
+## strict 모드로 암묵적 타입 변환 막기
+
+숫자 문자열을 정수로 바꾸면 안 되는 결제·식별자 경계에서는 검증 호출에 `strict=True`를 지정합니다. 평소에는 편리한 변환을 사용하고 엄격해야 하는 호출에서만 선택할 수 있습니다.
+
+```python
+from pydantic import BaseModel, ValidationError
+
+
+class Payment(BaseModel):
+    amount: int
+
+
+print(Payment.model_validate({'amount': '59000'}).amount)
+
+try:
+    Payment.model_validate({'amount': '59000'}, strict=True)
+except ValidationError as exc:
+    print(exc.errors(include_url=False, include_input=False)[0]['type'])
+```
+
+```text
+59000
+int_type
+```
+
+모델 전체가 항상 엄격해야 한다면 `ConfigDict(strict=True)`, 특정 필드만 엄격해야 한다면 `Field(strict=True)`를 사용합니다. JSON과 Python 입력은 strict mode에서 일부 타입의 허용 범위가 다르므로 실제 입력 경계로 테스트합니다.
+
+## from_attributes로 객체 속성에서 모델 만들기
+
+데이터베이스 행이나 외부 라이브러리 객체를 응답 모델로 복사할 때 `from_attributes=True`를 사용합니다. 딕셔너리 키 대신 같은 이름의 객체 속성에서 값을 읽습니다.
+
+```python
+from pydantic import BaseModel, ConfigDict
+
+
+class ProductRow:
+    def __init__(self, product_id: int, name: str, internal_code: str) -> None:
+        self.product_id = product_id
+        self.name = name
+        self.internal_code = internal_code
+
+
+class ProductPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    product_id: int
+    name: str
+
+
+row = ProductRow(101, 'keyboard', 'warehouse-a7')
+public = ProductPublic.model_validate(row)
+print(public.model_dump())
+```
+
+```text
+{'product_id': 101, 'name': 'keyboard'}
+```
+
+응답에 선언하지 않은 `internal_code`는 복사되지 않습니다. 이 기능은 객체를 저장 모델로 바꾸는 것이 아니라 외부 경계에 필요한 필드만 검증해 읽는 용도로 사용합니다.
+
+## discriminator로 여러 입력 모델 정확히 선택하기
+
+결제 수단마다 필요한 필드가 다를 때 공통 태그와 `Field(discriminator=...)`로 모델을 구분합니다. Pydantic은 태그가 가리키는 한 모델만 검증하므로 오류 위치도 명확합니다.
+
+```python
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
+
+
+class CardPayment(BaseModel):
+    method: Literal['card']
+    last_four: str = Field(pattern=r'^\d{4}$')
+
+
+class BankTransfer(BaseModel):
+    method: Literal['bank']
+    bank_code: str
+
+
+PaymentMethod = Annotated[
+    CardPayment | BankTransfer,
+    Field(discriminator='method'),
+]
+
+
+class Payment(BaseModel):
+    amount: int = Field(gt=0)
+    method: PaymentMethod
+
+
+payment = Payment.model_validate({
+    'amount': 59_000,
+    'method': {'method': 'card', 'last_four': '1234'},
+})
+print(type(payment.method).__name__, payment.method.last_four)
+```
+
+```text
+CardPayment 1234
+```
+
+각 변형의 discriminator 필드는 `Literal`로 선언합니다. 태그가 없는 모호한 union보다 입력 계약이 안정적이고 새 변형을 추가할 위치도 분명합니다.
+
+## 제네릭 모델로 공통 응답 껍질 재사용하기
+
+목록의 항목 타입만 바뀌고 페이지 정보는 같은 응답을 만들 때 제네릭 모델을 사용합니다. `Page[Product]`는 항목을 Product로 검증하는 구체적인 모델이 됩니다.
+
+```python
+from typing import Generic, TypeVar
+
+from pydantic import BaseModel
+
+
+ItemT = TypeVar('ItemT')
+
+
+class Page(BaseModel, Generic[ItemT]):
+    items: list[ItemT]
+    total: int
+
+
+class Product(BaseModel):
+    name: str
+
+
+page = Page[Product].model_validate({
+    'items': [{'name': 'keyboard'}, {'name': 'mouse'}],
+    'total': 2,
+})
+print([item.name for item in page.items], page.total)
+```
+
+```text
+['keyboard', 'mouse'] 2
+```
+
+타입 매개변수를 생략하면 항목 검증이 약해질 수 있으므로 경계에서는 `Page[Product]`처럼 구체 타입을 지정합니다.
+
+## computed_field로 계산 결과 직렬화하기
+
+수량과 단가에서 항상 다시 계산할 수 있는 합계를 저장하지 않고 응답에 포함할 때 `computed_field`를 사용합니다. 원본 필드가 바뀌면 다음 직렬화에서 결과도 함께 바뀝니다.
+
+```python
+from pydantic import BaseModel, Field, computed_field
+
+
+class OrderLine(BaseModel):
+    unit_price: int = Field(gt=0)
+    quantity: int = Field(gt=0)
+
+    @computed_field
+    @property
+    def subtotal(self) -> int:
+        return self.unit_price * self.quantity
+
+
+line = OrderLine(unit_price=12_000, quantity=3)
+print(line.model_dump())
+```
+
+```text
+{'unit_price': 12000, 'quantity': 3, 'subtotal': 36000}
+```
+
+입력으로 받아서는 안 되는 파생 값에 사용합니다. 외부 상태나 네트워크 호출이 필요한 계산은 모델 직렬화 과정에 넣지 않습니다.
+
+## field_serializer로 필드 출력 형식 정하기
+
+내부에서는 정확한 `Decimal`로 계산하고 JSON에는 고정 소수점 문자열을 보내야 할 때 field serializer를 정의합니다. 검증 타입과 출력 표현을 분리할 수 있습니다.
+
+```python
+from decimal import Decimal
+
+from pydantic import BaseModel, Field, field_serializer
+
+
+class Price(BaseModel):
+    amount: Decimal = Field(gt=0)
+    currency: str = 'KRW'
+
+    @field_serializer('amount')
+    def serialize_amount(self, value: Decimal) -> str:
+        return format(value, '.2f')
+
+
+price = Price(amount='59000')
+print(price.amount + Decimal('1000'))
+print(price.model_dump_json())
+```
+
+```text
+60000
+{"amount":"59000.00","currency":"KRW"}
+```
+
+serializer는 출력만 바꾸며 모델 안의 `amount`는 `Decimal`로 유지됩니다. 한 필드에는 serializer를 하나만 정의하고 경계가 요구하는 최소 변환만 수행합니다.
+
+## model_json_schema로 입력 계약 내보내기
+
+문서 생성기나 다른 서비스에 모델 규칙을 전달할 때 `model_json_schema()`로 JSON Schema 딕셔너리를 만듭니다. 타입, 필수 여부, `Field` 제약이 같은 모델에서 생성됩니다.
+
+```python
+from pydantic import BaseModel, Field
+
+
+class Product(BaseModel):
+    name: str = Field(min_length=1)
+    price: int = Field(gt=0)
+
+
+schema = Product.model_json_schema()
+print(schema['required'])
+print(schema['properties']['price']['type'])
+print(schema['properties']['price']['exclusiveMinimum'])
+```
+
+```text
+['name', 'price']
+integer
+0
+```
+
+생성된 스키마는 모델과 함께 바뀌므로 별도 계약 문서를 손으로 복제하지 않습니다. 설명이 필요한 필드에는 `Field(description=...)`을 추가해 스키마에도 의도를 남깁니다.
+
+공식 Pydantic [strict mode](https://pydantic.dev/docs/validation/latest/concepts/strict_mode/), [union](https://pydantic.dev/docs/validation/latest/concepts/unions/), [직렬화](https://pydantic.dev/docs/validation/latest/concepts/serialization/), [JSON Schema](https://pydantic.dev/docs/validation/latest/concepts/json_schema/) 문서를 기준으로 구성했습니다.
