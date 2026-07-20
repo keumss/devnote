@@ -1,0 +1,227 @@
+---
+title: "Part 5. 실전 2: Core로 상품 재고 일괄 반영하기"
+---
+
+이번에는 SQLAlchemy Core로 여러 상품을 한 번에 저장하고 수정합니다. 입력은 CSV 파싱을 마친 `list[dict[str, object]]`라고 가정하고, SQL 표현식과 트랜잭션에 집중합니다. Python 블록을 한 실행 환경에서 위에서 아래 순서로 실행합니다.
+
+## MetaData와 Table로 상품 테이블 준비하기
+
+ORM 객체가 필요하지 않은 일괄 처리에서는 `Table`로 데이터베이스 구조를 직접 선언하고 Core 표현식을 실행할 수 있습니다. 임시 SQLite 파일에 SKU가 고유하고 가격·재고가 음수가 될 수 없는 상품 테이블을 만듭니다.
+
+```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    UniqueConstraint,
+    create_engine,
+)
+
+
+database_directory = TemporaryDirectory()
+database_path = Path(database_directory.name) / 'catalog.db'
+engine = create_engine(f'sqlite:///{database_path}')
+metadata = MetaData()
+
+product = Table(
+    'product',
+    metadata,
+    Column('id', Integer, primary_key=True),
+    Column('sku', String(50), nullable=False),
+    Column('name', String(100), nullable=False),
+    Column('price', Integer, nullable=False),
+    Column('stock', Integer, nullable=False),
+    UniqueConstraint('sku'),
+    CheckConstraint('price >= 0'),
+    CheckConstraint('stock >= 0'),
+)
+
+metadata.create_all(engine)
+print(product.name)
+```
+
+```text
+product
+```
+
+`MetaData`는 `Table` 객체를 모으고, `create_all()`은 등록된 테이블을 데이터베이스에 만듭니다. 선언한 `product.c.sku` 같은 열 객체는 뒤의 INSERT·SELECT·UPDATE·DELETE 표현식에서 재사용합니다.
+
+## Connection.execute와 매개변수 목록으로 여러 상품 저장하기
+
+같은 INSERT에 여러 입력 레코드를 전달하려면 `Connection.execute()`의 두 번째 인수에 딕셔너리 목록을 넘깁니다. `Engine.begin()`은 연결과 트랜잭션을 함께 열고 정상 종료할 때 커밋합니다.
+
+```python
+from sqlalchemy import insert, select
+
+
+initial_products: list[dict[str, object]] = [
+    {'sku': 'KEYBOARD', 'name': 'Keyboard', 'price': 75_000, 'stock': 10},
+    {'sku': 'MOUSE', 'name': 'Mouse', 'price': 32_000, 'stock': 25},
+    {'sku': 'CABLE', 'name': 'Cable', 'price': 10_000, 'stock': 0},
+]
+
+with engine.begin() as connection:
+    result = connection.execute(insert(product), initial_products)
+    inserted_count = result.rowcount
+
+with engine.connect() as connection:
+    names = connection.scalars(
+        select(product.c.name).order_by(product.c.id)
+    ).all()
+
+print(inserted_count)
+print(names)
+```
+
+```text
+3
+['Keyboard', 'Mouse', 'Cable']
+```
+
+SQL 문장을 입력 개수만큼 직접 반복하지 않고 실행 계층에 매개변수 목록을 전달합니다. 드라이버와 방언은 가능한 일괄 실행 방식을 선택하며, 모든 행은 같은 트랜잭션에서 처리됩니다.
+
+## RETURNING으로 저장된 상품 식별자 받기
+
+새 상품을 저장한 직후 데이터베이스가 만든 ID가 필요하면 INSERT에 `returning()`을 연결합니다.
+
+```python
+with engine.begin() as connection:
+    row = connection.execute(
+        insert(product)
+        .values(sku='MONITOR', name='Monitor', price=280_000, stock=2)
+        .returning(product.c.id, product.c.sku)
+    ).one()
+
+print((row.id, row.sku))
+```
+
+```text
+(4, 'MONITOR')
+```
+
+`RETURNING` 지원 범위와 여러 행 처리 방식은 데이터베이스·드라이버에 따라 다릅니다. 대상 운영 데이터베이스의 방언 문서를 확인하고, 지원하지 않는 환경에서는 별도 조회나 생성 기본값 API를 사용합니다.
+
+## update·delete와 rowcount로 반영 건수 확인하기
+
+조건에 맞는 여러 행을 객체로 읽지 않고 바로 변경하거나 삭제할 때 Core의 `update()`와 `delete()`를 사용합니다. 실행 결과의 `rowcount`로 조건에 맞아 반영된 행 수를 확인합니다.
+
+```python
+from sqlalchemy import delete, update
+
+
+with engine.begin() as connection:
+    updated = connection.execute(
+        update(product)
+        .where(product.c.sku == 'MOUSE')
+        .values(price=30_000)
+    )
+    deleted = connection.execute(
+        delete(product).where(product.c.stock == 0)
+    )
+    counts = (updated.rowcount, deleted.rowcount)
+
+with engine.connect() as connection:
+    products = connection.execute(
+        select(product.c.sku, product.c.price).order_by(product.c.id)
+    ).all()
+
+print(counts)
+print([tuple(row) for row in products])
+```
+
+```text
+(1, 1)
+[('KEYBOARD', 75000), ('MOUSE', 30000), ('MONITOR', 280000)]
+```
+
+`rowcount`는 여기처럼 단일 UPDATE·DELETE의 반영 여부를 확인하는 데 사용합니다. `RETURNING`이나 여러 매개변수 실행에서는 방언에 따라 의미와 지원 여부가 달라질 수 있으므로 반환된 행 자체를 세는 방법도 검토합니다.
+
+## on_conflict_do_update로 SKU 재고 upsert하기
+
+가져온 SKU가 이미 있으면 상품 정보를 갱신하고 없으면 새로 저장해야 할 때 SQLite 방언의 `on_conflict_do_update()`를 사용합니다. 고유 제약이 있는 `sku`를 충돌 판정 기준으로 지정합니다.
+
+```python
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+
+incoming_products: list[dict[str, object]] = [
+    {'sku': 'MOUSE', 'name': 'Wireless Mouse', 'price': 45_000, 'stock': 40},
+    {'sku': 'WEBCAM', 'name': 'Webcam', 'price': 90_000, 'stock': 8},
+]
+
+statement = sqlite_insert(product)
+statement = statement.on_conflict_do_update(
+    index_elements=[product.c.sku],
+    set_={
+        'name': statement.excluded.name,
+        'price': statement.excluded.price,
+        'stock': statement.excluded.stock,
+    },
+)
+
+with engine.begin() as connection:
+    result = connection.execute(statement, incoming_products)
+    affected_count = result.rowcount
+
+with engine.connect() as connection:
+    rows = connection.execute(
+        select(product.c.sku, product.c.name, product.c.price, product.c.stock)
+        .where(product.c.sku.in_(['MOUSE', 'WEBCAM']))
+        .order_by(product.c.sku)
+    ).all()
+
+print(affected_count)
+print([tuple(row) for row in rows])
+```
+
+```text
+2
+[('MOUSE', 'Wireless Mouse', 45000, 40), ('WEBCAM', 'Webcam', 90000, 8)]
+```
+
+upsert는 공통 `insert()`가 아니라 데이터베이스 방언 API입니다. PostgreSQL에서는 `sqlalchemy.dialects.postgresql.insert`를 가져와 같은 두 단계 패턴으로 `on_conflict_do_update()`를 구성하고, 운영 스키마의 고유 제약과 충돌 대상을 확인합니다.
+
+## Engine.begin으로 잘못된 일괄 입력 전체 롤백하기
+
+하나의 입력 목록을 모두 반영하거나 모두 취소해야 한다면 전체 실행을 `Engine.begin()` 블록 하나에 둡니다. 두 번째 행의 음수 재고가 CHECK 제약을 위반하면 먼저 실행된 정상 행도 함께 롤백됩니다.
+
+```python
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+
+
+invalid_batch: list[dict[str, object]] = [
+    {'sku': 'SPEAKER', 'name': 'Speaker', 'price': 60_000, 'stock': 5},
+    {'sku': 'HUB', 'name': 'USB Hub', 'price': 40_000, 'stock': -1},
+]
+
+try:
+    with engine.begin() as connection:
+        connection.execute(insert(product), invalid_batch)
+except IntegrityError:
+    print('batch rolled back')
+
+with engine.connect() as connection:
+    saved_count = connection.scalar(
+        select(func.count())
+        .select_from(product)
+        .where(product.c.sku.in_(['SPEAKER', 'HUB']))
+    )
+
+print(saved_count)
+```
+
+```text
+batch rolled back
+0
+```
+
+오류를 `Engine.begin()` 블록 밖에서 처리해야 컨텍스트 관리자가 먼저 전체 트랜잭션을 롤백합니다. 개별 입력 실패를 격리해야 하는 가져오기 작업이라면 배치 전체 원자성 대신 SAVEPOINT나 입력별 트랜잭션을 명시적으로 선택합니다.
+
+공식 SQLAlchemy [Core 데이터 조작](https://docs.sqlalchemy.org/en/20/tutorial/data_insert.html), [UPDATE·DELETE 사용법](https://docs.sqlalchemy.org/en/20/tutorial/data_update.html), [Core 연결과 트랜잭션](https://docs.sqlalchemy.org/en/20/core/connections.html), [SQLite upsert](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#insert-on-conflict-upsert)를 기준으로 구성했습니다.

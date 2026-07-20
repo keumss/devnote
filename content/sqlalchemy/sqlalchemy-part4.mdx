@@ -1,5 +1,5 @@
 ---
-title: "Part 4. 실전: 재고를 지키는 주문 관리 CLI 만들기"
+title: "Part 4. 실전 1: 재고를 지키는 주문 관리 CLI 만들기"
 ---
 
 이번에는 `order_service.py` 하나로 고객·상품을 초기화하고 주문 생성·조회·취소를 처리합니다. 주문과 재고 변경을 한 트랜잭션으로 묶어, 없는 상품이나 재고 부족이 있으면 어떤 변경도 남기지 않는 것이 목표입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
@@ -13,7 +13,7 @@ title: "Part 4. 실전: 재고를 지키는 주문 관리 CLI 만들기"
 from __future__ import annotations
 
 from sqlalchemy import CheckConstraint, ForeignKey, String, UniqueConstraint, create_engine, select
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
 class Base(DeclarativeBase):
@@ -75,84 +75,83 @@ SessionLocal = sessionmaker(engine)
 
 가격은 예제를 단순하게 유지하려고 원 단위 정수로 저장합니다. 소수 화폐를 다룬다면 부동소수점 대신 통화 규칙에 맞는 `Numeric`과 `Decimal`을 사용합니다.
 
-## initialize로 테이블과 시작 데이터 준비하기
+## initialize로 시작 데이터 준비하기
 
-`init` 명령을 반복해도 고객과 상품이 중복되지 않도록 테이블을 만든 뒤 고객이 없을 때만 시작 데이터를 저장합니다.
+`init` 명령을 반복해도 고객과 상품이 중복되지 않도록 고객이 없을 때만 시작 데이터를 저장합니다. 함수는 호출자가 연 세션을 받아 다른 초기화 작업과 같은 트랜잭션에 참여합니다.
 
 ```python
-def initialize() -> None:
-    Base.metadata.create_all(engine)
+def initialize(session: Session) -> None:
+    initialized = session.scalar(select(Customer.id).limit(1)) is not None
+    if initialized:
+        return
 
-    with SessionLocal.begin() as session:
-        initialized = session.scalar(select(Customer.id).limit(1)) is not None
-        if initialized:
-            return
-
-        session.add(Customer(email='minsu@example.com', name='민수'))
-        session.add_all([
-            Product(sku='KEYBOARD', name='Keyboard', price=75_000, stock=10),
-            Product(sku='MOUSE', name='Mouse', price=32_000, stock=25),
-            Product(sku='MONITOR', name='Monitor', price=280_000, stock=2),
-        ])
+    session.add(Customer(email='minsu@example.com', name='민수'))
+    session.add_all([
+        Product(sku='KEYBOARD', name='Keyboard', price=75_000, stock=10),
+        Product(sku='MOUSE', name='Mouse', price=32_000, stock=25),
+        Product(sku='MONITOR', name='Monitor', price=280_000, stock=2),
+    ])
 ```
 
-초기 데이터는 한 트랜잭션에서 저장됩니다. 운영 환경에서는 `create_all()`과 시작 데이터 함수 대신 마이그레이션과 별도 배포 절차로 스키마·기준 데이터를 관리합니다.
+`initialize()`는 `commit()`하지 않으므로 트랜잭션의 시작과 종료는 CLI가 결정합니다. 운영 환경에서는 `create_all()`과 시작 데이터 함수 대신 마이그레이션과 별도 배포 절차로 스키마·기준 데이터를 관리합니다.
 
 ## place_order로 주문 생성과 재고 차감 묶기
 
 고객 이메일과 `{SKU: 수량}` 입력을 받아 주문을 만들 때 모든 상품과 재고를 먼저 검증합니다. 검증이 끝난 뒤 주문 항목을 만들고 재고를 차감합니다.
 
 ```python
-def place_order(customer_email: str, quantities: dict[str, int]) -> int:
+def place_order(
+    session: Session,
+    customer_email: str,
+    quantities: dict[str, int],
+) -> int:
     if not quantities:
         raise ValueError('상품을 하나 이상 입력하세요')
     if any(quantity <= 0 for quantity in quantities.values()):
         raise ValueError('수량은 1 이상이어야 합니다')
 
-    with SessionLocal.begin() as session:
-        customer = session.scalar(
-            select(Customer).where(Customer.email == customer_email)
-        )
-        if customer is None:
-            raise ValueError(f'고객을 찾을 수 없습니다: {customer_email}')
+    customer = session.scalar(
+        select(Customer).where(Customer.email == customer_email)
+    )
+    if customer is None:
+        raise ValueError(f'고객을 찾을 수 없습니다: {customer_email}')
 
-        products = session.scalars(
-            select(Product).where(Product.sku.in_(quantities))
-        ).all()
-        products_by_sku = {product.sku: product for product in products}
+    products = session.scalars(
+        select(Product).where(Product.sku.in_(quantities))
+    ).all()
+    products_by_sku = {product.sku: product for product in products}
 
-        missing = sorted(set(quantities) - products_by_sku.keys())
-        if missing:
-            raise ValueError(f'상품을 찾을 수 없습니다: {", ".join(missing)}')
+    missing = sorted(set(quantities) - products_by_sku.keys())
+    if missing:
+        raise ValueError(f'상품을 찾을 수 없습니다: {", ".join(missing)}')
 
-        shortages = [
-            sku
-            for sku, quantity in quantities.items()
-            if products_by_sku[sku].stock < quantity
-        ]
-        if shortages:
-            raise ValueError(f'재고가 부족합니다: {", ".join(shortages)}')
+    shortages = [
+        sku
+        for sku, quantity in quantities.items()
+        if products_by_sku[sku].stock < quantity
+    ]
+    if shortages:
+        raise ValueError(f'재고가 부족합니다: {", ".join(shortages)}')
 
-        order = PurchaseOrder(customer=customer)
-        for sku, quantity in quantities.items():
-            product = products_by_sku[sku]
-            product.stock -= quantity
-            order.lines.append(
-                OrderLine(
-                    product=product,
-                    quantity=quantity,
-                    unit_price=product.price,
-                )
+    order = PurchaseOrder(customer=customer)
+    for sku, quantity in quantities.items():
+        product = products_by_sku[sku]
+        product.stock -= quantity
+        order.lines.append(
+            OrderLine(
+                product=product,
+                quantity=quantity,
+                unit_price=product.price,
             )
+        )
 
-        session.add(order)
-        session.flush()
-        order_id = order.id
+    session.add(order)
+    session.flush()
 
-    return order_id
+    return order.id
 ```
 
-중간에 `ValueError`나 데이터베이스 오류가 발생하면 `SessionLocal.begin()`이 주문 INSERT와 모든 재고 UPDATE를 함께 롤백합니다. 이 SQLite 예제는 단일 사용자 학습용입니다. 실제 동시 주문에서는 PostgreSQL 행 잠금이나 Part 3의 버전 열 같은 충돌 방지 전략도 적용합니다.
+함수는 주문 ID를 얻기 위해 `flush()`하지만 `commit()`하지 않습니다. 중간에 `ValueError`나 데이터베이스 오류가 발생하면 호출자의 `SessionLocal.begin()`이 주문 INSERT와 모든 재고 UPDATE를 함께 롤백합니다. 이 SQLite 예제는 단일 사용자 학습용입니다. 실제 동시 주문에서는 PostgreSQL 행 잠금이나 Part 3의 버전 열 같은 충돌 방지 전략도 적용합니다.
 
 ## order_summary로 필요한 관계를 세션 안에서 읽기
 
@@ -162,59 +161,57 @@ def place_order(customer_email: str, quantities: dict[str, int]) -> int:
 from sqlalchemy.orm import joinedload, selectinload
 
 
-def order_summary(order_id: int) -> list[str]:
-    with SessionLocal() as session:
-        order = session.scalar(
-            select(PurchaseOrder)
-            .options(
-                joinedload(PurchaseOrder.customer),
-                selectinload(PurchaseOrder.lines).selectinload(OrderLine.product),
-            )
-            .where(PurchaseOrder.id == order_id)
+def order_summary(session: Session, order_id: int) -> list[str]:
+    order = session.scalar(
+        select(PurchaseOrder)
+        .options(
+            joinedload(PurchaseOrder.customer),
+            selectinload(PurchaseOrder.lines).selectinload(OrderLine.product),
         )
-        if order is None:
-            raise ValueError(f'주문을 찾을 수 없습니다: {order_id}')
+        .where(PurchaseOrder.id == order_id)
+    )
+    if order is None:
+        raise ValueError(f'주문을 찾을 수 없습니다: {order_id}')
 
-        total = sum(line.quantity * line.unit_price for line in order.lines)
-        lines = [
-            f'주문 {order.id} [{order.status}]',
-            f'고객: {order.customer.name}',
-        ]
-        lines.extend(
-            f'- {line.product.name} x {line.quantity} = {line.quantity * line.unit_price}'
-            for line in order.lines
-        )
-        lines.append(f'합계: {total}')
-        return lines
+    total = sum(line.quantity * line.unit_price for line in order.lines)
+    lines = [
+        f'주문 {order.id} [{order.status}]',
+        f'고객: {order.customer.name}',
+    ]
+    lines.extend(
+        f'- {line.product.name} x {line.quantity} = {line.quantity * line.unit_price}'
+        for line in order.lines
+    )
+    lines.append(f'합계: {total}')
+    return lines
 ```
 
-주문 항목의 `unit_price`를 합계에 사용하므로 이후 상품 가격이 바뀌어도 과거 주문 금액은 달라지지 않습니다.
+주문 항목의 `unit_price`를 합계에 사용하므로 이후 상품 가격이 바뀌어도 과거 주문 금액은 달라지지 않습니다. 필요한 관계를 세션 안에서 모두 적재하고 출력 문자열을 반환하므로 호출자가 세션을 닫은 뒤 추가 SQL이 실행되지 않습니다.
 
 ## cancel_order로 주문 취소와 재고 복구 묶기
 
 접수된 주문을 취소할 때 각 상품 재고를 되돌리고 상태를 변경합니다. 이미 취소된 주문은 다시 복구하지 않아 재고가 중복 증가하는 것을 막습니다.
 
 ```python
-def cancel_order(order_id: int) -> None:
-    with SessionLocal.begin() as session:
-        order = session.scalar(
-            select(PurchaseOrder)
-            .options(
-                selectinload(PurchaseOrder.lines).selectinload(OrderLine.product)
-            )
-            .where(PurchaseOrder.id == order_id)
+def cancel_order(session: Session, order_id: int) -> None:
+    order = session.scalar(
+        select(PurchaseOrder)
+        .options(
+            selectinload(PurchaseOrder.lines).selectinload(OrderLine.product)
         )
-        if order is None:
-            raise ValueError(f'주문을 찾을 수 없습니다: {order_id}')
-        if order.status == 'cancelled':
-            raise ValueError(f'이미 취소된 주문입니다: {order_id}')
+        .where(PurchaseOrder.id == order_id)
+    )
+    if order is None:
+        raise ValueError(f'주문을 찾을 수 없습니다: {order_id}')
+    if order.status == 'cancelled':
+        raise ValueError(f'이미 취소된 주문입니다: {order_id}')
 
-        for line in order.lines:
-            line.product.stock += line.quantity
-        order.status = 'cancelled'
+    for line in order.lines:
+        line.product.stock += line.quantity
+    order.status = 'cancelled'
 ```
 
-상태 변경과 재고 복구 중 하나라도 실패하면 둘 다 롤백됩니다. 실제 업무에서는 배송을 시작한 주문처럼 취소할 수 없는 상태도 같은 트랜잭션 안에서 먼저 검사합니다.
+상태 변경과 재고 복구 중 하나라도 실패하면 호출자의 트랜잭션이 둘 다 롤백합니다. 실제 업무에서는 배송을 시작한 주문처럼 취소할 수 없는 상태도 같은 트랜잭션 안에서 먼저 검사합니다.
 
 ## argparse로 주문 명령과 실패 상태 연결하기
 
@@ -252,18 +249,24 @@ def main() -> int:
 
     try:
         if args.command == 'init':
-            initialize()
+            Base.metadata.create_all(engine)
+            with SessionLocal.begin() as session:
+                initialize(session)
             print('shop initialized')
         elif args.command == 'place':
             quantities: dict[str, int] = {}
             for sku, quantity in args.items:
                 quantities[sku] = quantities.get(sku, 0) + quantity
-            order_id = place_order(args.customer_email, quantities)
+            with SessionLocal.begin() as session:
+                order_id = place_order(session, args.customer_email, quantities)
             print(f'placed order={order_id}')
         elif args.command == 'show':
-            print('\n'.join(order_summary(args.order_id)))
+            with SessionLocal() as session:
+                summary = order_summary(session, args.order_id)
+            print('\n'.join(summary))
         else:
-            cancel_order(args.order_id)
+            with SessionLocal.begin() as session:
+                cancel_order(session, args.order_id)
             print(f'cancelled order={args.order_id}')
     except ValueError as error:
         print(f'order: {error}', file=sys.stderr)
