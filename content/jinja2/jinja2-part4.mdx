@@ -1,0 +1,515 @@
+---
+title: "Part 4. 실전: 사진 블로그 관리 화면 완성하기"
+---
+
+이번에는 SQLModel에 저장한 사진 블로그 포스트를 목록·상세 화면에서 읽고, HTML 폼으로 작성·수정하는 관리 화면을 완성합니다. 인증된 내부 관리자만 접근한다고 가정하며 인증과 CSRF 토큰 구현은 생략합니다. 첫 토픽에서 프로젝트를 준비한 뒤 같은 `app.py`와 템플릿 디렉터리에 코드를 순서대로 추가합니다.
+
+## BlogPost 모델과 FastAPI 템플릿 앱 준비하기
+
+포스트의 제목·본문·썸네일 URL을 SQLite에 저장하고 요청마다 독립적인 세션을 제공하도록 모델, 엔진, 의존성을 준비합니다. HTML 템플릿과 정적 파일도 애플리케이션 시작 시 한 번 연결합니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install 'fastapi[standard]' jinja2 sqlmodel pytest
+mkdir -p templates/layouts templates/macros templates/pages templates/partials static
+```
+
+```python
+# app.py
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field, HttpUrl, ValidationError
+from sqlmodel import Field as SQLField
+from sqlmodel import Session, SQLModel, create_engine, select
+
+
+class BlogPost(SQLModel, table=True):
+    id: int | None = SQLField(default=None, primary_key=True)
+    title: str = SQLField(index=True)
+    content: str
+    thumbnail_url: str | None = None
+
+
+class PostFormData(BaseModel):
+    title: str = Field(min_length=2, max_length=100)
+    content: str = Field(min_length=10)
+    thumbnail_url: HttpUrl | None = None
+
+
+engine = create_engine(
+    'sqlite:///photo-blog.db',
+    connect_args={'check_same_thread': False},
+)
+templates = Jinja2Templates(directory='templates')
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    SQLModel.metadata.create_all(engine)
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
+app.mount('/static', StaticFiles(directory='static'), name='static')
+
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+```
+
+테이블 모델과 폼 검증 모델을 분리하므로 데이터베이스 ID는 폼 입력에 포함되지 않습니다. 운영 스키마 변경은 `create_all()` 대신 Alembic 같은 마이그레이션 도구로 관리합니다.
+
+## base 레이아웃과 post_card·form macro 구성하기
+
+모든 화면이 같은 메뉴와 CSS를 사용하도록 기본 레이아웃을 만들고, 목록 카드와 폼 필드를 partial과 macro로 분리합니다.
+
+```html
+<!-- templates/layouts/base.html -->
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}사진 블로그 관리{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  </head>
+  <body>
+    <header>
+      <a href="{{ url_for('post_list') }}">사진 블로그 관리</a>
+      <nav><a href="{{ url_for('post_new_form') }}">새 포스트</a></nav>
+    </header>
+    <main>{% block content %}{% endblock %}</main>
+  </body>
+</html>
+```
+
+```html
+<!-- templates/partials/post-card.html -->
+<article class="post-card">
+  {% if post.thumbnail_url %}
+    <img src="{{ post.thumbnail_url }}" alt="{{ post.title }} 썸네일">
+  {% endif %}
+  <div>
+    <h2>
+      <a href="{{ url_for('post_detail', post_id=post.id) }}">{{ post.title }}</a>
+    </h2>
+    <p>{{ post.content|truncate(100) }}</p>
+  </div>
+</article>
+```
+
+```html
+<!-- templates/macros/forms.html -->
+{% macro text_input(name, label, value='', error='', type='text') %}
+  <div class="field">
+    <label for="{{ name }}">{{ label }}</label>
+    <input id="{{ name }}" name="{{ name }}" type="{{ type }}" value="{{ value }}">
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  </div>
+{% endmacro %}
+
+{% macro textarea(name, label, value='', error='') %}
+  <div class="field">
+    <label for="{{ name }}">{{ label }}</label>
+    <textarea id="{{ name }}" name="{{ name }}" rows="12">{{ value }}</textarea>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  </div>
+{% endmacro %}
+```
+
+```css
+/* static/styles.css */
+body { max-width: 52rem; margin: 0 auto; padding: 1.5rem; font-family: sans-serif; }
+header { display: flex; justify-content: space-between; margin-bottom: 2rem; }
+.post-card { display: grid; grid-template-columns: 10rem 1fr; gap: 1rem; margin: 1rem 0; }
+.post-card img { width: 100%; height: 7rem; object-fit: cover; }
+.field { display: grid; gap: .4rem; margin-bottom: 1rem; }
+.field input, .field textarea { padding: .6rem; }
+.error { color: #b42318; }
+.post-content { white-space: pre-wrap; }
+```
+
+macro에 전달되는 제목·본문·오류도 Jinja2가 자동 이스케이프하므로, 작성 폼에 입력한 HTML이 속성이나 태그로 실행되지 않습니다.
+
+## GET `/posts`로 저장된 포스트 목록 읽기
+
+목록 화면을 열 때 세션 안에서 필요한 포스트를 모두 읽고 최신 ID부터 정렬한 뒤 템플릿에 전달합니다. 템플릿에서는 쿼리를 실행하지 않습니다.
+
+```python
+@app.get('/posts', name='post_list', response_class=HTMLResponse)
+def post_list(request: Request, session: SessionDep):
+    posts = session.exec(select(BlogPost).order_by(BlogPost.id.desc())).all()
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/post-list.html',
+        context={'posts': posts},
+    )
+```
+
+```html
+<!-- templates/pages/post-list.html -->
+{% extends 'layouts/base.html' %}
+{% block title %}포스트 목록 | 사진 블로그 관리{% endblock %}
+{% block content %}
+  <h1>포스트 목록</h1>
+  {% for post in posts %}
+    {% include 'partials/post-card.html' %}
+  {% else %}
+    <p>아직 작성된 포스트가 없습니다.</p>
+  {% endfor %}
+{% endblock %}
+```
+
+세션이 닫히기 전에 템플릿이 사용할 행을 모두 읽습니다. 관계 데이터가 추가된다면 경로 함수의 쿼리에서 eager loading해 렌더링 중 추가 I/O가 발생하지 않게 합니다.
+
+## GET·POST `/posts/new`로 작성과 검증 연결하기
+
+빈 작성 화면과 저장 요청이 같은 폼 템플릿을 공유하도록 렌더링 함수와 검증 함수를 준비합니다. 고정 경로 `/posts/new`는 다음 토픽의 동적 경로 `/posts/{post_id}`보다 먼저 선언해야 합니다.
+
+```python
+field_messages = {
+    'title': '제목은 2자 이상 100자 이하로 입력하세요.',
+    'content': '본문은 10자 이상 입력하세요.',
+    'thumbnail_url': '올바른 HTTP URL을 입력하세요.',
+}
+
+
+def validate_post(values: dict[str, str]) -> tuple[PostFormData | None, dict[str, str]]:
+    try:
+        data = PostFormData(
+            title=values['title'].strip(),
+            content=values['content'].strip(),
+            thumbnail_url=values['thumbnail_url'].strip() or None,
+        )
+    except ValidationError as validation_error:
+        errors: dict[str, str] = {}
+        for error in validation_error.errors():
+            field = str(error['loc'][-1])
+            errors.setdefault(field, field_messages.get(field, '입력을 확인하세요.'))
+        return None, errors
+    return data, {}
+
+
+def render_form(
+    request: Request,
+    *,
+    heading: str,
+    action: object,
+    values: dict[str, str],
+    errors: dict[str, str],
+    status_code: int = 200,
+):
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/post-form.html',
+        context={
+            'heading': heading,
+            'action': action,
+            'values': values,
+            'errors': errors,
+        },
+        status_code=status_code,
+    )
+```
+
+```python
+@app.get('/posts/new', name='post_new_form', response_class=HTMLResponse)
+def post_new_form(request: Request):
+    return render_form(
+        request,
+        heading='새 포스트',
+        action=request.url_for('post_create'),
+        values={'title': '', 'content': '', 'thumbnail_url': ''},
+        errors={},
+    )
+
+
+@app.post('/posts/new', name='post_create', response_class=HTMLResponse)
+def post_create(
+    request: Request,
+    session: SessionDep,
+    title: Annotated[str, Form()],
+    content: Annotated[str, Form()],
+    thumbnail_url: Annotated[str, Form()] = '',
+):
+    values = {'title': title, 'content': content, 'thumbnail_url': thumbnail_url}
+    data, errors = validate_post(values)
+    if data is None:
+        return render_form(
+            request,
+            heading='새 포스트',
+            action=request.url_for('post_create'),
+            values=values,
+            errors=errors,
+            status_code=422,
+        )
+
+    post = BlogPost(
+        title=data.title,
+        content=data.content,
+        thumbnail_url=str(data.thumbnail_url) if data.thumbnail_url else None,
+    )
+    session.add(post)
+    session.commit()
+    session.refresh(post)
+    assert post.id is not None
+    return RedirectResponse(
+        url=request.url_for('post_detail', post_id=post.id),
+        status_code=303,
+    )
+```
+
+```html
+<!-- templates/pages/post-form.html -->
+{% extends 'layouts/base.html' %}
+{% from 'macros/forms.html' import text_input, textarea %}
+{% block title %}{{ heading }} | 사진 블로그 관리{% endblock %}
+{% block content %}
+  <h1>{{ heading }}</h1>
+  <form action="{{ action }}" method="post" novalidate>
+    {{ text_input('title', '제목', values.title, errors.get('title', '')) }}
+    {{ textarea('content', '본문', values.content, errors.get('content', '')) }}
+    {{ text_input(
+      'thumbnail_url',
+      '썸네일 URL',
+      values.thumbnail_url,
+      errors.get('thumbnail_url', ''),
+      'url'
+    ) }}
+    <button type="submit">저장</button>
+  </form>
+{% endblock %}
+```
+
+`novalidate`는 학습 예제에서 서버 검증 결과를 일관되게 확인하기 위한 설정입니다. 실제 화면에서는 브라우저 검증을 함께 사용하더라도 서버 검증을 생략하지 않습니다.
+
+## 상세·수정 경로와 HTML 404 처리 완성하기
+
+포스트 ID 조회를 한 함수에 모으고 상세와 수정 경로가 같은 404 규칙을 사용하게 합니다. 수정 GET은 현재 값을 폼에 넣고, 수정 POST는 검증 성공 시 같은 행을 갱신합니다.
+
+```python
+def get_post(post_id: int, session: Session) -> BlogPost:
+    post = session.get(BlogPost, post_id)
+    if post is None:
+        raise HTTPException(status_code=404, detail='포스트를 찾을 수 없습니다.')
+    return post
+
+
+def values_from_post(post: BlogPost) -> dict[str, str]:
+    return {
+        'title': post.title,
+        'content': post.content,
+        'thumbnail_url': post.thumbnail_url or '',
+    }
+
+
+@app.get('/posts/{post_id}', name='post_detail', response_class=HTMLResponse)
+def post_detail(request: Request, post_id: int, session: SessionDep):
+    post = get_post(post_id, session)
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/post-detail.html',
+        context={'post': post},
+    )
+
+
+@app.get('/posts/{post_id}/edit', name='post_edit_form', response_class=HTMLResponse)
+def post_edit_form(request: Request, post_id: int, session: SessionDep):
+    post = get_post(post_id, session)
+    return render_form(
+        request,
+        heading='포스트 수정',
+        action=request.url_for('post_update', post_id=post_id),
+        values=values_from_post(post),
+        errors={},
+    )
+```
+
+```python
+@app.post('/posts/{post_id}/edit', name='post_update', response_class=HTMLResponse)
+def post_update(
+    request: Request,
+    post_id: int,
+    session: SessionDep,
+    title: Annotated[str, Form()],
+    content: Annotated[str, Form()],
+    thumbnail_url: Annotated[str, Form()] = '',
+):
+    post = get_post(post_id, session)
+    values = {'title': title, 'content': content, 'thumbnail_url': thumbnail_url}
+    data, errors = validate_post(values)
+    if data is None:
+        return render_form(
+            request,
+            heading='포스트 수정',
+            action=request.url_for('post_update', post_id=post_id),
+            values=values,
+            errors=errors,
+            status_code=422,
+        )
+
+    post.title = data.title
+    post.content = data.content
+    post.thumbnail_url = str(data.thumbnail_url) if data.thumbnail_url else None
+    session.add(post)
+    session.commit()
+    return RedirectResponse(
+        url=request.url_for('post_detail', post_id=post_id),
+        status_code=303,
+    )
+```
+
+```html
+<!-- templates/pages/post-detail.html -->
+{% extends 'layouts/base.html' %}
+{% block title %}{{ post.title }} | 사진 블로그 관리{% endblock %}
+{% block content %}
+  <article>
+    {% if post.thumbnail_url %}
+      <img src="{{ post.thumbnail_url }}" alt="{{ post.title }} 썸네일">
+    {% endif %}
+    <h1>{{ post.title }}</h1>
+    <div class="post-content">{{ post.content }}</div>
+    <a href="{{ url_for('post_edit_form', post_id=post.id) }}">수정</a>
+  </article>
+{% endblock %}
+```
+
+HTML 경로의 `HTTPException`은 공통 오류 템플릿으로 렌더링합니다.
+
+```python
+@app.exception_handler(HTTPException)
+async def html_error(request: Request, error: HTTPException):
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/error.html',
+        context={'status_code': error.status_code, 'detail': error.detail},
+        status_code=error.status_code,
+    )
+```
+
+```html
+<!-- templates/pages/error.html -->
+{% extends 'layouts/base.html' %}
+{% block content %}
+  <h1>{{ status_code }}</h1>
+  <p>{{ detail }}</p>
+  <a href="{{ url_for('post_list') }}">목록으로</a>
+{% endblock %}
+```
+
+이 관리 화면은 인증이 이미 끝났다고 가정합니다. 운영 서비스에서는 수정 경로에 사용자 권한을 확인하고, 상태를 바꾸는 모든 폼에 프레임워크나 검증된 라이브러리를 이용한 CSRF 보호를 추가합니다.
+
+## TestClient로 작성·수정·검증·이스케이프 확인하기
+
+테스트마다 공유되지 않는 메모리 SQLite를 사용하도록 세션 의존성을 교체합니다. `StaticPool`을 사용하면 같은 테스트 엔진의 연결들이 하나의 메모리 데이터베이스를 공유합니다.
+
+```python
+# test_app.py
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
+
+from app import app, get_session
+
+
+@pytest.fixture
+def client():
+    test_engine = create_engine(
+        'sqlite://',
+        connect_args={'check_same_thread': False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(test_engine)
+
+    def get_test_session():
+        with Session(test_engine) as session:
+            yield session
+
+    app.dependency_overrides[get_session] = get_test_session
+    with TestClient(app) as test_client:
+        yield test_client
+    app.dependency_overrides.clear()
+```
+
+작성 성공의 리다이렉트와 최종 상세 화면을 확인하면서, 제목에 입력한 태그가 실행 가능한 HTML로 나오지 않는지도 검증합니다.
+
+```python
+def test_create_redirects_to_escaped_detail(client: TestClient) -> None:
+    response = client.post(
+        '/posts/new',
+        data={
+            'title': '<script>alert(1)</script>',
+            'content': '봄 산책에서 찍은 사진입니다.',
+            'thumbnail_url': 'https://images.example.com/spring.jpg',
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers['location'].endswith('/posts/1')
+
+    detail = client.get(response.headers['location'])
+    assert detail.status_code == 200
+    assert detail.template.name == 'pages/post-detail.html'
+    assert '&lt;script&gt;alert(1)&lt;/script&gt;' in detail.text
+    assert '<script>alert(1)</script>' not in detail.text
+```
+
+```python
+def test_invalid_form_preserves_values_and_errors(client: TestClient) -> None:
+    response = client.post(
+        '/posts/new',
+        data={'title': 'A', 'content': '짧음', 'thumbnail_url': 'invalid'},
+    )
+
+    assert response.status_code == 422
+    assert response.context['values']['title'] == 'A'
+    assert '제목은 2자 이상' in response.text
+    assert '올바른 HTTP URL' in response.text
+
+
+def test_edit_and_missing_post(client: TestClient) -> None:
+    created = client.post(
+        '/posts/new',
+        data={'title': '봄 산책', 'content': '벚꽃이 피어난 산책로입니다.'},
+        follow_redirects=False,
+    )
+
+    updated = client.post(
+        '/posts/1/edit',
+        data={'title': '여름 산책', 'content': '초록빛이 짙어진 산책로입니다.'},
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    assert updated.status_code == 303
+    assert '여름 산책' in client.get('/posts/1').text
+
+    missing = client.get('/posts/999/edit')
+    assert missing.status_code == 404
+    assert missing.template.name == 'pages/error.html'
+```
+
+```bash
+pytest -q
+```
+
+```text
+3 passed
+```
+
+템플릿 단위만 검사하지 않고 폼 요청, 데이터베이스 저장, 리다이렉트, 다시 조회한 HTML까지 연결해 사용자가 실제로 거치는 경계를 검증합니다.
+
+공식 FastAPI [Templates](https://fastapi.tiangolo.com/advanced/templates/), [Form Data](https://fastapi.tiangolo.com/tutorial/request-forms/), [Testing](https://fastapi.tiangolo.com/tutorial/testing/), SQLModel [Testing a Database](https://sqlmodel.tiangolo.com/tutorial/fastapi/tests/), Starlette [Templates](https://www.starlette.io/templates/)를 기준으로 구성했습니다.

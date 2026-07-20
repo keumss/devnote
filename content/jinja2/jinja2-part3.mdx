@@ -1,0 +1,291 @@
+---
+title: "Part 3. 고급: 폼, 검증, 오류 처리와 테스트"
+---
+
+서버 렌더링 화면은 HTML을 보여 주는 것에서 끝나지 않고 폼 입력, 검증 실패, 저장 후 이동, 오류 화면까지 하나의 요청 흐름으로 연결해야 합니다. 이 노트에서는 포스트 작성 폼을 완성하며 사용자 입력과 템플릿 context의 경계를 명확히 하고, 브라우저가 관찰하는 결과를 테스트합니다.
+
+## GET `/posts/new`로 빈 작성 폼 보여 주기
+
+사용자가 포스트 작성을 시작할 때 빈 값과 빈 오류 사전을 템플릿에 전달합니다. 폼의 `action`도 라우트 이름에서 만들어 경로 문자열을 중복하지 않습니다.
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+
+app = FastAPI()
+templates = Jinja2Templates(directory='templates')
+
+
+@app.get('/posts/new', name='post_new_form', response_class=HTMLResponse)
+def post_new_form(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/post-form.html',
+        context={
+            'heading': '새 포스트',
+            'action': request.url_for('post_create'),
+            'values': {'title': '', 'content': '', 'thumbnail_url': ''},
+            'errors': {},
+        },
+    )
+```
+
+```html
+<!-- templates/pages/post-form.html -->
+<h1>{{ heading }}</h1>
+<form action="{{ action }}" method="post">
+  <label for="title">제목</label>
+  <input id="title" name="title" value="{{ values.title }}">
+
+  <label for="content">본문</label>
+  <textarea id="content" name="content">{{ values.content }}</textarea>
+
+  <label for="thumbnail_url">썸네일 URL</label>
+  <input id="thumbnail_url" name="thumbnail_url" value="{{ values.thumbnail_url }}">
+  <button type="submit">저장</button>
+</form>
+```
+
+브라우저가 HTML 폼을 보내면 요청 본문은 JSON이 아니라 `application/x-www-form-urlencoded` 형식이 됩니다.
+
+## Annotated와 Form으로 POST 입력 받기
+
+HTML 폼 필드를 FastAPI 경로 함수의 문자열 매개변수로 받을 때 `Annotated[..., Form()]`을 사용합니다. 폼을 처리하려면 `python-multipart`가 필요하며 `fastapi[standard]` 설치에 포함됩니다.
+
+```python
+from typing import Annotated
+
+from fastapi import Form
+
+
+@app.post('/posts/new', name='post_create', response_class=HTMLResponse)
+def post_create(
+    request: Request,
+    title: Annotated[str, Form()],
+    content: Annotated[str, Form()],
+    thumbnail_url: Annotated[str, Form()] = '',
+):
+    values = {
+        'title': title,
+        'content': content,
+        'thumbnail_url': thumbnail_url,
+    }
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/post-form.html',
+        context={
+            'heading': '입력 확인',
+            'action': request.url_for('post_create'),
+            'values': values,
+            'errors': {},
+        },
+    )
+```
+
+필드 이름은 HTML의 `name`과 경로 함수 매개변수가 정확히 대응합니다. 파일을 포함하지 않는 이 폼은 `enctype`을 따로 지정하지 않습니다.
+
+## ValidationError를 필드 오류로 바꿔 다시 렌더링하기
+
+폼 값이 업무 규칙을 만족하지 않을 때 Pydantic 모델로 검증하고, 입력값을 보존한 채 같은 화면을 상태 코드 `422`로 다시 렌더링합니다.
+
+```python
+from pydantic import BaseModel, Field, HttpUrl, ValidationError
+
+
+class PostFormData(BaseModel):
+    title: str = Field(min_length=2, max_length=100)
+    content: str = Field(min_length=10)
+    thumbnail_url: HttpUrl | None = None
+
+
+field_messages = {
+    'title': '제목은 2자 이상 100자 이하로 입력하세요.',
+    'content': '본문은 10자 이상 입력하세요.',
+    'thumbnail_url': '올바른 HTTP URL을 입력하세요.',
+}
+
+
+def validate_post(values: dict[str, str]) -> tuple[PostFormData | None, dict[str, str]]:
+    try:
+        data = PostFormData(
+            title=values['title'].strip(),
+            content=values['content'].strip(),
+            thumbnail_url=values['thumbnail_url'].strip() or None,
+        )
+    except ValidationError as validation_error:
+        errors: dict[str, str] = {}
+        for error in validation_error.errors():
+            field = str(error['loc'][-1])
+            errors.setdefault(field, field_messages.get(field, '입력을 확인하세요.'))
+        return None, errors
+    return data, {}
+```
+
+앞 토픽의 `post_create()`에서 `values`를 만든 뒤 검증 결과를 처리합니다.
+
+```python
+data, errors = validate_post(values)
+if data is None:
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/post-form.html',
+        context={
+            'heading': '새 포스트',
+            'action': request.url_for('post_create'),
+            'values': values,
+            'errors': errors,
+        },
+        status_code=422,
+    )
+```
+
+템플릿은 `errors.title`처럼 필드별 문구를 표시합니다. 검증 규칙과 오류 선택은 Python에 있고, Jinja2는 전달된 결과만 렌더링합니다.
+
+## RedirectResponse로 Post/Redirect/Get 흐름 완성하기
+
+정상 입력을 저장한 뒤 같은 POST가 새로고침으로 반복되지 않게 상세 화면으로 리다이렉트합니다. 브라우저가 다음 요청을 GET으로 보내도록 상태 코드 `303`을 사용합니다.
+
+```python
+from fastapi.responses import RedirectResponse
+
+
+posts: list[dict[str, object]] = []
+
+
+# post_create()의 검증 성공 분기
+post = {
+    'id': len(posts) + 1,
+    'title': data.title,
+    'content': data.content,
+    'thumbnail_url': str(data.thumbnail_url) if data.thumbnail_url else None,
+}
+posts.append(post)
+return RedirectResponse(
+    url=request.url_for('post_detail', post_id=post['id']),
+    status_code=303,
+)
+```
+
+```text
+POST /posts/new → 303 See Other
+GET /posts/1  → 200 OK
+```
+
+리다이렉트 URL은 저장된 ID가 확정된 뒤 만듭니다. 검증 실패에는 리다이렉트를 사용하지 않아 입력값과 오류를 현재 응답에서 바로 보여 줍니다.
+
+## StrictUndefined로 누락된 context 발견하기
+
+템플릿 변수 이름을 잘못 썼을 때 빈 문자열로 조용히 표시되지 않게 하려면 `StrictUndefined`를 설정합니다. 이 설정은 첫 템플릿을 불러오기 전에 적용합니다.
+
+```python
+from jinja2 import StrictUndefined
+
+
+templates = Jinja2Templates(directory='templates')
+templates.env.undefined = StrictUndefined
+```
+
+```html
+<h1>{{ psot.title }}</h1>
+```
+
+```text
+jinja2.exceptions.UndefinedError: 'psot' is undefined
+```
+
+개발과 테스트에서 context 계약이 어긋난 위치를 즉시 찾을 수 있습니다. 선택 값은 누락시키기보다 `None`, 빈 목록, 빈 사전처럼 의도한 기본값을 명시해서 전달합니다.
+
+## autoescape와 safe의 신뢰 경계 지키기
+
+포스트 본문처럼 사용자가 입력한 문자열은 자동 이스케이프된 상태로 출력합니다. 줄바꿈 표현이 필요하면 CSS를 사용해 HTML로 재해석하지 않습니다.
+
+```html
+<div class="post-content">{{ post.content }}</div>
+```
+
+```css
+.post-content {
+  white-space: pre-wrap;
+}
+```
+
+`{{ trusted_content|safe }}`는 서버가 허용 목록 기반 HTML sanitizer로 정제한 값처럼 출처와 처리 과정을 보장할 수 있을 때만 사용합니다. Jinja2의 `safe` 필터 자체는 악성 태그를 제거하지 않으며, 사용자 입력이나 URL 매개변수에 적용하면 XSS 보호가 사라집니다.
+
+## exception_handler로 HTML 오류 화면 응답하기
+
+없는 포스트를 브라우저에서 열었을 때 JSON 대신 같은 레이아웃의 오류 화면을 보여 주려면 `HTTPException` 처리기를 등록합니다. API 경로는 기존 JSON 계약을 유지하도록 분기합니다.
+
+```python
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
+
+
+@app.exception_handler(HTTPException)
+async def http_error(request: Request, error: HTTPException):
+    if request.url.path.startswith('/api/'):
+        return JSONResponse(
+            status_code=error.status_code,
+            content={'detail': error.detail},
+        )
+
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/error.html',
+        context={
+            'status_code': error.status_code,
+            'detail': error.detail,
+        },
+        status_code=error.status_code,
+    )
+```
+
+```html
+<!-- templates/pages/error.html -->
+{% extends 'layouts/base.html' %}
+{% block content %}
+  <h1>{{ status_code }}</h1>
+  <p>{{ detail }}</p>
+  <a href="{{ url_for('post_list') }}">목록으로</a>
+{% endblock %}
+```
+
+오류 화면도 상태 코드 `200`으로 바꾸지 않고 원래의 `404`, `403` 등을 유지해야 브라우저·검색 엔진·모니터링이 결과를 올바르게 해석합니다.
+
+## TestClient로 템플릿과 렌더링 결과 확인하기
+
+경로 함수가 올바른 템플릿과 context를 선택하고 사용자 입력을 안전하게 렌더링하는지 `TestClient`로 확인합니다. 템플릿 응답에는 테스트용 `template`과 `context` 정보가 포함됩니다.
+
+```python
+from fastapi.testclient import TestClient
+
+from main import app
+
+
+client = TestClient(app)
+
+
+def test_new_post_form_uses_empty_values() -> None:
+    response = client.get('/posts/new')
+
+    assert response.status_code == 200
+    assert response.template.name == 'pages/post-form.html'
+    assert response.context['values']['title'] == ''
+    assert '<form' in response.text
+
+
+def test_invalid_post_preserves_input() -> None:
+    response = client.post(
+        '/posts/new',
+        data={'title': 'A', 'content': '짧음', 'thumbnail_url': 'invalid'},
+    )
+
+    assert response.status_code == 422
+    assert response.context['values']['title'] == 'A'
+    assert '제목은 2자 이상' in response.text
+```
+
+context 검증은 서버가 템플릿에 전달한 계약을, `response.text` 검증은 사용자가 실제로 받는 HTML을 확인합니다. 리다이렉트 테스트에서는 `follow_redirects=False`로 `303`과 `Location`을 따로 검증합니다.
+
+공식 FastAPI [Form Data](https://fastapi.tiangolo.com/tutorial/request-forms/), [RedirectResponse](https://fastapi.tiangolo.com/advanced/custom-response/#redirectresponse), [Handling Errors](https://fastapi.tiangolo.com/tutorial/handling-errors/), Jinja [Undefined Types](https://jinja.palletsprojects.com/en/stable/api/#undefined-types), Starlette [Testing template responses](https://www.starlette.io/templates/#testing-template-responses)를 기준으로 구성했습니다.

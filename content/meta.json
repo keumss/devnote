@@ -7,6 +7,7 @@
     "alembic",
     "sqlmodel",
     "fastapi",
+    "jinja2",
     "dataclass",
     "chainmap",
     "pytest"
