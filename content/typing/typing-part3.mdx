@@ -1,0 +1,272 @@
+---
+title: "Part 3. 고급: 재사용 가능한 타입 계약 설계하기"
+---
+
+여러 타입에 같은 로직을 적용할 때 반환 타입을 `Any`로 넓히면 호출부의 정보가 사라집니다. Python 3.12의 타입 매개변수 문법과 구조적 계약을 사용해 입력과 출력의 관계를 보존하고, 래퍼·상속·분기의 실수를 정적 분석으로 찾는 방법을 익힙니다.
+
+## def first[T]로 입력 원소 타입을 반환 타입까지 보존하기
+
+문자열 목록에서는 문자열을, 정수 목록에서는 정수를 돌려주는 함수를 만들 때 타입 매개변수 `T`를 사용합니다. 하나의 구현이 호출마다 입력 원소 타입을 그대로 반환 타입으로 전달합니다.
+
+```python
+from collections.abc import Sequence
+
+
+def first[T](items: Sequence[T]) -> T:
+    if not items:
+        raise ValueError('항목이 하나 이상 필요합니다.')
+    return items[0]
+
+
+name = first(['keyboard', 'mouse'])
+quantity = first([3, 5])
+print(name.upper())
+print(quantity + 1)
+```
+
+```text
+KEYBOARD
+4
+```
+
+반환 타입을 `object`나 `Any`로 두면 `upper()`와 덧셈이 안전한지 알 수 없습니다. 같은 타입 관계가 여러 위치에 나타날 때 타입 매개변수를 사용합니다.
+
+## class Box[T]로 값 타입을 기억하는 컨테이너 만들기
+
+객체가 보관한 값의 타입을 메서드 반환까지 유지해야 할 때 제네릭 클래스를 만듭니다. `Box[int]`와 `Box[str]`는 같은 구현을 쓰면서 서로 다른 값 계약을 갖습니다.
+
+```python
+class Box[T]:
+    def __init__(self, value: T) -> None:
+        self._value = value
+
+    def get(self) -> T:
+        return self._value
+
+    def replace(self, value: T) -> None:
+        self._value = value
+
+
+price_box = Box(59_000)
+name_box = Box('keyboard')
+print(price_box.get() + 1_000)
+print(name_box.get().upper())
+
+# price_box.replace('59000')
+# 정적 타입 검사: Box[int]에는 str을 저장할 수 없으므로 오류
+```
+
+```text
+60000
+KEYBOARD
+```
+
+실행 중에는 객체가 `Box[int]`였다는 정보가 별도로 보존되지 않습니다. 외부 값을 저장하기 전의 런타임 검증은 여전히 필요합니다.
+
+## 타입 매개변수의 상한과 제약으로 허용 범위 정하기
+
+제네릭 함수가 특정 동작을 요구하면 상한을, 정해진 후보 타입만 허용하면 제약을 사용합니다. 상한 `Sized`는 `len()`을 제공하는 모든 타입을 받고, 제약은 `str` 또는 `bytes`만 받습니다.
+
+```python
+from collections.abc import Sized
+
+
+def size_of[T: Sized](value: T) -> int:
+    return len(value)
+
+
+def duplicate[T: (str, bytes)](value: T) -> tuple[T, T]:
+    return value, value
+
+
+print(size_of({'keyboard': 3, 'mouse': 5}))
+print(duplicate('sale'))
+print(duplicate(b'OK'))
+
+# duplicate(3)
+# 정적 타입 검사: int는 str·bytes 제약에 포함되지 않으므로 오류
+```
+
+```text
+2
+('sale', 'sale')
+(b'OK', b'OK')
+```
+
+상한은 해당 프로토콜의 하위 타입을 폭넓게 허용하고, 제약은 나열한 후보 중 하나로 타입을 결정합니다. 구현에 실제로 필요한 최소 범위를 선택합니다.
+
+## Self로 메서드를 호출한 구체 클래스 타입 유지하기
+
+체이닝 메서드가 현재 인스턴스를 반환하고 하위 클래스에서도 정확한 타입을 유지해야 할 때 `Self`를 사용합니다. 부모 클래스 이름을 반환 타입으로 쓰는 것보다 상속에 맞게 결과가 좁혀집니다.
+
+```python
+from typing import Self
+
+
+class Query:
+    def __init__(self) -> None:
+        self.filters: list[str] = []
+
+    def where(self, condition: str) -> Self:
+        self.filters.append(condition)
+        return self
+
+
+class ProductQuery(Query):
+    def in_stock(self) -> Self:
+        return self.where('stock > 0')
+
+
+query = ProductQuery().where('price < 100000').in_stock()
+print(query.filters)
+```
+
+```text
+['price < 100000', 'stock > 0']
+```
+
+`Self`는 메서드를 호출한 객체의 구체 타입을 나타냅니다. 무관한 새 객체를 반환하는 팩토리에는 실제 반환 클래스나 타입 매개변수를 사용합니다.
+
+## Protocol로 상속 없이 필요한 동작만 요구하기
+
+데이터 저장소나 외부 서비스의 구현을 바꿀 수 있게 하려면 필요한 메서드만 `Protocol`로 선언합니다. 구현 클래스가 프로토콜을 상속하지 않아도 같은 시그니처를 제공하면 계약을 만족합니다.
+
+```python
+from typing import Protocol
+
+
+class PriceReader(Protocol):
+    def get_price(self, sku: str) -> int: ...
+
+
+class MemoryCatalog:
+    def __init__(self, prices: dict[str, int]) -> None:
+        self.prices = prices
+
+    def get_price(self, sku: str) -> int:
+        return self.prices[sku]
+
+
+def order_total(reader: PriceReader, sku: str, quantity: int) -> int:
+    return reader.get_price(sku) * quantity
+
+
+catalog = MemoryCatalog({'KB-01': 59_000})
+print(order_total(catalog, 'KB-01', 2))
+```
+
+```text
+118000
+```
+
+공통 부모 클래스를 강제하지 않으므로 기존 클래스와 테스트 대역도 쉽게 사용할 수 있습니다. 프로토콜에는 호출자가 실제로 의존하는 최소 속성과 메서드만 둡니다.
+
+## ParamSpec으로 데코레이터의 호출 규격 보존하기
+
+함수를 감싸면서 원래 매개변수와 반환 타입을 그대로 유지하려면 `ParamSpec` 역할의 `**P`와 반환 타입 `R`을 사용합니다. 래퍼를 거친 뒤에도 호출부가 원래 함수의 시그니처를 알 수 있습니다.
+
+```python
+from collections.abc import Callable
+from functools import wraps
+
+
+def traced[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        print(f'호출: {func.__name__}')
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+@traced
+def calculate_total(price: int, quantity: int) -> int:
+    return price * quantity
+
+
+print(calculate_total(12_000, quantity=3))
+
+# calculate_total('12000', quantity=3)
+# 정적 타입 검사: 장식된 뒤에도 price는 int여야 하므로 오류
+```
+
+```text
+호출: calculate_total
+36000
+```
+
+`Callable[..., R]`은 매개변수 검사를 잃지만 `Callable[P, R]`은 위치·키워드 인수 정보를 전달합니다. 데코레이터가 인수를 추가하는 경우에는 `Concatenate`를 함께 사용합니다.
+
+## @overload로 입력과 반환 타입의 관계 표현하기
+
+입력 값에 따라 반환 타입이 달라질 때 여러 `@overload` 선언으로 호출 규격을 표현하고, 실제 실행 구현은 하나만 둡니다. 호출부는 리터럴 인수에 맞는 구체적인 반환 타입을 얻습니다.
+
+```python
+from typing import Literal, overload
+
+
+@overload
+def read_setting(name: Literal['retries']) -> int: ...
+
+
+@overload
+def read_setting(name: Literal['region']) -> str: ...
+
+
+def read_setting(name: Literal['retries', 'region']) -> int | str:
+    if name == 'retries':
+        return 3
+    return 'ap-northeast-2'
+
+
+retries = read_setting('retries')
+region = read_setting('region')
+print(retries + 1)
+print(region.upper())
+```
+
+```text
+4
+AP-NORTHEAST-2
+```
+
+오버로드 선언에는 본문을 두지 않고 바로 뒤의 구현 하나가 모든 경우를 처리합니다. 단순히 반환 타입만 넓히면 충분한 함수에는 오버로드를 추가하지 않습니다.
+
+## Never·assert_never로 도달할 수 없는 흐름 확인하기
+
+항상 예외를 내는 함수는 `Never`를 반환하고, 모든 유니온 분기를 처리했는지 확인하려면 마지막에 `assert_never()`를 둡니다. 새 상태가 추가됐는데 분기를 빠뜨리면 정적 검사에서 드러납니다.
+
+```python
+from typing import Literal, Never, assert_never
+
+
+type JobStatus = Literal['ready', 'done']
+
+
+def fail(message: str) -> Never:
+    raise RuntimeError(message)
+
+
+def status_label(status: JobStatus) -> str:
+    if status == 'ready':
+        return '대기'
+    if status == 'done':
+        return '완료'
+    return assert_never(status)
+
+
+print(status_label('ready'))
+print(status_label('done'))
+
+# status_label('paused')
+# 정적 타입 검사: JobStatus에 없는 값이므로 오류
+```
+
+```text
+대기
+완료
+```
+
+`assert_never()`가 실행됐다면 타입 계약 밖의 값이 런타임에 들어온 것입니다. 외부 입력 검증을 보완하면서 분기 누락도 함께 점검합니다.
+
+공식 Python 3.12 [`typing` 문서](https://docs.python.org/3.12/library/typing.html)와 검사기 중립적인 [제네릭](https://typing.python.org/en/latest/reference/generics.html), [프로토콜](https://typing.python.org/en/latest/reference/protocols.html) 문서를 기준으로 구성했습니다.

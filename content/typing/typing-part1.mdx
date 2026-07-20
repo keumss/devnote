@@ -1,0 +1,200 @@
+---
+title: "Part 1. 기초: 함수와 컬렉션의 타입 계약 표현하기"
+---
+
+Python의 타입 힌트는 함수가 어떤 값을 받고 돌려주는지 코드에 남겨 IDE와 정적 타입 검사기가 실수를 더 일찍 찾도록 돕습니다. 런타임이 타입을 강제하지는 않으므로, 외부 입력 검증과 타입 힌트의 역할을 구분하면서 자주 쓰는 함수와 컬렉션 타입부터 익힙니다.
+
+## 매개변수와 반환 타입으로 함수 계약 드러내기
+
+함수를 호출하기 전에 필요한 입력과 결과를 알 수 있게 하려면 매개변수 뒤에 타입을, `->` 뒤에 반환 타입을 적습니다. 본문을 읽지 않아도 문자열과 정수를 받아 문자열을 돌려준다는 계약이 보입니다.
+
+```python
+def format_price(name: str, price: int) -> str:
+    return f'{name}: {price}원'
+
+
+print(format_price('keyboard', 59_000))
+
+# format_price('keyboard', '59000')
+# 정적 타입 검사: 두 번째 인수는 int여야 하므로 오류
+```
+
+```text
+keyboard: 59000원
+```
+
+타입 힌트는 호출을 막는 런타임 검증이 아닙니다. 파일·HTTP·사용자 입력은 별도로 검사하고, 타입 힌트는 검증을 마친 값이 코드 안에서 어떻게 흐르는지 표현하는 데 사용합니다.
+
+## list·dict·tuple로 컬렉션 원소 타입 표현하기
+
+컬렉션 안에 어떤 값이 들어가는지 알리고 싶을 때 내장 컬렉션 뒤에 대괄호로 원소 타입을 적습니다. `tuple`은 위치마다 타입이 다를 수 있고, 가변 길이 튜플은 `tuple[T, ...]`로 표현합니다.
+
+```python
+names: list[str] = ['keyboard', 'mouse']
+stocks: dict[str, int] = {'keyboard': 3, 'mouse': 5}
+product: tuple[str, int] = ('monitor', 320_000)
+quantities: tuple[int, ...] = (1, 2, 3)
+
+print(names[0])
+print(stocks['mouse'])
+print(product)
+print(sum(quantities))
+```
+
+```text
+keyboard
+5
+('monitor', 320000)
+6
+```
+
+`list[str]`은 문자열 목록, `dict[str, int]`는 문자열 키와 정수 값의 사전입니다. 타입을 생략한 빈 컬렉션은 원소 타입을 추론하기 어려우므로 변수 경계에서 명시합니다.
+
+## str | None으로 값이 없을 수 있음을 표현하기
+
+조회 결과처럼 문자열이 있거나 없을 수 있다면 `str | None`으로 두 경우를 표현합니다. 사용하기 전에 `None`을 확인하면 이후 분기에서 정적 타입 검사기가 값을 `str`로 좁힙니다.
+
+```python
+def display_name(nickname: str | None) -> str:
+    if nickname is None:
+        return '익명 사용자'
+    return nickname.upper()
+
+
+print(display_name(None))
+print(display_name('mira'))
+```
+
+```text
+익명 사용자
+MIRA
+```
+
+`str | None`은 `None`을 허용한다는 뜻이지 매개변수를 생략할 수 있다는 뜻은 아닙니다. 생략도 허용하려면 `nickname: str | None = None`처럼 기본값을 별도로 둡니다.
+
+## object로 미확인 값을 안전하게 받기
+
+타입을 모르는 값을 받은 뒤 확인해서 사용하려면 `object`로 받습니다. 모든 Python 값은 `object`로 전달할 수 있지만, 타입을 좁히기 전에는 해당 타입의 메서드를 바로 호출할 수 없습니다.
+
+```python
+def normalize_code(value: object) -> str:
+    if isinstance(value, int):
+        return f'{value:04d}'
+    if isinstance(value, str):
+        return value.strip().upper()
+    raise TypeError('코드는 정수 또는 문자열이어야 합니다.')
+
+
+print(normalize_code(27))
+print(normalize_code(' ab-12 '))
+```
+
+```text
+0027
+AB-12
+```
+
+`object`는 미확인 값에 먼저 검사를 요구하므로 외부 경계에 적합합니다. `isinstance()`로 확인한 분기 안에서만 정수와 문자열의 연산을 사용합니다.
+
+## Any로 타입 검사를 끄는 범위 제한하기
+
+타입 정보가 없는 오래된 라이브러리와 연결할 때는 `Any`가 필요할 수 있습니다. `Any` 값에는 어떤 연산도 허용되므로 경계에서만 짧게 사용하고, 가능한 한 빨리 구체적인 타입으로 바꿉니다.
+
+```python
+from typing import Any
+
+
+def legacy_payload() -> Any:
+    return {'count': 3}
+
+
+payload = legacy_payload()
+count: int = payload['count']
+print(count)
+
+# payload['missing'].upper()
+# 정적 타입 검사는 Any에서 이 실수를 찾지 못하고, 실행 중에 실패함
+```
+
+```text
+3
+```
+
+`Any`는 “아직 모르는 타입”이 아니라 “이 값에 대한 검사를 건너뛴다”는 뜻입니다. 안전하게 확인해야 하는 입력에는 `object`를 우선하고, `Any`가 함수 밖으로 퍼지지 않게 합니다.
+
+## Sequence·Mapping으로 필요한 동작만 요구하기
+
+함수가 읽기만 한다면 구체적인 `list`·`dict` 대신 필요한 동작을 제공하는 `Sequence`·`Mapping`을 받습니다. 호출자는 튜플이나 읽기 전용 매핑처럼 더 다양한 구현을 전달할 수 있습니다.
+
+```python
+from collections.abc import Mapping, Sequence
+
+
+def total_for(
+    product_names: Sequence[str],
+    prices: Mapping[str, int],
+) -> int:
+    return sum(prices[name] for name in product_names)
+
+
+print(total_for(('keyboard', 'mouse'), {'keyboard': 59_000, 'mouse': 25_000}))
+```
+
+```text
+84000
+```
+
+함수 안에서 `append()`가 필요할 때만 `list`를 요구합니다. 입력 타입은 호출자가 제공해야 하는 최소 기능에 맞추고, 반환 타입은 실제로 돌려주는 구체적인 형태로 정합니다.
+
+## Callable로 콜백의 매개변수와 결과 표현하기
+
+다른 함수를 인수로 받아 실행할 때 `Callable[[매개변수 타입], 반환 타입]`으로 콜백 규격을 표현합니다. 다음 함수는 정수 하나를 받아 문자열을 만드는 규칙만 허용합니다.
+
+```python
+from collections.abc import Callable
+
+
+def render_all(
+    values: list[int],
+    renderer: Callable[[int], str],
+) -> list[str]:
+    return [renderer(value) for value in values]
+
+
+def as_quantity(value: int) -> str:
+    return f'{value}개'
+
+
+print(render_all([1, 3, 5], as_quantity))
+```
+
+```text
+['1개', '3개', '5개']
+```
+
+키워드 전용 인수처럼 복잡한 호출 규격은 Part 3의 `Protocol`로 표현하고, 매개변수 목록을 그대로 보존하는 데코레이터는 `ParamSpec`을 사용합니다.
+
+## type 문으로 반복되는 타입에 이름 붙이기
+
+긴 타입이 여러 함수에서 반복되거나 업무 의미를 붙이고 싶을 때 Python 3.12의 `type` 문으로 별칭을 만듭니다. 별칭은 새 런타임 타입을 만들지 않고 기존 타입을 읽기 쉬운 이름으로 표현합니다.
+
+```python
+type ProductRow = tuple[str, int]
+type Inventory = dict[str, int]
+
+
+def build_inventory(rows: list[ProductRow]) -> Inventory:
+    return {name: stock for name, stock in rows}
+
+
+inventory = build_inventory([('keyboard', 3), ('mouse', 5)])
+print(inventory)
+```
+
+```text
+{'keyboard': 3, 'mouse': 5}
+```
+
+별칭과 원래 타입은 정적 검사에서 같은 타입으로 취급됩니다. 서로 섞이면 안 되는 고객 ID와 주문 ID처럼 구별된 타입이 필요하면 Part 2의 `NewType`을 사용합니다.
+
+공식 Python 3.12 [`typing` 문서](https://docs.python.org/3.12/library/typing.html)의 타입 힌트, `Any`, 내장 제네릭, 타입 별칭 설명을 기준으로 예제를 구성했습니다.

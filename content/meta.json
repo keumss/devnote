@@ -1,6 +1,7 @@
 {
   "pages": [
     "sql",
+    "typing",
     "pydantic",
     "sqlalchemy",
     "sqlmodel",

@@ -1,0 +1,226 @@
+---
+title: "Part 4. 실전: 타입 안전한 주문 이벤트 처리 CLI 만들기"
+---
+
+이번에는 `order_events.py` 하나로 JSON Lines 형식의 주문 이벤트를 읽고 생성·결제·취소 메시지를 출력합니다. 목표는 외부 JSON을 곧바로 믿지 않고 `object`에서 검증된 `OrderEvent`로 바꾼 뒤, 모든 이벤트 종류를 빠짐없이 처리하고 잘못된 입력에서는 상태 코드 1로 종료하는 것입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
+
+## NewType·Literal·TypedDict로 주문 이벤트 준비하기
+
+먼저 이벤트가 공통으로 사용하는 주문 ID와 종류별 데이터 모양을 선언합니다. `kind`의 `Literal` 값이 유니온에서 어떤 이벤트인지 구분하며, 취소 사유만 선택 키로 둡니다.
+
+```python
+# order_events.py
+from __future__ import annotations
+
+import json
+import sys
+from collections.abc import Iterable
+from typing import Literal, NewType, NotRequired, Protocol, TypedDict, assert_never
+
+
+OrderId = NewType('OrderId', str)
+
+
+class CreatedEvent(TypedDict):
+    kind: Literal['created']
+    order_id: OrderId
+    total: int
+
+
+class PaidEvent(TypedDict):
+    kind: Literal['paid']
+    order_id: OrderId
+
+
+class CancelledEvent(TypedDict):
+    kind: Literal['cancelled']
+    order_id: OrderId
+    reason: NotRequired[str]
+
+
+type OrderEvent = CreatedEvent | PaidEvent | CancelledEvent
+```
+
+`TypedDict`는 런타임 검증기가 아니므로 JSON을 읽은 결과에 바로 타입을 붙이지 않습니다. 다음 토픽에서 키와 값의 실제 타입을 확인한 뒤 각 이벤트를 만듭니다.
+
+## parse_event로 object를 검증한 뒤 OrderEvent 만들기
+
+외부 JSON 값 하나를 내부 이벤트로 바꾸는 경계는 `parse_event(value: object) -> OrderEvent`로 고정합니다. 딕셔너리 여부, 이벤트 종류, 주문 ID를 먼저 확인하고 종류별 필드를 검증합니다.
+
+```python
+def parse_event(value: object) -> OrderEvent:
+    if not isinstance(value, dict):
+        raise ValueError('이벤트는 JSON 객체여야 합니다.')
+
+    kind: object = value.get('kind')
+    if kind not in ('created', 'paid', 'cancelled'):
+        raise ValueError('지원하지 않는 이벤트 종류입니다.')
+
+    order_id: object = value.get('order_id')
+    if not isinstance(order_id, str) or not order_id.strip():
+        raise ValueError('order_id는 비어 있지 않은 문자열이어야 합니다.')
+    checked_order_id = OrderId(order_id)
+
+    if kind == 'created':
+        total: object = value.get('total')
+        if (
+            not isinstance(total, int)
+            or isinstance(total, bool)
+            or total <= 0
+        ):
+            raise ValueError('total은 0보다 큰 정수여야 합니다.')
+        return {
+            'kind': 'created',
+            'order_id': checked_order_id,
+            'total': total,
+        }
+
+    if kind == 'paid':
+        return {'kind': 'paid', 'order_id': checked_order_id}
+
+    reason: object = value.get('reason')
+    if reason is None:
+        return {'kind': 'cancelled', 'order_id': checked_order_id}
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError('reason은 비어 있지 않은 문자열이어야 합니다.')
+    return {
+        'kind': 'cancelled',
+        'order_id': checked_order_id,
+        'reason': reason,
+    }
+```
+
+`json.loads()`의 결과를 `cast()`로 단정하지 않고 런타임 조건을 통과한 값만 `OrderEvent`로 만듭니다. `bool`은 `int`의 하위 타입이므로 금액 검사에서 명시적으로 제외합니다.
+
+## EventSink Protocol로 출력 대상의 최소 계약 정의하기
+
+이벤트 처리 규칙이 콘솔 출력 방식에 묶이지 않게 하려면 메시지를 받는 최소 동작을 프로토콜로 선언합니다. `ConsoleSink`는 프로토콜을 상속하지 않아도 같은 `write()` 시그니처를 제공하므로 사용할 수 있습니다.
+
+```python
+class EventSink(Protocol):
+    def write(self, message: str) -> None: ...
+
+
+class ConsoleSink:
+    def write(self, message: str) -> None:
+        print(message)
+```
+
+테스트에서는 메시지를 목록에 저장하는 객체를 전달할 수 있고, 실제 서비스에서는 로그나 메시지 발행 구현으로 바꿀 수 있습니다. 처리 함수는 출력 대상이 메시지를 어떻게 저장하는지 알 필요가 없습니다.
+
+## handle_event로 모든 이벤트 종류 빠짐없이 처리하기
+
+검증을 마친 이벤트는 `kind`를 확인해 안전하게 좁힌 뒤 종류별 필드를 사용합니다. 마지막 `assert_never()`는 새 이벤트 타입을 추가하고 처리 분기를 빠뜨렸을 때 정적 검사에서 찾게 합니다.
+
+```python
+def handle_event(event: OrderEvent, sink: EventSink) -> None:
+    if event['kind'] == 'created':
+        sink.write(f'주문 생성: {event["order_id"]} / {event["total"]}원')
+        return
+
+    if event['kind'] == 'paid':
+        sink.write(f'결제 완료: {event["order_id"]}')
+        return
+
+    if event['kind'] == 'cancelled':
+        reason = event.get('reason', '사유 없음')
+        sink.write(f'주문 취소: {event["order_id"]} / {reason}')
+        return
+
+    assert_never(event)
+```
+
+종류별 필드 접근은 해당 분기 안에 둡니다. `created`가 아닌 이벤트에서 `total`을 읽는 것처럼 유니온의 일부에만 있는 키를 공통 영역에서 사용하지 않습니다.
+
+## process_events로 여러 입력의 실패 위치 표시하기
+
+여러 JSON 값을 차례로 처리할 때 몇 번째 이벤트가 실패했는지 작업 경계에서 보완합니다. 파서는 원인을 설명하고 `process_events()`는 입력 순서를 더해 호출자에게 하나의 오류로 전달합니다.
+
+```python
+def process_events(values: Iterable[object], sink: EventSink) -> int:
+    processed = 0
+
+    for position, value in enumerate(values, start=1):
+        try:
+            event = parse_event(value)
+        except ValueError as error:
+            raise ValueError(f'{position}번째 이벤트: {error}') from error
+
+        handle_event(event, sink)
+        processed += 1
+
+    return processed
+```
+
+앞선 이벤트의 출력이 이미 발생한 뒤 다음 이벤트가 실패할 수 있습니다. 데이터베이스나 메시지 큐에 반영하는 실제 일괄 작업이라면 출력 대신 트랜잭션을 사용해 전체 성공 여부를 원자적으로 관리합니다.
+
+## JSON Lines 입력과 종료 상태를 main에서 연결하기
+
+파일 끝에 표준 입력의 각 줄을 JSON으로 해석하고 실행 결과를 종료 상태로 바꾸는 코드를 추가합니다. 빈 줄은 건너뛰며 JSON 문법 오류와 이벤트 검증 오류를 같은 CLI 오류 경계에서 처리합니다.
+
+```python
+def load_json_lines(lines: Iterable[str]) -> list[object]:
+    values: list[object] = []
+
+    for position, raw in enumerate(lines, start=1):
+        if not raw.strip():
+            continue
+        try:
+            values.append(json.loads(raw))
+        except json.JSONDecodeError as error:
+            raise ValueError(f'{position}번째 줄: 올바른 JSON이 아닙니다.') from error
+
+    return values
+
+
+def main() -> int:
+    try:
+        values = load_json_lines(sys.stdin)
+        count = process_events(values, ConsoleSink())
+    except ValueError as error:
+        print(f'order-events: {error}', file=sys.stderr)
+        return 1
+
+    print(f'처리 완료: {count}건')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+앞선 코드를 `order_events.py`로 합친 뒤 정상 이벤트와 세 가지 실패 입력을 확인합니다. `2>&1`은 표준 오류까지 같은 출력에서 확인하기 위한 셸 옵션입니다.
+
+```bash
+printf '%s\n' \
+  '{"kind":"created","order_id":"O-100","total":59000}' \
+  '{"kind":"paid","order_id":"O-100"}' \
+  '{"kind":"cancelled","order_id":"O-101","reason":"고객 요청"}' \
+  | python order_events.py 2>&1
+
+printf '%s\n' '{"kind":"shipped","order_id":"O-102"}' \
+  | python order_events.py 2>&1; echo $?
+
+printf '%s\n' '{"kind":"paid"}' \
+  | python order_events.py 2>&1; echo $?
+
+printf '%s\n' '{"kind":"created","order_id":"O-103","total":0}' \
+  | python order_events.py 2>&1; echo $?
+```
+
+```text
+주문 생성: O-100 / 59000원
+결제 완료: O-100
+주문 취소: O-101 / 고객 요청
+처리 완료: 3건
+order-events: 1번째 이벤트: 지원하지 않는 이벤트 종류입니다.
+1
+order-events: 1번째 이벤트: order_id는 비어 있지 않은 문자열이어야 합니다.
+1
+order-events: 1번째 이벤트: total은 0보다 큰 정수여야 합니다.
+1
+```
+
+타입 힌트는 검증을 통과한 이후의 내부 계약을 유지하고, `parse_event()`는 신뢰할 수 없는 외부 값의 런타임 경계를 담당합니다. 두 역할을 분리하면 입력 검증을 생략하지 않으면서 처리 코드에서는 좁고 정확한 타입을 사용할 수 있습니다.
+
+공식 Python 3.12 [`typing` 문서](https://docs.python.org/3.12/library/typing.html)의 `NewType`, `Literal`, `TypedDict`, `Protocol`, `assert_never`와 [Python 타입 시스템 사양](https://typing.python.org/en/latest/spec/index.html)을 기준으로 구성했습니다.
