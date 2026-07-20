@@ -1,0 +1,126 @@
+---
+title: "Part 3. 고급: 운영에 안전한 마이그레이션 설계하기"
+---
+
+운영 migration은 올바른 최종 스키마뿐 아니라 실행 중 잠금, 구버전 애플리케이션과의 호환, 실패 후 복구까지 고려해야 합니다. 이 노트에서는 같은 revision을 SQLite와 PostgreSQL에 연결하고, 큰 변경을 여러 배포로 나누어 위험을 줄이는 기준을 익힙니다.
+
+## DATABASE_URL로 실행 대상 데이터베이스 선택하기
+
+개발에서는 SQLite를 사용하고 배포에서는 PostgreSQL에 연결하려면 자격 증명을 revision 파일에 넣지 않고 실행 환경에서 URL을 전달합니다. `migrations/env.py`가 값을 읽어 Alembic 설정에 반영하게 합니다.
+
+```python
+import os
+
+
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///catalog.db')
+config.set_main_option('sqlalchemy.url', database_url.replace('%', '%%'))
+```
+
+```bash
+python -m pip install "psycopg[binary]>=3.2,<4"
+DATABASE_URL='postgresql+psycopg://app:secret@localhost/catalog' alembic current
+```
+
+`%%` 치환은 `alembic.ini`가 사용하는 설정 보간에서 URL의 `%` 문자가 잘못 해석되는 일을 막습니다. 실제 비밀번호와 운영 URL은 셸 기록이나 저장소에 남기지 말고 비밀 관리 시스템에서 주입합니다.
+
+## PostgreSQL 트랜잭션 DDL과 잠금 범위 확인하기
+
+PostgreSQL의 일반적인 DDL은 transaction 안에서 실행되어 중간 실패 시 함께 롤백할 수 있지만, 테이블 변경이 잡는 잠금까지 없어지는 것은 아닙니다. Alembic 로그의 transactional DDL 메시지와 실행할 SQL을 먼저 확인합니다.
+
+```text
+Context impl PostgresqlImpl.
+Will assume transactional DDL.
+Running upgrade 0001 -> 0002, add product identity
+```
+
+큰 테이블의 열 타입 변경, 기본값 계산, 인덱스 생성은 오래 실행되거나 읽기·쓰기를 막을 수 있습니다. revision의 원자성만 믿지 말고 대상 행 수, 예상 SQL의 실행 계획, 허용 가능한 잠금 시간을 배포 전에 운영과 비슷한 데이터로 측정합니다.
+
+## nullable 추가와 backfill 뒤 NOT NULL 적용하기
+
+기존 행이 많은 테이블에 필수 열을 추가할 때는 먼저 `NULL`을 허용하고, 기존 데이터를 채운 다음 제약을 강화합니다.
+
+```python
+def upgrade() -> None:
+    op.add_column(
+        'product',
+        sa.Column('currency', sa.String(length=3), nullable=True),
+    )
+    op.execute(
+        sa.text("UPDATE product SET currency = 'KRW' WHERE currency IS NULL")
+    )
+    op.alter_column(
+        'product',
+        'currency',
+        existing_type=sa.String(length=3),
+        nullable=False,
+    )
+```
+
+작은 테이블은 한 revision에서 처리할 수 있지만, 큰 테이블의 backfill은 배치 작업으로 분리하고 완료를 확인한 뒤 후속 revision에서 `NOT NULL`을 적용합니다. SQLite에서는 `alter_column()`을 `batch_alter_table()` 안에 두어야 합니다.
+
+## expand와 contract로 구버전 코드 호환하기
+
+애플리케이션 인스턴스가 순차적으로 교체되는 배포에서 열 이름을 즉시 바꾸면 구버전 코드가 실패합니다. 변경을 호환 가능한 두 단계로 나눕니다.
+
+```text
+배포 A: display_name 열 추가 → name 값을 backfill → 두 열에 함께 쓰기
+배포 B: 읽기를 display_name으로 전환 → 구버전 인스턴스 종료 확인
+배포 C: name 쓰기 제거 → 후속 migration에서 name 열 삭제
+```
+
+새 구조를 먼저 추가하는 단계를 expand, 모든 사용자가 전환된 뒤 낡은 구조를 제거하는 단계를 contract라고 합니다. 열 삭제와 타입 축소처럼 구버전과 양립할 수 없는 변경은 같은 배포에 넣지 않습니다.
+
+## upgrade --sql로 PostgreSQL 실행 SQL 검토하기
+
+데이터베이스에 연결하거나 변경을 적용하지 않고 배포용 SQL을 확인하려면 offline 모드를 사용합니다.
+
+```bash
+DATABASE_URL='postgresql+psycopg://app:secret@db/catalog' \
+  alembic upgrade 0001:head --sql > migration.sql
+```
+
+```sql
+BEGIN;
+
+ALTER TABLE product ADD COLUMN currency VARCHAR(3);
+UPDATE product SET currency = 'KRW' WHERE currency IS NULL;
+ALTER TABLE product ALTER COLUMN currency SET NOT NULL;
+
+COMMIT;
+```
+
+offline SQL은 코드 리뷰나 DBA 승인에 유용하지만 실제 행 수와 잠금 시간을 검증하지는 않습니다. 생성된 SQL의 대상 revision, 테이블, 제약 이름을 확인하고 별도 staging 실행으로 운영 위험을 점검합니다.
+
+## heads와 merge로 갈라진 revision 합치기
+
+두 브랜치가 같은 `down_revision`에서 각각 migration을 만들면 head가 둘이 됩니다. 파일을 임의로 재정렬하지 말고 현재 갈래를 확인한 뒤 merge revision으로 계보를 합칩니다.
+
+```bash
+alembic heads
+alembic merge heads --rev-id 0005 -m "merge product migrations"
+```
+
+```text
+0003 (head)
+0004 (head)
+Generating .../0005_merge_product_migrations.py ...  done
+```
+
+merge revision의 `down_revision`은 `('0003', '0004')`처럼 두 부모를 가리킵니다. 두 migration이 같은 열이나 제약을 충돌하게 변경했다면 merge 파일만 만드는 것으로 해결되지 않으므로 먼저 각 upgrade의 호환성을 수정합니다.
+
+## alembic check로 빠진 모델 변경 감지하기
+
+모델을 수정하고 revision 생성을 잊은 변경은 CI에서 `alembic check`로 찾습니다. 이 명령은 autogenerate와 같은 비교를 수행하지만 파일을 만들지 않습니다.
+
+```bash
+alembic upgrade head
+alembic check
+```
+
+```text
+No new upgrade operations detected.
+```
+
+차이가 있으면 명령이 실패하고 감지한 작업을 보여 줍니다. 이 검사는 revision 내용의 안전성이나 데이터 변환의 정확성까지 판단하지 않으므로 upgrade·downgrade 테스트와 코드 리뷰를 대신하지 않습니다.
+
+공식 Alembic [Offline Mode](https://alembic.sqlalchemy.org/en/latest/offline.html), [Branches](https://alembic.sqlalchemy.org/en/latest/branches.html), [Autogenerate의 alembic check](https://alembic.sqlalchemy.org/en/latest/autogenerate.html#running-alembic-check-to-test-for-new-upgrade-operations), PostgreSQL [ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html)을 기준으로 구성했습니다.

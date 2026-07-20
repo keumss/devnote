@@ -1,0 +1,198 @@
+---
+title: "Part 2. 중급: 모델 변경을 마이그레이션으로 옮기기"
+---
+
+이 노트는 Part 1의 `catalog` 디렉터리와 `0001` revision을 이어서 사용합니다. 자동 생성 결과를 그대로 믿지 않고 모델의 의도와 기존 데이터를 기준으로 검토한 뒤, SQLite에서도 이름 변경과 제약 조건 변경을 안전하게 왕복하는 것이 목표입니다.
+
+## revision --autogenerate로 모델 차이 감지하기
+
+상품의 표시 이름을 분명하게 바꾸고 판매 상태를 추가하려면 먼저 `models.py`의 목표 형태를 수정합니다.
+
+```python
+from sqlalchemy import String, true
+
+
+class Product(Base):
+    __tablename__ = 'product'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(100))
+    price: Mapped[int]
+    is_active: Mapped[bool] = mapped_column(server_default=true())
+```
+
+현재 데이터베이스가 `0001`까지 적용된 상태에서 새 revision을 생성합니다.
+
+```bash
+alembic upgrade head
+alembic revision --autogenerate --rev-id 0002 -m "add product identity"
+```
+
+```text
+Detected added column 'product.display_name'
+Detected added column 'product.is_active'
+Detected removed column 'product.name'
+Generating .../0002_add_product_identity.py ...  done
+```
+
+`--autogenerate`는 데이터베이스와 `target_metadata`의 구조 차이를 revision 후보로 옮깁니다. 변경 의도나 데이터 변환 방법까지 알지는 못하므로 생성 직후 파일 검토가 필요합니다.
+
+## upgrade와 downgrade를 함께 검토하기
+
+자동 생성 파일을 열어 각 작업이 의도와 맞고 역방향 순서가 대칭인지 확인합니다. 특히 기존 행이 있는 테이블에 `nullable=False` 열을 바로 추가하면 값이 없어 실패할 수 있습니다.
+
+```python
+def upgrade() -> None:
+    op.add_column(
+        'product',
+        sa.Column('display_name', sa.String(length=100), nullable=False),
+    )
+    op.add_column(
+        'product',
+        sa.Column('is_active', sa.Boolean(), nullable=False),
+    )
+    op.drop_column('product', 'name')
+```
+
+이 결과는 `name`의 이름을 바꾼다는 의도를 알아채지 못해 새 열 추가와 기존 열 삭제로 표현합니다. 그대로 적용하면 이름 데이터가 사라지므로 revision을 직접 고쳐야 합니다.
+
+## server_default로 기존 행이 있는 열 추가하기
+
+모든 기존 상품을 판매 중으로 시작하려면 데이터베이스가 열 추가 시 값을 채우도록 server default를 지정합니다. Python 객체를 만들 때만 쓰이는 `default=True`와 구분해야 합니다.
+
+```python
+op.add_column(
+    'product',
+    sa.Column(
+        'is_active',
+        sa.Boolean(),
+        nullable=False,
+        server_default=sa.true(),
+    ),
+)
+```
+
+`default`는 SQLAlchemy가 INSERT 값을 만들 때 적용하고, `server_default`는 데이터베이스 스키마의 기본값입니다. 기존 행과 SQLAlchemy를 거치지 않는 INSERT도 처리해야 하는 migration에서는 server default가 필요합니다.
+
+## alter_column으로 열 이름 변경 의도 보존하기
+
+`name`의 데이터를 유지하면서 `display_name`으로 바꾸려면 자동 생성된 add/drop 두 작업을 하나의 이름 변경으로 교체합니다.
+
+```python
+op.alter_column(
+    'product',
+    'name',
+    new_column_name='display_name',
+    existing_type=sa.String(length=100),
+    existing_nullable=False,
+)
+```
+
+`existing_type`과 `existing_nullable`은 현재 열의 정의를 명시해 여러 데이터베이스 방언이 정확한 ALTER 문을 만들도록 돕습니다. downgrade에서는 두 이름을 반대로 지정해야 합니다.
+
+## naming_convention으로 제약 조건 이름 고정하기
+
+제약 조건을 나중에 안정적으로 삭제하거나 변경하려면 프로젝트를 시작할 때 `MetaData`의 이름 규칙을 정합니다.
+
+```python
+from sqlalchemy import MetaData
+
+
+NAMING_CONVENTION = {
+    'ix': 'ix_%(column_0_label)s',
+    'uq': 'uq_%(table_name)s_%(column_0_name)s',
+    'ck': 'ck_%(table_name)s_%(constraint_name)s',
+    'fk': 'fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s',
+    'pk': 'pk_%(table_name)s',
+}
+
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+```
+
+새 migration에서도 같은 규칙을 사용하거나 `op.create_unique_constraint('uq_product_sku', 'product', ['sku'])`처럼 이름을 명시합니다. 데이터베이스가 임의로 만든 이름에 의존하지 않으면 PostgreSQL과 SQLite에서 같은 revision 의도를 유지하기 쉽습니다.
+
+## render_as_batch로 SQLite 테이블 구조 바꾸기
+
+SQLite는 여러 ALTER TABLE 작업을 직접 지원하지 않습니다. `migrations/env.py`의 온라인 `context.configure()`에 batch 렌더링을 켜면 자동 생성된 revision이 `batch_alter_table()` 문맥을 사용합니다.
+
+```python
+context.configure(
+    connection=connection,
+    target_metadata=target_metadata,
+    render_as_batch=True,
+    compare_type=True,
+)
+```
+
+검토를 마친 `0002`에서는 이름 변경과 열 추가를 batch 작업으로 묶습니다. SKU는 다음 실전 노트처럼 nullable 추가, 값 채우기, 제약 적용을 여러 단계로 나눠야 하므로 여기서는 판매 상태와 이름 변경만 적용합니다.
+
+```python
+def upgrade() -> None:
+    with op.batch_alter_table('product') as batch_op:
+        batch_op.alter_column(
+            'name',
+            new_column_name='display_name',
+            existing_type=sa.String(length=100),
+            existing_nullable=False,
+        )
+        batch_op.add_column(
+            sa.Column(
+                'is_active',
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.true(),
+            )
+        )
+
+
+def downgrade() -> None:
+    with op.batch_alter_table('product') as batch_op:
+        batch_op.drop_column('is_active')
+        batch_op.alter_column(
+            'display_name',
+            new_column_name='name',
+            existing_type=sa.String(length=100),
+            existing_nullable=False,
+        )
+```
+
+batch 모드는 SQLite에서 임시 테이블을 만들고 데이터를 복사한 뒤 원래 테이블을 교체합니다. PostgreSQL처럼 해당 ALTER를 지원하는 데이터베이스에서는 기본적으로 직접 ALTER 문을 사용합니다.
+
+## upgrade와 downgrade 왕복으로 데이터 보존 확인하기
+
+스키마 변경 전 상품 한 개를 넣고 `0002` 적용과 되돌리기를 실행해 이름 데이터가 유지되는지 확인합니다.
+
+```bash
+alembic downgrade 0001
+python - <<'PY'
+import sqlite3
+
+with sqlite3.connect('catalog.db') as connection:
+    connection.execute('DELETE FROM product')
+    connection.execute(
+        'INSERT INTO product (name, price) VALUES (?, ?)',
+        ('Keyboard', 75000),
+    )
+PY
+alembic upgrade head
+python - <<'PY'
+import sqlite3
+
+with sqlite3.connect('catalog.db') as connection:
+    row = connection.execute(
+        'SELECT display_name, price, is_active FROM product'
+    ).fetchone()
+    print(row)
+PY
+alembic downgrade 0001
+```
+
+```text
+('Keyboard', 75000, 1)
+```
+
+마지막 downgrade 뒤에는 다시 `name` 열로 같은 값이 남아 있어야 합니다. 단순히 명령이 성공했는지만 보지 말고 열 정의, 제약 조건, 중요한 기존 행을 함께 확인해야 데이터 손실을 발견할 수 있습니다.
+
+공식 Alembic [Autogenerate](https://alembic.sqlalchemy.org/en/latest/autogenerate.html), [Batch Migrations](https://alembic.sqlalchemy.org/en/latest/batch.html), SQLAlchemy [Constraint Naming Conventions](https://docs.sqlalchemy.org/en/20/core/constraints.html#configuring-constraint-naming-conventions)을 기준으로 구성했습니다.

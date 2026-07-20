@@ -1,0 +1,272 @@
+---
+title: "Part 4. 실전: 상품 스키마를 데이터 손실 없이 확장하기"
+---
+
+이번에는 이름과 가격만 있던 상품 테이블에 SKU와 판매 상태를 추가합니다. SQLite에서 기존 데이터를 보존하며 `0001`부터 `0003`까지 실행하고 되돌린 뒤, 같은 revision이 PostgreSQL에서 실행할 SQL도 확인합니다. 아래 코드는 새 `product_migration` 디렉터리에서 순서대로 작성합니다.
+
+## Alembic 환경과 상품 모델 준비하기
+
+먼저 Alembic 환경을 만들고 SQLite를 기본값으로 사용하는 모델과 `env.py` 연결을 준비합니다.
+
+```bash
+mkdir product_migration
+cd product_migration
+alembic init migrations
+```
+
+```python
+# models.py
+from sqlalchemy import Boolean, MetaData, String, text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+NAMING_CONVENTION = {
+    'ix': 'ix_%(column_0_label)s',
+    'uq': 'uq_%(table_name)s_%(column_0_name)s',
+    'ck': 'ck_%(table_name)s_%(constraint_name)s',
+    'fk': 'fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s',
+    'pk': 'pk_%(table_name)s',
+}
+
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+class Product(Base):
+    __tablename__ = 'product'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    sku: Mapped[str] = mapped_column(String(50), unique=True)
+    price: Mapped[int]
+    is_active: Mapped[bool] = mapped_column(
+        Boolean(), server_default=text('true')
+    )
+```
+
+`migrations/env.py`에는 `DATABASE_URL` 선택과 batch 렌더링을 연결합니다. 생성된 파일에서 다음 설정을 추가하고 두 `context.configure()` 호출에 해당 인수를 전달합니다.
+
+```python
+# migrations/env.py의 핵심 변경
+import os
+
+from models import Base
+
+
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///product.db')
+config.set_main_option('sqlalchemy.url', database_url.replace('%', '%%'))
+target_metadata = Base.metadata
+render_as_batch = database_url.startswith('sqlite')
+
+# run_migrations_offline 안의 context.configure에 추가
+context.configure(
+    url=config.get_main_option('sqlalchemy.url'),
+    target_metadata=target_metadata,
+    literal_binds=True,
+    dialect_opts={'paramstyle': 'named'},
+    render_as_batch=render_as_batch,
+)
+
+# run_migrations_online 안의 context.configure에 추가
+context.configure(
+    connection=connection,
+    target_metadata=target_metadata,
+    render_as_batch=render_as_batch,
+)
+```
+
+`alembic.ini`의 URL은 `env.py`가 매번 덮어쓰므로 예시 자격 증명을 넣지 않습니다. 모델은 최종 스키마를 나타내고, 실제 데이터베이스는 다음 revision을 차례로 거쳐 같은 상태에 도달합니다.
+
+## 0001 revision으로 초기 상품과 기존 데이터 만들기
+
+첫 revision에는 기존 서비스가 사용하던 `id`, `name`, `price`만 만듭니다.
+
+```bash
+alembic revision --rev-id 0001 -m "create product"
+```
+
+```python
+# migrations/versions/0001_create_product.py의 upgrade와 downgrade
+def upgrade() -> None:
+    op.create_table(
+        'product',
+        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('name', sa.String(length=100), nullable=False),
+        sa.Column('price', sa.Integer(), nullable=False),
+        sa.PrimaryKeyConstraint('id', name=op.f('pk_product')),
+    )
+
+
+def downgrade() -> None:
+    op.drop_table('product')
+```
+
+`0001`까지만 적용하고 애플리케이션이 이미 저장한 상황을 만들기 위해 SQLite에 상품 두 개를 넣습니다.
+
+```bash
+alembic upgrade 0001
+python - <<'PY'
+import sqlite3
+
+with sqlite3.connect('product.db') as connection:
+    connection.executemany(
+        'INSERT INTO product (name, price) VALUES (?, ?)',
+        [('Keyboard', 75000), ('Mouse', 32000)],
+    )
+PY
+```
+
+고정 업무 데이터는 별도 배포 작업으로 관리하는 편이 일반적입니다. 여기서는 schema migration이 이미 존재하는 행을 보존하는지 확인하려고 학습용 데이터를 migration 밖에서 넣습니다.
+
+## 0002 revision에서 SKU를 추가하고 기존 행 채우기
+
+기존 행에는 SKU가 없으므로 먼저 nullable 열을 추가한 뒤 ID로 임시 SKU를 만듭니다. SQLite와 PostgreSQL의 문자열 포맷 문법이 달라 현재 dialect에 맞는 SQL을 선택합니다.
+
+```bash
+alembic revision --rev-id 0002 -m "backfill product sku"
+```
+
+```python
+# migrations/versions/0002_backfill_product_sku.py의 upgrade와 downgrade
+def upgrade() -> None:
+    op.add_column(
+        'product',
+        sa.Column('sku', sa.String(length=50), nullable=True),
+    )
+
+    if op.get_bind().dialect.name == 'postgresql':
+        op.execute(
+            sa.text(
+                "UPDATE product "
+                "SET sku = 'LEGACY-' || lpad(id::text, 4, '0') "
+                "WHERE sku IS NULL"
+            )
+        )
+    else:
+        op.execute(
+            sa.text(
+                "UPDATE product "
+                "SET sku = printf('LEGACY-%04d', id) "
+                "WHERE sku IS NULL"
+            )
+        )
+
+
+def downgrade() -> None:
+    with op.batch_alter_table('product') as batch_op:
+        batch_op.drop_column('sku')
+```
+
+backfill은 같은 ID에서 항상 같은 값을 만들고 각 행에 서로 다른 SKU를 부여합니다. 실제 서비스에서는 임시 규칙이 업무상 유효한지 확인하고, 행이 많다면 범위를 나눈 별도 작업과 진행률 기록을 사용합니다.
+
+## 0003 revision에서 SKU 제약과 판매 상태 적용하기
+
+모든 SKU가 채워진 다음에야 `NOT NULL`과 고유 제약을 적용할 수 있습니다. 새 상품이 별도 값을 보내지 않아도 판매 중으로 생성되도록 데이터베이스 기본값도 함께 추가합니다.
+
+```bash
+alembic revision --rev-id 0003 -m "enforce product identity"
+```
+
+```python
+# migrations/versions/0003_enforce_product_identity.py의 upgrade와 downgrade
+def upgrade() -> None:
+    with op.batch_alter_table(
+        'product',
+        naming_convention={
+            'ix': 'ix_%(column_0_label)s',
+            'uq': 'uq_%(table_name)s_%(column_0_name)s',
+            'ck': 'ck_%(table_name)s_%(constraint_name)s',
+            'fk': 'fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s',
+            'pk': 'pk_%(table_name)s',
+        },
+    ) as batch_op:
+        batch_op.alter_column(
+            'sku',
+            existing_type=sa.String(length=50),
+            nullable=False,
+        )
+        batch_op.create_unique_constraint('uq_product_sku', ['sku'])
+        batch_op.add_column(
+            sa.Column(
+                'is_active',
+                sa.Boolean(),
+                nullable=False,
+                server_default=sa.true(),
+            )
+        )
+
+
+def downgrade() -> None:
+    with op.batch_alter_table(
+        'product',
+        naming_convention={
+            'ix': 'ix_%(column_0_label)s',
+            'uq': 'uq_%(table_name)s_%(column_0_name)s',
+            'ck': 'ck_%(table_name)s_%(constraint_name)s',
+            'fk': 'fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s',
+            'pk': 'pk_%(table_name)s',
+        },
+    ) as batch_op:
+        batch_op.drop_column('is_active')
+        batch_op.drop_constraint('uq_product_sku', type_='unique')
+        batch_op.alter_column(
+            'sku',
+            existing_type=sa.String(length=50),
+            nullable=True,
+        )
+```
+
+`0003`의 downgrade는 `0002` 상태로만 돌아가므로 SKU 열과 값은 유지하되 제약을 완화합니다. `0001`까지 더 내릴 때 `0002`의 downgrade가 SKU 열을 제거합니다.
+
+## SQLite 왕복과 PostgreSQL offline SQL 확인하기
+
+최신 revision까지 올린 뒤 열과 기존 행을 조회해 SKU backfill, 기본값, 데이터 보존을 한 번에 확인합니다.
+
+```bash
+alembic upgrade head
+python - <<'PY'
+import sqlite3
+
+with sqlite3.connect('product.db') as connection:
+    rows = connection.execute(
+        'SELECT id, name, sku, price, is_active FROM product ORDER BY id'
+    ).fetchall()
+    print(rows)
+PY
+```
+
+```text
+[(1, 'Keyboard', 'LEGACY-0001', 75000, 1), (2, 'Mouse', 'LEGACY-0002', 32000, 1)]
+```
+
+전체 역방향도 실행한 다음 초기 열과 상품 수를 확인합니다.
+
+```bash
+alembic downgrade 0001
+python - <<'PY'
+import sqlite3
+
+with sqlite3.connect('product.db') as connection:
+    columns = connection.execute('PRAGMA table_info(product)').fetchall()
+    count = connection.execute('SELECT count(*) FROM product').fetchone()[0]
+    print([column[1] for column in columns])
+    print(count)
+PY
+```
+
+```text
+['id', 'name', 'price']
+2
+```
+
+마지막으로 실제 PostgreSQL에 접속하지 않고 `0001` 이후의 배포 SQL을 생성합니다.
+
+```bash
+DATABASE_URL='postgresql+psycopg://app:secret@db/catalog' \
+  alembic upgrade 0001:head --sql > postgresql-migration.sql
+```
+
+생성 파일에는 PostgreSQL용 `ADD COLUMN`, `UPDATE ... lpad`, `SET NOT NULL`, 고유 제약과 `is_active` 기본값이 순서대로 있어야 합니다. offline SQL 검토 뒤에도 실제 배포 전에는 운영과 비슷한 PostgreSQL 데이터로 실행 시간과 잠금을 확인합니다.
+
+공식 Alembic [Tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html), [Batch Migrations](https://alembic.sqlalchemy.org/en/latest/batch.html), [Offline Mode](https://alembic.sqlalchemy.org/en/latest/offline.html), [Cookbook의 데이터 migration 지침](https://alembic.sqlalchemy.org/en/latest/cookbook.html#data-migrations-general-techniques)을 기준으로 실전 흐름을 구성했습니다.

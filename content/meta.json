@@ -4,6 +4,7 @@
     "typing",
     "pydantic",
     "sqlalchemy",
+    "alembic",
     "sqlmodel",
     "fastapi",
     "dataclass",
