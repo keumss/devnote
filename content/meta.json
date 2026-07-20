@@ -2,6 +2,7 @@
   "pages": [
     "sql",
     "pydantic",
+    "sqlalchemy",
     "sqlmodel",
     "fastapi",
     "dataclass",

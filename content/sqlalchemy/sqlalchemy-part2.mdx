@@ -1,0 +1,239 @@
+---
+title: "Part 2. 중급: 주문 관계와 집계 쿼리 다루기"
+---
+
+이 노트는 고객과 주문·주문 항목을 새 메모리 SQLite 데이터베이스에 준비한 뒤, 관계 탐색과 조인·집계·로딩 전략을 연결합니다. Python 블록을 위에서 아래 순서로 실행합니다.
+
+## relationship으로 Customer와 Order 연결하기
+
+한 고객이 여러 주문을 갖고 각 주문이 여러 항목을 갖는 구조를 객체로 탐색하려면 외래 키와 `relationship()`을 함께 선언합니다.
+
+```python
+from __future__ import annotations
+
+from sqlalchemy import ForeignKey, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Customer(Base):
+    __tablename__ = 'customer'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    orders: Mapped[list[Order]] = relationship(back_populates='customer')
+
+
+class Order(Base):
+    __tablename__ = 'customer_order'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey('customer.id'))
+    status: Mapped[str] = mapped_column(String(20), default='pending')
+    customer: Mapped[Customer] = relationship(back_populates='orders')
+    lines: Mapped[list[OrderLine]] = relationship(
+        back_populates='order',
+        cascade='all, delete-orphan',
+    )
+
+
+class OrderLine(Base):
+    __tablename__ = 'order_line'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey('customer_order.id'))
+    product_name: Mapped[str] = mapped_column(String(100))
+    quantity: Mapped[int]
+    unit_price: Mapped[int]
+    order: Mapped[Order] = relationship(back_populates='lines')
+```
+
+외래 키는 테이블 사이의 데이터 규칙이고, `relationship()`은 `customer.orders`처럼 Python 객체 사이를 탐색하는 속성입니다. 두 방향의 `back_populates` 값은 서로 상대 속성 이름을 가리킵니다.
+
+## 관계 컬렉션으로 주문 그래프 한 번에 저장하기
+
+고객과 주문 항목을 함께 만들 때 관계 속성에 객체를 연결한 뒤 루트 객체만 세션에 추가할 수 있습니다.
+
+```python
+from sqlalchemy.orm import Session
+
+
+engine = create_engine('sqlite://')
+Base.metadata.create_all(engine)
+
+with Session(engine) as session:
+    minsu = Customer(
+        name='민수',
+        orders=[
+            Order(
+                status='paid',
+                lines=[
+                    OrderLine(product_name='Keyboard', quantity=1, unit_price=75_000),
+                    OrderLine(product_name='Mouse', quantity=2, unit_price=32_000),
+                ],
+            ),
+            Order(
+                status='pending',
+                lines=[
+                    OrderLine(product_name='Monitor', quantity=1, unit_price=280_000),
+                ],
+            ),
+        ],
+    )
+    yuna = Customer(
+        name='유나',
+        orders=[
+            Order(
+                status='paid',
+                lines=[
+                    OrderLine(product_name='Mouse', quantity=1, unit_price=32_000),
+                ],
+            ),
+        ],
+    )
+    session.add_all([minsu, yuna])
+    session.commit()
+
+print('orders ready')
+```
+
+```text
+orders ready
+```
+
+기본 `save-update` cascade 때문에 고객에 연결된 새 주문과 항목도 함께 저장됩니다. 주문에서 항목을 제거한 객체까지 삭제해야 하는 소유 관계이므로 `delete-orphan`도 주문 항목 관계에 지정했습니다.
+
+## join과 where로 관계 조건 검색하기
+
+결제된 주문을 고객 이름과 함께 찾을 때 관계 속성을 기준으로 조인하고 조건을 추가합니다.
+
+```python
+from sqlalchemy import select
+
+
+with Session(engine) as session:
+    statement = (
+        select(Order)
+        .join(Order.customer)
+        .where(Order.status == 'paid', Customer.name == '민수')
+        .order_by(Order.id)
+    )
+    orders = session.scalars(statement).all()
+
+print([order.id for order in orders])
+```
+
+```text
+[1]
+```
+
+`join(Order.customer)`는 매핑에 선언한 외래 키 관계를 사용해 `JOIN` 조건을 만듭니다. 조인은 결과 행을 제한하거나 열을 결합하는 SQL 표현이며, 관계 객체를 미리 메모리에 적재하는 로딩 전략과는 목적이 다릅니다.
+
+## 열을 선택하고 Row에서 필요한 값 꺼내기
+
+목록 화면에 고객 이름과 주문 상태만 필요하다면 전체 모델 대신 필요한 열만 선택합니다.
+
+```python
+with Session(engine) as session:
+    rows = session.execute(
+        select(Order.id, Customer.name, Order.status)
+        .join(Order.customer)
+        .order_by(Order.id)
+    ).all()
+
+print([(row.id, row.name, row.status) for row in rows])
+```
+
+```text
+[(1, '민수', 'paid'), (2, '민수', 'pending'), (3, '유나', 'paid')]
+```
+
+여러 열을 선택한 `Session.execute()` 결과는 `Row`입니다. 위치뿐 아니라 선택한 열의 키인 `row.id`, `row.name`, `row.status`로 읽을 수 있습니다.
+
+## func와 group_by로 고객별 결제 합계 계산하기
+
+결제 완료된 주문의 금액을 고객별로 합산할 때 수량과 단가를 곱한 SQL 표현식을 `sum()`에 전달합니다.
+
+```python
+from sqlalchemy import func
+
+
+with Session(engine) as session:
+    paid_total = func.sum(OrderLine.quantity * OrderLine.unit_price)
+    rows = session.execute(
+        select(Customer.name, paid_total.label('total'))
+        .join(Customer.orders)
+        .join(Order.lines)
+        .where(Order.status == 'paid')
+        .group_by(Customer.id, Customer.name)
+        .order_by(Customer.id)
+    ).all()
+
+print([(row.name, row.total) for row in rows])
+```
+
+```text
+[('민수', 139000), ('유나', 32000)]
+```
+
+집계 기준인 고객 ID와 이름은 `group_by()`에 명시합니다. 금액 계산을 Python 반복문으로 옮기지 않아 데이터베이스가 필요한 행만 집계해 반환합니다.
+
+## selectinload로 여러 주문의 항목 미리 읽기
+
+주문 목록과 각 항목을 함께 출력할 때 기본 지연 로딩을 그대로 사용하면 주문마다 추가 쿼리가 발생할 수 있습니다. 컬렉션 관계는 `selectinload()`로 한 번 더 묶어 읽습니다.
+
+```python
+from sqlalchemy.orm import selectinload
+
+
+with Session(engine) as session:
+    statement = (
+        select(Order)
+        .options(selectinload(Order.lines))
+        .order_by(Order.id)
+    )
+    orders = session.scalars(statement).all()
+    summaries = [
+        (order.id, [line.product_name for line in order.lines])
+        for order in orders
+    ]
+
+print(summaries)
+```
+
+```text
+[(1, ['Keyboard', 'Mouse']), (2, ['Monitor']), (3, ['Mouse'])]
+```
+
+`selectinload()`는 먼저 주문을 읽고, 해당 주문 ID들을 `IN` 조건으로 사용해 관련 항목을 추가 조회합니다. 세션이 닫히기 전에 필요한 관계를 모두 적재하므로 반환 경계도 분명해집니다.
+
+## joinedload와 unique로 단일 조인 결과 정리하기
+
+같은 결과를 하나의 조인 쿼리로 읽고 싶을 때 `joinedload()`를 사용할 수 있습니다. 일대다 컬렉션은 부모 행이 항목 수만큼 반복되므로 결과에서 `unique()`를 호출해야 합니다.
+
+```python
+from sqlalchemy.orm import joinedload
+
+
+with Session(engine) as session:
+    result = session.execute(
+        select(Order)
+        .options(joinedload(Order.lines))
+        .where(Order.id == 1)
+    )
+    order = result.unique().scalar_one()
+    names = [line.product_name for line in order.lines]
+
+print(names)
+```
+
+```text
+['Keyboard', 'Mouse']
+```
+
+항상 `joinedload()`가 더 빠른 것은 아닙니다. 목록의 컬렉션에는 보통 행 증폭을 피하는 `selectinload()`가 이해하기 쉽고, 한 부모와 작은 관계처럼 한 번의 조인이 유리한 경우 `joinedload()`를 검토합니다.
+
+공식 SQLAlchemy [관계 객체 사용법](https://docs.sqlalchemy.org/en/20/tutorial/orm_related_objects.html), [SELECT 사용법](https://docs.sqlalchemy.org/en/20/tutorial/data_select.html), [관계 로딩 기법](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html)을 기준으로 구성했습니다.

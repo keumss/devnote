@@ -1,0 +1,186 @@
+---
+title: "Part 1. 기초: ORM으로 상품 데이터 저장하고 조회하기"
+---
+
+이 노트의 Python 블록은 REPL·노트북·하나의 임시 스크립트에서 위에서 아래 순서로 실행합니다. 모델과 엔진은 한 번만 준비하고, 뒤 토픽에서는 같은 메모리 SQLite 데이터베이스를 계속 사용합니다.
+
+## SQLAlchemy 2.x 설치하고 실행 환경 준비하기
+
+Python 객체와 관계형 데이터베이스 사이의 저장·조회 코드를 작성할 때 SQLAlchemy ORM을 사용합니다. 프로젝트별 가상 환경을 만들고 2.x 버전을 설치합니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install "SQLAlchemy>=2.0,<3"
+```
+
+```text
+Successfully installed SQLAlchemy-2.x.x ...
+```
+
+이 섹션은 SQLAlchemy 2.x의 `select()` 중심 API를 사용합니다. SQLite는 Python에 포함되어 있어 별도 서버 없이 ORM 동작을 확인할 수 있습니다.
+
+## DeclarativeBase와 Mapped로 Product 테이블 선언하기
+
+상품 객체를 `product` 테이블에 저장하려면 선언형 베이스를 만들고 매핑 클래스를 정의합니다. `Mapped` 타입은 Python 속성이 ORM에서 관리된다는 뜻이고, `mapped_column()`은 기본 키·길이·제약 같은 열 규칙을 추가합니다.
+
+```python
+from sqlalchemy import String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Product(Base):
+    __tablename__ = 'product'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    price: Mapped[int]
+    stock: Mapped[int] = mapped_column(default=0)
+```
+
+`Mapped[int]`와 `Mapped[str]`는 각각 정수·문자열 열의 타입과 `NULL` 허용 여부를 추론하는 데 사용됩니다. 데이터베이스가 만드는 기본 키는 생성자에서 생략할 수 있으므로 `Product(name='Keyboard', price=75000)`처럼 객체를 만들 수 있습니다.
+
+## create_engine과 metadata.create_all로 테이블 만들기
+
+선언한 모델을 SQLite에 연결하고 학습용 테이블을 만들 때 엔진과 `Base.metadata.create_all()`을 사용합니다.
+
+```python
+from sqlalchemy import create_engine
+
+
+engine = create_engine('sqlite://')
+Base.metadata.create_all(engine)
+print(Base.metadata.tables.keys())
+```
+
+```text
+dict_keys(['product'])
+```
+
+엔진은 연결을 만들고 SQL을 실행하는 출발점입니다. `create_all()`은 없는 테이블을 만드는 학습·테스트 용도이며, 운영 중인 스키마 변경은 Alembic 같은 마이그레이션 도구로 관리합니다.
+
+## Session.add_all과 flush로 INSERT 결과 확인하기
+
+여러 상품을 한 트랜잭션에 저장하고 커밋 전에 생성된 ID가 필요할 때 세션에 객체를 추가한 뒤 `flush()`합니다.
+
+```python
+from sqlalchemy.orm import Session
+
+
+with Session(engine) as session:
+    keyboard = Product(name='Keyboard', price=75000, stock=10)
+    session.add_all([
+        keyboard,
+        Product(name='Mouse', price=32000, stock=25),
+        Product(name='Monitor', price=280000, stock=4),
+    ])
+    session.flush()
+    print(keyboard.id)
+    session.commit()
+```
+
+```text
+1
+```
+
+`flush()`는 대기 중인 변경을 현재 트랜잭션의 SQL로 보내지만 확정하지 않습니다. `commit()`이 성공해야 다른 트랜잭션에서도 변경이 확정된 것으로 다룰 수 있습니다.
+
+## select와 Session.scalars로 모델 목록 읽기
+
+상품 전체를 ORM 객체 목록으로 읽을 때 `select(Product)`를 만들고 `Session.scalars()`로 실행합니다.
+
+```python
+from sqlalchemy import select
+
+
+with Session(engine) as session:
+    products = session.scalars(select(Product).order_by(Product.id)).all()
+    names = [product.name for product in products]
+
+print(names)
+```
+
+```text
+['Keyboard', 'Mouse', 'Monitor']
+```
+
+`select()`는 실행 전까지 조합 가능한 SQL 표현식입니다. 모델 하나를 선택할 때 `scalars()`를 사용하면 각 `Row`에서 모델을 직접 꺼내는 반복을 줄일 수 있습니다.
+
+## where와 order_by로 필요한 상품만 조회하기
+
+재고가 있고 가격이 10만 원 미만인 상품을 가격순으로 찾을 때 모델 속성으로 조건과 정렬을 표현합니다.
+
+```python
+with Session(engine) as session:
+    statement = (
+        select(Product)
+        .where(Product.stock > 0, Product.price < 100_000)
+        .order_by(Product.price)
+    )
+    products = session.scalars(statement).all()
+
+print([(product.name, product.price) for product in products])
+```
+
+```text
+[('Mouse', 32000), ('Keyboard', 75000)]
+```
+
+값은 SQL 문자열에 이어 붙이지 않고 `Product.price < 100_000`처럼 표현식에 전달합니다. SQLAlchemy가 실제 실행 시 바인드 파라미터로 처리합니다.
+
+## Session.get과 scalar_one_or_none으로 한 행 찾기
+
+기본 키를 이미 알 때는 `Session.get()`을, 이름 같은 다른 조건으로 한 행을 찾을 때는 `scalar_one_or_none()`을 사용합니다.
+
+```python
+with Session(engine) as session:
+    by_id = session.get(Product, 1)
+    by_name = session.execute(
+        select(Product).where(Product.name == 'Mouse')
+    ).scalar_one_or_none()
+
+print(by_id.name if by_id else None)
+print(by_name.id if by_name else None)
+```
+
+```text
+Keyboard
+2
+```
+
+두 방법 모두 행이 없으면 `None`을 반환합니다. 결과가 반드시 하나여야 하고 중복도 오류로 다루려면 `session.execute(statement).scalar_one()` 또는 `scalar_one_or_none()`으로 계약을 더 엄격하게 표현합니다.
+
+## 객체 변경과 Session.delete로 UPDATE·DELETE 수행하기
+
+조회한 상품의 속성을 바꾸거나 객체를 삭제하면 세션이 변경을 추적합니다. 한 작업 단위의 변경을 마친 뒤 한 번 커밋합니다.
+
+```python
+with Session(engine) as session:
+    keyboard = session.get(Product, 1)
+    monitor = session.get(Product, 3)
+
+    if keyboard is not None:
+        keyboard.stock -= 2
+    if monitor is not None:
+        session.delete(monitor)
+    session.commit()
+
+with Session(engine) as session:
+    products = session.scalars(select(Product).order_by(Product.id)).all()
+    result = [(product.name, product.stock) for product in products]
+
+print(result)
+```
+
+```text
+[('Keyboard', 8), ('Mouse', 25)]
+```
+
+속성 대입은 `UPDATE`, `Session.delete()`는 `DELETE` 대상으로 기록됩니다. 실제 SQL은 보통 쿼리 전 자동 flush 또는 `commit()` 시점에 실행됩니다.
+
+공식 SQLAlchemy [Unified Tutorial](https://docs.sqlalchemy.org/en/20/tutorial/), [ORM 빠른 시작](https://docs.sqlalchemy.org/en/20/orm/quickstart.html), [SELECT 사용법](https://docs.sqlalchemy.org/en/20/tutorial/data_select.html)을 기준으로 Python 3.12 예제를 구성했습니다.

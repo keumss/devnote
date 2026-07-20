@@ -1,0 +1,304 @@
+---
+title: "Part 4. 실전: 재고를 지키는 주문 관리 CLI 만들기"
+---
+
+이번에는 `order_service.py` 하나로 고객·상품을 초기화하고 주문 생성·조회·취소를 처리합니다. 주문과 재고 변경을 한 트랜잭션으로 묶어, 없는 상품이나 재고 부족이 있으면 어떤 변경도 남기지 않는 것이 목표입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
+
+## 주문 모델과 SQLite 연결 준비하기
+
+먼저 CLI가 사용할 import, 고객·상품·주문·주문 항목 모델과 세션 팩토리를 선언합니다. 주문 항목의 단가는 주문 당시 값을 보존하고, 수량과 중복 상품은 데이터베이스 제약으로도 막습니다.
+
+```python
+# order_service.py
+from __future__ import annotations
+
+from sqlalchemy import CheckConstraint, ForeignKey, String, UniqueConstraint, create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Customer(Base):
+    __tablename__ = 'customer'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(200), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    orders: Mapped[list[PurchaseOrder]] = relationship(back_populates='customer')
+
+
+class Product(Base):
+    __tablename__ = 'product'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sku: Mapped[str] = mapped_column(String(50), unique=True)
+    name: Mapped[str] = mapped_column(String(100))
+    price: Mapped[int]
+    stock: Mapped[int]
+    lines: Mapped[list[OrderLine]] = relationship(back_populates='product')
+
+
+class PurchaseOrder(Base):
+    __tablename__ = 'purchase_order'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey('customer.id'))
+    status: Mapped[str] = mapped_column(String(20), default='placed')
+    customer: Mapped[Customer] = relationship(back_populates='orders')
+    lines: Mapped[list[OrderLine]] = relationship(
+        back_populates='order',
+        cascade='all, delete-orphan',
+    )
+
+
+class OrderLine(Base):
+    __tablename__ = 'order_line'
+    __table_args__ = (
+        CheckConstraint('quantity > 0'),
+        UniqueConstraint('order_id', 'product_id'),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey('purchase_order.id'))
+    product_id: Mapped[int] = mapped_column(ForeignKey('product.id'))
+    quantity: Mapped[int]
+    unit_price: Mapped[int]
+    order: Mapped[PurchaseOrder] = relationship(back_populates='lines')
+    product: Mapped[Product] = relationship(back_populates='lines')
+
+
+engine = create_engine('sqlite:///shop.db')
+SessionLocal = sessionmaker(engine)
+```
+
+가격은 예제를 단순하게 유지하려고 원 단위 정수로 저장합니다. 소수 화폐를 다룬다면 부동소수점 대신 통화 규칙에 맞는 `Numeric`과 `Decimal`을 사용합니다.
+
+## initialize로 테이블과 시작 데이터 준비하기
+
+`init` 명령을 반복해도 고객과 상품이 중복되지 않도록 테이블을 만든 뒤 고객이 없을 때만 시작 데이터를 저장합니다.
+
+```python
+def initialize() -> None:
+    Base.metadata.create_all(engine)
+
+    with SessionLocal.begin() as session:
+        initialized = session.scalar(select(Customer.id).limit(1)) is not None
+        if initialized:
+            return
+
+        session.add(Customer(email='minsu@example.com', name='민수'))
+        session.add_all([
+            Product(sku='KEYBOARD', name='Keyboard', price=75_000, stock=10),
+            Product(sku='MOUSE', name='Mouse', price=32_000, stock=25),
+            Product(sku='MONITOR', name='Monitor', price=280_000, stock=2),
+        ])
+```
+
+초기 데이터는 한 트랜잭션에서 저장됩니다. 운영 환경에서는 `create_all()`과 시작 데이터 함수 대신 마이그레이션과 별도 배포 절차로 스키마·기준 데이터를 관리합니다.
+
+## place_order로 주문 생성과 재고 차감 묶기
+
+고객 이메일과 `{SKU: 수량}` 입력을 받아 주문을 만들 때 모든 상품과 재고를 먼저 검증합니다. 검증이 끝난 뒤 주문 항목을 만들고 재고를 차감합니다.
+
+```python
+def place_order(customer_email: str, quantities: dict[str, int]) -> int:
+    if not quantities:
+        raise ValueError('상품을 하나 이상 입력하세요')
+    if any(quantity <= 0 for quantity in quantities.values()):
+        raise ValueError('수량은 1 이상이어야 합니다')
+
+    with SessionLocal.begin() as session:
+        customer = session.scalar(
+            select(Customer).where(Customer.email == customer_email)
+        )
+        if customer is None:
+            raise ValueError(f'고객을 찾을 수 없습니다: {customer_email}')
+
+        products = session.scalars(
+            select(Product).where(Product.sku.in_(quantities))
+        ).all()
+        products_by_sku = {product.sku: product for product in products}
+
+        missing = sorted(set(quantities) - products_by_sku.keys())
+        if missing:
+            raise ValueError(f'상품을 찾을 수 없습니다: {", ".join(missing)}')
+
+        shortages = [
+            sku
+            for sku, quantity in quantities.items()
+            if products_by_sku[sku].stock < quantity
+        ]
+        if shortages:
+            raise ValueError(f'재고가 부족합니다: {", ".join(shortages)}')
+
+        order = PurchaseOrder(customer=customer)
+        for sku, quantity in quantities.items():
+            product = products_by_sku[sku]
+            product.stock -= quantity
+            order.lines.append(
+                OrderLine(
+                    product=product,
+                    quantity=quantity,
+                    unit_price=product.price,
+                )
+            )
+
+        session.add(order)
+        session.flush()
+        order_id = order.id
+
+    return order_id
+```
+
+중간에 `ValueError`나 데이터베이스 오류가 발생하면 `SessionLocal.begin()`이 주문 INSERT와 모든 재고 UPDATE를 함께 롤백합니다. 이 SQLite 예제는 단일 사용자 학습용입니다. 실제 동시 주문에서는 PostgreSQL 행 잠금이나 Part 3의 버전 열 같은 충돌 방지 전략도 적용합니다.
+
+## order_summary로 필요한 관계를 세션 안에서 읽기
+
+주문 상세를 출력할 때 고객은 `joinedload()`, 여러 주문 항목과 상품은 `selectinload()`로 미리 읽습니다. 세션 안에서 출력 문자열까지 만들어 ORM 객체가 세션 밖에서 추가 쿼리를 시도하지 않게 합니다.
+
+```python
+from sqlalchemy.orm import joinedload, selectinload
+
+
+def order_summary(order_id: int) -> list[str]:
+    with SessionLocal() as session:
+        order = session.scalar(
+            select(PurchaseOrder)
+            .options(
+                joinedload(PurchaseOrder.customer),
+                selectinload(PurchaseOrder.lines).selectinload(OrderLine.product),
+            )
+            .where(PurchaseOrder.id == order_id)
+        )
+        if order is None:
+            raise ValueError(f'주문을 찾을 수 없습니다: {order_id}')
+
+        total = sum(line.quantity * line.unit_price for line in order.lines)
+        lines = [
+            f'주문 {order.id} [{order.status}]',
+            f'고객: {order.customer.name}',
+        ]
+        lines.extend(
+            f'- {line.product.name} x {line.quantity} = {line.quantity * line.unit_price}'
+            for line in order.lines
+        )
+        lines.append(f'합계: {total}')
+        return lines
+```
+
+주문 항목의 `unit_price`를 합계에 사용하므로 이후 상품 가격이 바뀌어도 과거 주문 금액은 달라지지 않습니다.
+
+## cancel_order로 주문 취소와 재고 복구 묶기
+
+접수된 주문을 취소할 때 각 상품 재고를 되돌리고 상태를 변경합니다. 이미 취소된 주문은 다시 복구하지 않아 재고가 중복 증가하는 것을 막습니다.
+
+```python
+def cancel_order(order_id: int) -> None:
+    with SessionLocal.begin() as session:
+        order = session.scalar(
+            select(PurchaseOrder)
+            .options(
+                selectinload(PurchaseOrder.lines).selectinload(OrderLine.product)
+            )
+            .where(PurchaseOrder.id == order_id)
+        )
+        if order is None:
+            raise ValueError(f'주문을 찾을 수 없습니다: {order_id}')
+        if order.status == 'cancelled':
+            raise ValueError(f'이미 취소된 주문입니다: {order_id}')
+
+        for line in order.lines:
+            line.product.stock += line.quantity
+        order.status = 'cancelled'
+```
+
+상태 변경과 재고 복구 중 하나라도 실패하면 둘 다 롤백됩니다. 실제 업무에서는 배송을 시작한 주문처럼 취소할 수 없는 상태도 같은 트랜잭션 안에서 먼저 검사합니다.
+
+## argparse로 주문 명령과 실패 상태 연결하기
+
+마지막으로 `init`, `place`, `show`, `cancel` 명령을 연결합니다. 주문 상품은 `SKU:수량` 형식으로 반복 입력하고, 예상한 업무 오류는 표준 오류와 종료 코드 1로 반환합니다.
+
+```python
+import argparse
+import sys
+
+
+def parse_item(value: str) -> tuple[str, int]:
+    try:
+        sku, raw_quantity = value.rsplit(':', 1)
+        return sku, int(raw_quantity)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError('상품은 SKU:수량 형식이어야 합니다') from error
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description='주문 관리 도구')
+    commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('init')
+
+    place_parser = commands.add_parser('place')
+    place_parser.add_argument('customer_email')
+    place_parser.add_argument('items', nargs='+', type=parse_item)
+
+    show_parser = commands.add_parser('show')
+    show_parser.add_argument('order_id', type=int)
+
+    cancel_parser = commands.add_parser('cancel')
+    cancel_parser.add_argument('order_id', type=int)
+
+    args = parser.parse_args()
+
+    try:
+        if args.command == 'init':
+            initialize()
+            print('shop initialized')
+        elif args.command == 'place':
+            quantities: dict[str, int] = {}
+            for sku, quantity in args.items:
+                quantities[sku] = quantities.get(sku, 0) + quantity
+            order_id = place_order(args.customer_email, quantities)
+            print(f'placed order={order_id}')
+        elif args.command == 'show':
+            print('\n'.join(order_summary(args.order_id)))
+        else:
+            cancel_order(args.order_id)
+            print(f'cancelled order={args.order_id}')
+    except ValueError as error:
+        print(f'order: {error}', file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+빈 디렉터리에서 파일을 실행해 정상 주문과 재고 부족 실패를 확인합니다.
+
+```bash
+python order_service.py init
+python order_service.py place minsu@example.com KEYBOARD:1 MOUSE:2
+python order_service.py show 1
+python order_service.py place minsu@example.com MONITOR:5; echo $?
+python order_service.py cancel 1
+```
+
+```text
+shop initialized
+placed order=1
+주문 1 [placed]
+고객: 민수
+- Keyboard x 1 = 75000
+- Mouse x 2 = 64000
+합계: 139000
+order: 재고가 부족합니다: MONITOR
+1
+cancelled order=1
+```
+
+처음부터 다시 실행하려면 학습용 `shop.db`를 지운 뒤 `init`을 실행합니다. 실패한 MONITOR 주문은 생성되지 않고, 첫 주문을 취소하면 Keyboard와 Mouse 재고가 원래 수량으로 돌아갑니다.
+
+공식 SQLAlchemy [ORM 데이터 조작](https://docs.sqlalchemy.org/en/20/tutorial/orm_data_manipulation.html), [트랜잭션 관리](https://docs.sqlalchemy.org/en/20/orm/session_transaction.html), [관계 로딩 기법](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html)을 기준으로 실행 흐름을 구성했습니다.

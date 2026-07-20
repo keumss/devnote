@@ -1,0 +1,262 @@
+---
+title: "Part 3. 고급: 세션 상태와 트랜잭션 경계 설계하기"
+---
+
+이 노트는 계좌 잔액을 변경하는 작은 모델로 세션의 작업 단위, 롤백, 객체 상태, 저장점과 동시 수정 감지를 확인합니다. Python 블록을 한 실행 환경에서 위에서 아래 순서로 실행합니다.
+
+## sessionmaker로 애플리케이션의 세션 규칙 통일하기
+
+여러 함수가 같은 엔진과 세션 설정을 사용하도록 세션 팩토리를 한 번 선언합니다. 계좌의 `version_id`는 마지막 토픽에서 동시 수정을 감지하는 데 사용합니다.
+
+```python
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from sqlalchemy import String, create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Account(Base):
+    __tablename__ = 'account'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(200), unique=True)
+    balance: Mapped[int]
+    version_id: Mapped[int] = mapped_column(default=1, nullable=False)
+
+    __mapper_args__ = {'version_id_col': version_id}
+
+
+database_directory = TemporaryDirectory()
+database_path = Path(database_directory.name) / 'accounts.db'
+engine = create_engine(f'sqlite:///{database_path}')
+Base.metadata.create_all(engine)
+SessionLocal = sessionmaker(engine)
+
+with SessionLocal.begin() as session:
+    session.add_all([
+        Account(email='alice@example.com', balance=100_000),
+        Account(email='bob@example.com', balance=50_000),
+    ])
+
+print('accounts ready')
+```
+
+```text
+accounts ready
+```
+
+`sessionmaker()`는 호출할 때마다 독립된 `Session`을 만듭니다. `SessionLocal.begin()` 블록은 정상 종료 시 커밋하고 예외가 전파되면 롤백한 뒤 세션을 닫습니다.
+
+## flush로 커밋 전에 변경 결과 검사하기
+
+두 계좌 사이에서 금액을 옮길 때 출금과 입금을 같은 트랜잭션에 넣고, `flush()`로 SQL을 실행한 뒤 아직 커밋되지 않은 결과를 검사합니다.
+
+```python
+with SessionLocal.begin() as session:
+    alice = session.scalar(
+        select(Account).where(Account.email == 'alice@example.com')
+    )
+    bob = session.scalar(
+        select(Account).where(Account.email == 'bob@example.com')
+    )
+
+    if alice is None or bob is None:
+        raise ValueError('계좌를 찾을 수 없습니다')
+
+    alice.balance -= 10_000
+    bob.balance += 10_000
+    session.flush()
+    print(alice.balance, bob.balance)
+```
+
+```text
+90000 60000
+```
+
+`flush()` 뒤에도 두 변경은 같은 트랜잭션 안에 있습니다. 블록이 끝나기 전 검증에서 예외가 나면 둘 다 롤백되므로 중간 잔액이 확정되지 않습니다.
+
+## 예외를 트랜잭션 밖으로 전달해 전체 변경 롤백하기
+
+잔액보다 큰 금액을 보내려는 요청은 입금까지 진행하지 않고 실패시킵니다. 트랜잭션 블록 안에서 발생한 예외를 밖에서 처리하면 세션이 먼저 롤백됩니다.
+
+```python
+try:
+    with SessionLocal.begin() as session:
+        alice = session.scalar(
+            select(Account).where(Account.email == 'alice@example.com')
+        )
+        bob = session.scalar(
+            select(Account).where(Account.email == 'bob@example.com')
+        )
+
+        if alice is None or bob is None:
+            raise ValueError('계좌를 찾을 수 없습니다')
+
+        amount = 200_000
+        if alice.balance < amount:
+            raise ValueError('잔액이 부족합니다')
+
+        alice.balance -= amount
+        bob.balance += amount
+except ValueError as error:
+    print(error)
+
+with SessionLocal() as session:
+    balances = session.scalars(select(Account).order_by(Account.id)).all()
+    print([account.balance for account in balances])
+```
+
+```text
+잔액이 부족합니다
+[90000, 60000]
+```
+
+트랜잭션 블록 안에서 예외를 잡고 무시하면 블록이 정상 종료되어 커밋될 수 있습니다. 전체 작업을 취소할 오류는 블록 밖으로 전달하거나 명시적으로 `rollback()`해야 합니다.
+
+## inspect로 transient·pending·persistent·detached 상태 확인하기
+
+ORM 객체가 세션과 어떤 관계인지 알아야 세션 밖에서 속성을 사용할 수 있는지 판단할 수 있습니다. 새 객체를 추가·flush·분리하며 상태 변화를 확인합니다.
+
+```python
+from sqlalchemy import inspect
+
+
+with SessionLocal() as session:
+    account = Account(email='temp@example.com', balance=0)
+    print(inspect(account).transient)
+
+    session.add(account)
+    print(inspect(account).pending)
+
+    session.flush()
+    print(inspect(account).persistent)
+
+    session.expunge(account)
+    print(inspect(account).detached)
+    session.rollback()
+```
+
+```text
+True
+True
+True
+True
+```
+
+transient는 아직 세션에 없는 새 객체, pending은 추가됐지만 flush 전인 객체, persistent는 세션과 데이터베이스 행에 연결된 객체입니다. detached 객체는 세션이 없어 아직 읽지 않은 관계나 만료된 속성을 추가로 불러올 수 없습니다.
+
+## identity map과 refresh로 세션 안의 객체 다시 읽기
+
+같은 세션에서 같은 기본 키를 여러 번 조회하면 identity map이 같은 Python 객체를 돌려줍니다. ORM 추적을 우회한 SQL로 값이 바뀌었다면 `refresh()`로 현재 행을 다시 읽을 수 있습니다.
+
+```python
+from sqlalchemy import update
+
+
+with SessionLocal() as session:
+    first = session.get(Account, 1)
+    second = session.get(Account, 1)
+    print(first is second)
+
+    if first is None:
+        raise ValueError('계좌를 찾을 수 없습니다')
+
+    before = first.balance
+    session.execute(
+        update(Account)
+        .where(Account.id == first.id)
+        .values(balance=123_000),
+        execution_options={'synchronize_session': False},
+    )
+    session.refresh(first)
+    print(before, first.balance)
+    session.rollback()
+```
+
+```text
+True
+90000 123000
+```
+
+`refresh()`는 즉시 `SELECT`를 실행해 객체 값을 갱신합니다. 여기서는 실험한 직접 변경을 마지막에 롤백해 다음 토픽의 원래 잔액을 유지합니다.
+
+## begin_nested로 일부 입력만 SAVEPOINT 롤백하기
+
+여러 계좌를 가져올 때 중복 이메일 한 건 때문에 유효한 나머지 입력까지 버리고 싶지 않다면 각 입력을 저장점으로 감쌉니다.
+
+```python
+from sqlalchemy.exc import IntegrityError
+
+
+emails = ['charlie@example.com', 'alice@example.com']
+saved: list[str] = []
+skipped: list[str] = []
+
+with SessionLocal.begin() as session:
+    for email in emails:
+        try:
+            with session.begin_nested():
+                session.add(Account(email=email, balance=0))
+        except IntegrityError:
+            skipped.append(email)
+        else:
+            saved.append(email)
+
+print(saved)
+print(skipped)
+```
+
+```text
+['charlie@example.com']
+['alice@example.com']
+```
+
+`begin_nested()`는 SAVEPOINT를 만들고 해당 블록의 오류만 되돌립니다. 데이터베이스와 드라이버가 SAVEPOINT를 지원해야 하며, 모든 입력이 함께 성공해야 하는 업무라면 중첩 트랜잭션 없이 전체를 롤백해야 합니다.
+
+## version_id_col로 동시에 덮어쓴 변경 감지하기
+
+두 요청이 같은 계좌를 읽고 서로의 변경을 모른 채 커밋하면 마지막 저장이 앞선 변경을 덮을 수 있습니다. 버전 열을 매퍼에 지정하면 이전 버전과 일치하는 행만 갱신합니다.
+
+```python
+from sqlalchemy.orm.exc import StaleDataError
+
+
+session_a = SessionLocal()
+session_b = SessionLocal()
+
+try:
+    alice_a = session_a.get(Account, 1)
+    alice_b = session_b.get(Account, 1)
+    if alice_a is None or alice_b is None:
+        raise ValueError('계좌를 찾을 수 없습니다')
+
+    alice_a.balance = 110_000
+    session_a.commit()
+    committed_version = alice_a.version_id
+
+    alice_b.balance = 120_000
+    try:
+        session_b.commit()
+    except StaleDataError:
+        session_b.rollback()
+        print('conflict detected')
+
+    print(alice_a.balance, committed_version)
+finally:
+    session_a.close()
+    session_b.close()
+```
+
+```text
+conflict detected
+110000 3
+```
+
+앞의 송금에서 Alice 행이 한 번 갱신되어 버전 2가 되었고, 첫 동시 수정이 버전 3으로 올립니다. 충돌을 받은 서비스는 최신 데이터를 다시 읽어 사용자에게 재시도를 요청하거나 업무 규칙에 맞춰 변경을 다시 계산해야 합니다.
+
+공식 SQLAlchemy [Session 사용법](https://docs.sqlalchemy.org/en/20/orm/session.html), [객체 상태 관리](https://docs.sqlalchemy.org/en/20/orm/session_state_management.html), [SAVEPOINT 사용법](https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#using-savepoint), [버전 카운터 설정](https://docs.sqlalchemy.org/en/20/orm/versioning.html)을 기준으로 구성했습니다.
