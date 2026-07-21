@@ -1,0 +1,178 @@
+---
+title: "Part 1. 기초: CLI 인수와 옵션 정의하기"
+---
+
+`argparse`는 명령줄 인수를 정의하고 파싱해 CLI를 만들 때 쓰는 Python 표준 라이브러리입니다. `sys.argv`를 직접 파싱하는 대신 인수 구조를 선언하면 도움말·타입 변환·에러 메시지를 자동으로 처리합니다.
+
+## ArgumentParser로 CLI 진입점 만들기
+
+명령줄 도구의 시작점은 `ArgumentParser`를 한 번 만드는 것입니다. `prog`는 도움말의 프로그램 이름, `description`은 `-h` 실행 시 보이는 한 줄 설명입니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(
+    prog='convert',
+    description='CSV 파일을 JSON으로 변환합니다.',
+)
+```
+
+`prog`를 생략하면 `sys.argv[0]`에서 파일 이름을 가져옵니다. `description`은 usage 다음 줄에 나타나므로 도구의 목적을 한 문장으로 씁니다.
+
+## 위치 인수로 필수 입력 받기
+
+사용자가 반드시 제공해야 하는 값은 이름만 있는 위치 인수로 정의합니다. 순서가 고정되고 생략할 수 없습니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='convert')
+parser.add_argument('input', help='변환할 CSV 파일 경로')
+parser.add_argument('output', help='저장할 JSON 파일 경로')
+
+args = parser.parse_args(['data.csv', 'result.json'])
+print(args.input)
+print(args.output)
+```
+
+```text
+data.csv
+result.json
+```
+
+위치 인수는 `args.input`처럼 정의한 이름 그대로 속성으로 접근합니다. 개수나 순서가 맞지 않으면 `parse_args()`가 에러를 출력하고 종료합니다.
+
+## `--option`으로 선택 인수 받기
+
+사용자가 지정하지 않아도 되는 값은 `--`로 시작하는 선택 인수로 정의합니다. `default`로 생략했을 때의 값을 정합니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='convert')
+parser.add_argument('--delimiter', default=',', help='CSV 구분자 (기본값: ,)')
+parser.add_argument('--limit', default=0, help='최대 행 수. 0이면 전체')
+
+args = parser.parse_args([])
+print(args.delimiter)
+print(args.limit)
+```
+
+```text
+,
+0
+```
+
+짧은 별칭 `-d`를 함께 등록하면 `add_argument('-d', '--delimiter', ...)`처럼 첫 번째 인수로 추가합니다. `args`의 속성 이름은 `--delimiter`에서 `delimiter`가 됩니다.
+
+## `type=`으로 숫자와 경로 변환하기
+
+`add_argument()`의 `type`을 지정하면 입력 문자열을 자동으로 변환합니다. 변환에 실패하면 `parse_args()`가 에러를 출력합니다.
+
+```python
+import argparse
+from pathlib import Path
+
+
+parser = argparse.ArgumentParser(prog='convert')
+parser.add_argument('input', type=Path, help='입력 CSV 경로')
+parser.add_argument('--limit', type=int, default=0, help='최대 행 수')
+
+args = parser.parse_args(['data.csv', '--limit', '100'])
+print(type(args.input))
+print(args.limit + 1)
+```
+
+```text
+<class 'pathlib.PosixPath'>
+101
+```
+
+`type=Path`를 쓰면 `args.input`은 바로 `Path` 객체입니다. `type=int`를 생략하면 `'100'` 문자열로 남아 산술 연산에서 실패합니다.
+
+## `store_true`로 on/off 플래그 만들기
+
+값 없이 존재 여부만 전달하는 플래그는 `action='store_true'`로 정의합니다. 플래그를 쓰면 `True`, 쓰지 않으면 `False`가 됩니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='convert')
+parser.add_argument('--verbose', '-v', action='store_true', help='상세 출력 활성화')
+
+args_on = parser.parse_args(['--verbose'])
+args_off = parser.parse_args([])
+print(args_on.verbose)
+print(args_off.verbose)
+```
+
+```text
+True
+False
+```
+
+`action='store_false'`는 반대로 동작합니다. 플래그에는 `type`이나 `default=None` 대신 `action='store_true'`를 씁니다.
+
+## `parse_args()`로 Namespace 얻기
+
+`parse_args()`는 인수를 파싱한 결과를 `Namespace` 객체로 반환합니다. 인수 없이 호출하면 `sys.argv[1:]`을 읽고, 리스트를 전달하면 그 값을 파싱합니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='convert')
+parser.add_argument('input')
+parser.add_argument('--verbose', action='store_true')
+
+args = parser.parse_args(['data.csv', '--verbose'])
+print(args)
+print(vars(args))
+```
+
+```text
+Namespace(input='data.csv', verbose=True)
+{'input': 'data.csv', 'verbose': True}
+```
+
+`vars(args)`로 딕셔너리로 변환하거나 `args.input`처럼 직접 속성 접근을 씁니다. 테스트에서 `sys.argv` 없이 파싱할 때 리스트 전달 방식이 유용합니다.
+
+## `-h / --help`로 자동 생성된 도움말 확인하기
+
+`ArgumentParser`는 `-h` 또는 `--help` 인수를 자동으로 추가합니다. 실행하면 `description`, 각 인수의 `help` 텍스트를 조합한 메시지를 출력하고 종료합니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(
+    prog='convert',
+    description='CSV 파일을 JSON으로 변환합니다.',
+)
+parser.add_argument('input', type=str, help='변환할 CSV 파일 경로')
+parser.add_argument('--delimiter', default=',', help='CSV 구분자 (기본값: ,)')
+parser.add_argument('--verbose', action='store_true', help='상세 출력 활성화')
+```
+
+```text
+usage: convert [-h] [--delimiter DELIMITER] [--verbose] input
+
+CSV 파일을 JSON으로 변환합니다.
+
+positional arguments:
+  input                변환할 CSV 파일 경로
+
+options:
+  -h, --help           show this help message and exit
+  --delimiter DELIMITER
+                       CSV 구분자 (기본값: ,)
+  --verbose            상세 출력 활성화
+```
+
+`add_help=False`를 생성자에 전달하면 자동 도움말을 끕니다. 직접 `-h`를 정의하거나 서브커맨드마다 별도의 도움말을 붙일 때 사용합니다.
+
+공식 Python [argparse 튜토리얼](https://docs.python.org/3.12/howto/argparse.html), [argparse API](https://docs.python.org/3.12/library/argparse.html)를 기준으로 구성했습니다.

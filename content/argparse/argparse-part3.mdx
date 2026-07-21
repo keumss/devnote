@@ -1,0 +1,199 @@
+---
+title: "Part 3. 고급: 서브커맨드와 커스텀 타입 활용하기"
+---
+
+`git`, `docker` 같은 CLI는 서브커맨드로 기능을 나눕니다. 이 노트에서는 `add_subparsers()`로 서브커맨드를 구성하고, 커스텀 타입 함수와 `parents`로 공통 인수를 재사용하는 패턴을 다룹니다.
+
+## `add_subparsers()`로 서브커맨드 구조 만들기
+
+기능별로 다른 인수를 받는 CLI는 서브커맨드로 분리합니다. `add_subparsers()`로 서브커맨드 그룹을 만들고, `add_parser()`로 각 서브커맨드를 등록합니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='db')
+subparsers = parser.add_subparsers(dest='command', required=True)
+
+migrate = subparsers.add_parser('migrate', help='스키마 마이그레이션 실행')
+migrate.add_argument('--target', default='head', help='적용할 리비전')
+
+dump = subparsers.add_parser('dump', help='데이터베이스 덤프')
+dump.add_argument('output', help='덤프 파일 경로')
+
+args = parser.parse_args(['migrate', '--target', 'abc123'])
+print(args.command)
+print(args.target)
+```
+
+```text
+migrate
+abc123
+```
+
+`dest='command'`는 어떤 서브커맨드를 선택했는지 `args.command`로 알 수 있게 합니다. `required=True`를 생략하면 서브커맨드 없이 실행했을 때 에러 없이 통과합니다.
+
+## `set_defaults(func=...)`로 서브커맨드 핸들러 연결하기
+
+서브커맨드마다 실행할 함수를 `set_defaults(func=...)`로 연결하면, `args.func(args)` 한 줄로 해당 핸들러를 호출할 수 있습니다.
+
+```python
+import argparse
+
+
+def run_migrate(args: argparse.Namespace) -> None:
+    print(f'migrate to {args.target}')
+
+
+def run_dump(args: argparse.Namespace) -> None:
+    print(f'dump to {args.output}')
+
+
+parser = argparse.ArgumentParser(prog='db')
+subparsers = parser.add_subparsers(dest='command', required=True)
+
+migrate = subparsers.add_parser('migrate')
+migrate.add_argument('--target', default='head')
+migrate.set_defaults(func=run_migrate)
+
+dump = subparsers.add_parser('dump')
+dump.add_argument('output')
+dump.set_defaults(func=run_dump)
+
+args = parser.parse_args(['dump', 'backup.sql'])
+args.func(args)
+```
+
+```text
+dump to backup.sql
+```
+
+`if args.command == 'migrate'` 분기 대신 `args.func(args)`를 쓰면 서브커맨드가 늘어도 호출 코드가 바뀌지 않습니다. `func`는 `Namespace`에 있는 일반 속성이므로 다른 이름도 됩니다.
+
+## `type=` 함수로 커스텀 입력 검증하기
+
+`type=`에는 `int`, `float` 대신 `str`을 받아 원하는 값을 반환하거나 `ArgumentTypeError`를 발생시키는 함수를 전달할 수 있습니다.
+
+```python
+import argparse
+
+
+def positive_int(value: str) -> int:
+    n = int(value)
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f'{value}는 양의 정수여야 합니다.')
+    return n
+
+
+parser = argparse.ArgumentParser(prog='worker')
+parser.add_argument('--threads', type=positive_int, default=4,
+                    help='동시 실행 스레드 수')
+
+args = parser.parse_args(['--threads', '8'])
+print(args.threads)
+```
+
+```text
+8
+```
+
+`--threads 0`을 전달하면:
+
+```text
+error: argument --threads: 0는 양의 정수여야 합니다.
+```
+
+`ArgumentTypeError` 대신 `ValueError`나 `TypeError`를 발생시켜도 `argparse`가 잡아서 에러 메시지로 출력합니다. 메시지를 직접 제어하려면 `ArgumentTypeError`를 씁니다.
+
+## `parents=`로 공통 인수 재사용하기
+
+여러 서브커맨드나 파서가 같은 인수를 공유할 때 `parents=`로 베이스 파서에서 인수를 상속합니다.
+
+```python
+import argparse
+
+
+common = argparse.ArgumentParser(add_help=False)
+common.add_argument('--verbose', action='store_true', help='상세 출력')
+common.add_argument('--config', default='config.toml', help='설정 파일')
+
+parser = argparse.ArgumentParser(prog='app')
+subparsers = parser.add_subparsers(dest='command')
+
+run_parser = subparsers.add_parser('run', parents=[common], help='앱 실행')
+run_parser.add_argument('--port', type=int, default=8000)
+
+build_parser = subparsers.add_parser('build', parents=[common], help='앱 빌드')
+
+args = parser.parse_args(['run', '--verbose', '--port', '9000'])
+print(args.verbose)
+print(args.port)
+```
+
+```text
+True
+9000
+```
+
+베이스 파서에 `add_help=False`를 반드시 설정합니다. 그렇지 않으면 `-h`가 중복 정의되어 에러가 납니다. `parents`는 인수를 복사하므로 베이스 파서와 독립적으로 동작합니다.
+
+## `parse_known_args()`로 알 수 없는 인수 통과시키기
+
+도구가 다른 명령에 인수를 그대로 전달할 때 정의하지 않은 인수를 에러 없이 나머지로 받을 수 있습니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='runner')
+parser.add_argument('--timeout', type=int, default=30)
+
+args, remaining = parser.parse_known_args(['--timeout', '60', '--workers', '4', 'task.py'])
+print(args.timeout)
+print(remaining)
+```
+
+```text
+60
+['--workers', '4', 'task.py']
+```
+
+`remaining`에는 파서가 모르는 인수가 순서대로 남습니다. 이 인수를 `subprocess.run(remaining, ...)`처럼 다른 프로세스에 그대로 넘길 때 유용합니다. 단, 오타도 에러 없이 통과하므로 사용자 입력이라면 남는 인수가 있을 때 경고를 출력하는 것이 좋습니다.
+
+## `formatter_class`로 도움말 형식 바꾸기
+
+기본 formatter는 `description`의 줄바꿈을 무시합니다. 여러 줄 설명이나 기본값을 도움말에 자동으로 포함하려면 `formatter_class`를 바꿉니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(
+    prog='convert',
+    description=(
+        '지원 형식:\n'
+        '  csv  → 쉼표 구분\n'
+        '  tsv  → 탭 구분\n'
+        '  json → 배열 형식'
+    ),
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+)
+parser.add_argument('--limit', type=int, default=1000, help='최대 행 수 (기본값: %(default)s)')
+```
+
+```text
+usage: convert [-h] [--limit LIMIT]
+
+지원 형식:
+  csv  → 쉼표 구분
+  tsv  → 탭 구분
+  json → 배열 형식
+
+options:
+  -h, --help     show this help message and exit
+  --limit LIMIT  최대 행 수 (기본값: 1000)
+```
+
+`ArgumentDefaultsHelpFormatter`는 모든 인수의 `(default: ...)` 를 자동으로 추가합니다. `%(default)s`를 `help` 문자열에 직접 쓰면 해당 인수에만 기본값을 표시할 수 있습니다.
+
+공식 Python [argparse API](https://docs.python.org/3.12/library/argparse.html)의 sub-commands, formatter_class, type 섹션을 기준으로 구성했습니다.

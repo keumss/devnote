@@ -1,0 +1,206 @@
+---
+title: "Part 2. 중급: 입력 제약과 다중 값 처리하기"
+---
+
+실제 CLI에서는 허용할 값을 제한하거나 여러 값을 한 번에 받거나, 함께 쓸 수 없는 옵션을 구분해야 합니다. 이 노트에서는 `argparse`의 검증·수집·그룹화 기능을 다룹니다.
+
+## `choices=`로 허용 값 제한하기
+
+인수가 특정 값 중 하나여야 할 때 `choices=`로 목록을 지정합니다. 목록 밖의 값이 들어오면 `parse_args()`가 자동으로 에러를 냅니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='report')
+parser.add_argument('--format', choices=['csv', 'json', 'tsv'], default='csv',
+                    help='출력 형식')
+
+args = parser.parse_args(['--format', 'json'])
+print(args.format)
+```
+
+```text
+json
+```
+
+`choices`에 없는 값을 전달하면:
+
+```text
+# --format xml 을 전달했을 때
+error: argument --format: invalid choice: 'xml' (choose from 'csv', 'json', 'tsv')
+```
+
+`choices`는 도움말에도 표시됩니다. `type=int`와 함께 쓰면 `choices=[1, 2, 3]`처럼 정수 범위도 제한할 수 있습니다.
+
+## `nargs='+'`로 여러 파일 한 번에 받기
+
+한 인수가 여러 값을 받아야 할 때 `nargs`를 지정합니다. `'+'`는 하나 이상, `'*'`는 없어도 됨, 정수는 정확한 개수입니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='merge')
+parser.add_argument('files', nargs='+', help='합칠 CSV 파일들')
+parser.add_argument('--skip', nargs='*', default=[], help='건너뛸 컬럼 이름들')
+
+args = parser.parse_args(['jan.csv', 'feb.csv', '--skip', 'id', 'memo'])
+print(args.files)
+print(args.skip)
+```
+
+```text
+['jan.csv', 'feb.csv']
+['id', 'memo']
+```
+
+`nargs='+'`인 위치 인수가 여러 개면 순서와 개수 구분이 어려워집니다. 위치 인수에는 `nargs='+'`를 하나만 두고 나머지는 선택 인수로 분리합니다.
+
+## `required=True`로 옵션을 필수로 만들기
+
+선택 인수(`--option`)는 기본적으로 생략 가능합니다. 반드시 제공해야 하는 값인데 이름으로 구분해야 할 때 `required=True`를 씁니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='send')
+parser.add_argument('--to', required=True, help='수신자 이메일')
+parser.add_argument('--subject', required=True, help='메일 제목')
+parser.add_argument('--body', default='', help='메일 본문')
+
+args = parser.parse_args(['--to', 'user@example.com', '--subject', '안내'])
+print(args.to)
+print(args.subject)
+```
+
+```text
+user@example.com
+안내
+```
+
+`--to`를 생략하면:
+
+```text
+error: the following arguments are required: --to
+```
+
+값을 반드시 받아야 하고 순서가 중요하지 않을 때 위치 인수보다 `required=True` 선택 인수가 더 명확합니다.
+
+## `append` action으로 값 누적하기
+
+같은 옵션을 여러 번 써서 값을 모을 때 `action='append'`를 사용합니다. 호출마다 리스트에 하나씩 추가됩니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='filter')
+parser.add_argument('--exclude', action='append', default=[], metavar='COLUMN',
+                    help='제외할 컬럼 (반복 사용 가능)')
+
+args = parser.parse_args(['--exclude', 'id', '--exclude', 'created_at'])
+print(args.exclude)
+```
+
+```text
+['id', 'created_at']
+```
+
+`nargs='+'`가 한 번에 여러 값을 받는다면, `append`는 같은 플래그를 여러 번 쓸 수 있게 합니다. 쉘 스크립트에서 반복 옵션을 받을 때 자주 씁니다.
+
+## `add_argument_group()`으로 도움말 구조화하기
+
+인수가 많아질 때 `add_argument_group()`으로 관련 인수를 묶으면 `-h` 출력에서 구분이 됩니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='convert')
+
+input_group = parser.add_argument_group('입력 옵션')
+input_group.add_argument('input', help='입력 CSV 파일')
+input_group.add_argument('--delimiter', default=',', help='CSV 구분자')
+
+output_group = parser.add_argument_group('출력 옵션')
+output_group.add_argument('--output', default='result.json', help='출력 파일')
+output_group.add_argument('--pretty', action='store_true', help='들여쓰기 출력')
+```
+
+```text
+usage: convert [-h] [--delimiter DELIMITER] [--output OUTPUT] [--pretty] input
+
+options:
+  -h, --help            show this help message and exit
+
+입력 옵션:
+  input                 입력 CSV 파일
+  --delimiter DELIMITER
+                        CSV 구분자
+
+출력 옵션:
+  --output OUTPUT       출력 파일
+  --pretty              들여쓰기 출력
+```
+
+그룹은 도움말 표시 목적으로만 씁니다. 파싱 결과는 일반 인수와 같이 `args.delimiter`처럼 접근합니다.
+
+## `add_mutually_exclusive_group()`으로 충돌 옵션 막기
+
+함께 쓸 수 없는 옵션은 `add_mutually_exclusive_group()`으로 묶습니다. 둘 이상 동시에 쓰면 자동으로 에러가 납니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='log')
+group = parser.add_mutually_exclusive_group()
+group.add_argument('--verbose', action='store_true', help='상세 출력')
+group.add_argument('--quiet', action='store_true', help='출력 최소화')
+
+args = parser.parse_args(['--quiet'])
+print(args.quiet)
+print(args.verbose)
+```
+
+```text
+True
+False
+```
+
+`--verbose --quiet`를 동시에 전달하면:
+
+```text
+error: argument --quiet: not allowed with argument --verbose
+```
+
+`required=True`를 그룹에 설정하면 둘 중 하나는 반드시 선택해야 합니다.
+
+## `dest=`로 속성 이름 명시적으로 지정하기
+
+`--output-file`처럼 하이픈이 있는 인수 이름은 `args.output_file`로 자동 변환되지만, 이름이 긴 경우나 충돌 방지가 필요할 때 `dest=`로 명시적으로 지정합니다.
+
+```python
+import argparse
+
+
+parser = argparse.ArgumentParser(prog='convert')
+parser.add_argument('-o', '--output-file', dest='out', help='결과 파일 경로')
+parser.add_argument('--no-header', dest='skip_header', action='store_true',
+                    help='헤더 행 건너뛰기')
+
+args = parser.parse_args(['-o', 'result.json', '--no-header'])
+print(args.out)
+print(args.skip_header)
+```
+
+```text
+result.json
+True
+```
+
+`dest`를 생략하면 `--output-file`은 `args.output_file`이 됩니다. `-o`처럼 짧은 플래그만 있으면 `dest='out'`처럼 의미 있는 이름으로 바꾸는 편이 가독성이 좋습니다.
+
+공식 Python [argparse API](https://docs.python.org/3.12/library/argparse.html)의 `add_argument()` 섹션을 기준으로 구성했습니다.
