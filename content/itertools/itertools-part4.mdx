@@ -1,0 +1,149 @@
+---
+title: "Part 4. 실전: 판매 로그 집계 도구 만들기"
+---
+
+이번에는 `sales_report.py` 하나로 여러 CSV 파일의 판매 행을 읽어 상품별 합계와 누적 총액을 출력합니다. 목표는 `상품명,금액` 형식의 CSV 행을 파일 여러 개에서 받아, 상품별 판매 합계를 정렬된 순서로 출력하고 잘못된 행에서는 해당 파일·줄 번호와 함께 실패하는 것입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
+
+## 임포트와 행 파싱 함수 준비하기
+
+`itertools`에서 필요한 함수를 모두 가져오고, CSV 한 행을 도메인 데이터로 바꾸는 함수를 만듭니다. `source`는 오류 위치를 알리기 위한 출처 문자열입니다.
+
+```python
+# sales_report.py
+from __future__ import annotations
+
+import sys
+from itertools import accumulate, chain, groupby, starmap
+from pathlib import Path
+
+
+def parse_row(raw: str, source: str) -> tuple[str, int]:
+    parts = [p.strip() for p in raw.split(',')]
+    if len(parts) != 2:
+        raise ValueError(f'{source}: 형식이 올바르지 않습니다 → {raw!r}')
+    product, amount_text = parts
+    if not product:
+        raise ValueError(f'{source}: 상품명이 비어 있습니다')
+    try:
+        return product, int(amount_text)
+    except ValueError as error:
+        raise ValueError(f'{source}: 금액이 정수가 아닙니다 → {amount_text!r}') from error
+```
+
+`parse_row()`는 형식 오류를 즉시 발생시켜 이후 집계 단계가 잘못된 데이터를 받지 않게 합니다.
+
+## chain()으로 여러 파일의 행을 하나의 흐름으로 읽기
+
+파일별로 행을 생성하고, `chain.from_iterable()`로 모든 파일의 행을 하나의 이터레이터로 이어 붙입니다. 파일 이름과 줄 번호를 함께 추적해 오류 위치를 특정합니다.
+
+```python
+def iter_rows(paths: list[Path]) -> list[tuple[str, int]]:
+    def file_rows(path: Path):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            line = line.strip()
+            if line:
+                source = f'{path.name}:{lineno}'
+                yield parse_row(line, source)
+
+    return list(chain.from_iterable(file_rows(p) for p in paths))
+```
+
+`file_rows()`는 빈 줄을 건너뛰고, `chain.from_iterable()`이 파일 순서대로 행을 이어 붙입니다. `list()`로 소비해 이후 정렬에서 두 번 순회하지 않습니다.
+
+## groupby()로 상품별 합계 구하기
+
+전체 행을 상품명 기준으로 정렬한 뒤 `groupby()`로 묶고, 각 그룹의 금액 합계를 계산합니다.
+
+```python
+def aggregate(rows: list[tuple[str, int]]) -> list[tuple[str, int]]:
+    sorted_rows = sorted(rows, key=lambda r: r[0])
+    result = []
+    for product, group in groupby(sorted_rows, key=lambda r: r[0]):
+        total = sum(amount for _, amount in group)
+        result.append((product, total))
+    return result
+```
+
+`groupby()` 전에 정렬해야 같은 상품이 하나의 그룹으로 묶입니다. `group` 이터레이터를 `sum()`에서 소비하므로 별도 `list()` 변환 없이 처리합니다.
+
+## accumulate()로 누적 총액 계산하기
+
+정렬된 상품별 합계에서 누적 총액을 계산하고, `starmap()`으로 출력 행을 만듭니다.
+
+```python
+def format_report(totals: list[tuple[str, int]]) -> list[str]:
+    if not totals:
+        raise ValueError('출력할 판매 데이터가 없습니다')
+
+    amounts = [amount for _, amount in totals]
+    running = list(accumulate(amounts))
+
+    def make_row(product_amount: tuple[str, int], cumulative: int) -> str:
+        product, amount = product_amount
+        return f'{product}: {amount:,}원 (누적 {cumulative:,}원)'
+
+    return list(starmap(make_row, zip(totals, running)))
+```
+
+`accumulate()`가 상품별 합계를 순서대로 더하고, `starmap()`이 각 행의 출력 형식을 만듭니다. 두 이터레이터를 `zip()`으로 정렬해 행과 누적값을 1:1로 연결합니다.
+
+## main으로 파일 입력과 결과 출력 연결하기
+
+파일 끝에서 명령줄 인수를 받아 전체 흐름을 연결합니다. 파싱 오류와 집계 오류를 모두 같은 방식으로 처리합니다.
+
+```python
+def main() -> int:
+    if len(sys.argv) < 2:
+        print('사용법: python sales_report.py <파일1.csv> [파일2.csv ...]', file=sys.stderr)
+        return 1
+
+    paths = [Path(arg) for arg in sys.argv[1:]]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        for p in missing:
+            print(f'sales-report: 파일을 찾을 수 없습니다 → {p}', file=sys.stderr)
+        return 1
+
+    try:
+        rows = iter_rows(paths)
+        totals = aggregate(rows)
+        for line in format_report(totals):
+            print(line)
+    except ValueError as error:
+        print(f'sales-report: {error}', file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+`iter_rows()`에서 `parse_row()`가 오류를 내면 `main()`이 메시지를 출력하고 종료 코드 1을 반환합니다. 파일 존재 여부는 파싱 전에 미리 확인합니다.
+
+## 실행 결과로 정상 집계와 입력 오류 확인하기
+
+아래 입력 파일을 만들고 실행합니다. 첫 명령은 두 파일의 판매 합계와 누적 총액을, 둘째 명령은 잘못된 금액 행의 오류 위치를 보여 줍니다.
+
+```bash
+# 입력 파일 준비
+echo "apple,3000\nbanana,1500\napple,2000" > jan.csv
+echo "banana,2500\ncherry,4000\napple,1000" > feb.csv
+echo "apple,bad\nbanana,1000" > bad.csv
+
+python sales_report.py jan.csv feb.csv
+python sales_report.py bad.csv; echo $?
+```
+
+```text
+apple: 6,000원 (누적 6,000원)
+banana: 4,000원 (누적 10,000원)
+cherry: 4,000원 (누적 14,000원)
+sales-report: bad.csv:1: 금액이 정수가 아닙니다 → 'bad'
+1
+```
+
+`chain.from_iterable()`이 파일을 하나의 흐름으로 이어 붙이고, 정렬 후 `groupby()`가 상품별로 묶고, `accumulate()`가 누적 총액을 만들고, `starmap()`이 출력 행을 조합합니다. 실제 서비스에서는 파일 인코딩, 통화 단위, 큰 파일의 스트리밍 읽기를 별도로 처리합니다.
+
+공식 Python [itertools 문서](https://docs.python.org/3.12/library/itertools.html)의 `chain.from_iterable`, `groupby`, `accumulate`, `starmap` 동작을 기준으로 Python 3.12 예제를 구성했습니다.

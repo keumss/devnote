@@ -1,0 +1,159 @@
+---
+title: "Part 3. 고급: 무한 이터레이터와 조합론"
+---
+
+## count()로 무한 숫자 시퀀스 만들기
+
+끝없이 증가하는 숫자가 필요할 때 `count()`를 사용합니다. `start`와 `step`을 지정하면 그 간격으로 계속 값을 냅니다. `islice()`나 `takewhile()`로 종료 조건을 줘야 합니다.
+
+```python
+from itertools import count, islice
+
+for num in islice(count(1, 5), 5):
+    print(num, end=' ')
+```
+
+```text
+1 6 11 16 21
+```
+
+`zip(count(1), data)`는 인덱스 없이 번호를 붙이는 `enumerate(data, 1)`과 같습니다. 소수점 `step`도 지원하지만 부동소수점 오차가 누적될 수 있습니다.
+
+## cycle()로 순환 반복하기
+
+고정된 값 집합을 끊임없이 돌릴 때 `cycle()`을 사용합니다. 입력을 내부적으로 저장했다가 끝에 도달하면 처음부터 다시 반복합니다.
+
+```python
+from itertools import cycle, islice
+
+statuses = ['pending', 'processing', 'done']
+for task_id, status in enumerate(islice(cycle(statuses), 7), 1):
+    print(f'task-{task_id}: {status}')
+```
+
+```text
+task-1: pending
+task-2: processing
+task-3: done
+task-4: pending
+task-5: processing
+task-6: done
+task-7: pending
+```
+
+`cycle()`은 원본을 모두 복사해 저장합니다. 큰 시퀀스를 순환해야 한다면 메모리 사용량을 확인합니다.
+
+## repeat()로 고정값 반복하기
+
+같은 값을 여러 번 써야 할 때 `repeat()`을 사용합니다. `times` 인수를 생략하면 무한히 반복하고, 지정하면 그 횟수만큼 냅니다.
+
+```python
+from itertools import repeat, starmap
+
+base = 2
+exponents = [0, 1, 2, 3, 4]
+powers = list(starmap(pow, zip(repeat(base), exponents)))
+print(powers)
+```
+
+```text
+[1, 2, 4, 8, 16]
+```
+
+`repeat(val, n)`은 `[val] * n`보다 메모리를 적게 씁니다. `map(func, repeat(val), other_iter)`처럼 고정 인수를 결합할 때도 자주 씁니다.
+
+## product()로 데카르트 곱 만들기
+
+두 집합의 모든 조합을 만들 때 `product()`를 사용합니다. 중첩 `for` 루프와 같은 결과를 단순하게 표현합니다.
+
+```python
+from itertools import product
+
+sizes = ['S', 'M', 'L']
+colors = ['red', 'blue']
+
+for size, color in product(sizes, colors):
+    print(f'{size}-{color}')
+```
+
+```text
+S-red
+S-blue
+M-red
+M-blue
+L-red
+L-blue
+```
+
+`repeat` 인수로 `product('AB', repeat=2)`처럼 같은 이터러블을 여러 번 조합할 수 있습니다. 총 개수는 각 인수 길이의 곱이므로 큰 값에는 주의합니다.
+
+## permutations()로 순열 생성하기
+
+항목의 순서가 의미 있는 모든 배열을 만들 때 `permutations()`를 사용합니다. `r`을 생략하면 전체 길이의 순열을, 지정하면 r개짜리 순열을 만듭니다.
+
+```python
+from itertools import permutations
+
+runners = ['Alice', 'Bob', 'Carol']
+for podium in permutations(runners, 2):
+    print(podium)
+```
+
+```text
+('Alice', 'Bob')
+('Alice', 'Carol')
+('Bob', 'Alice')
+('Bob', 'Carol')
+('Carol', 'Alice')
+('Carol', 'Bob')
+```
+
+n개에서 r개를 고르는 순열의 수는 `n! / (n-r)!`입니다. 3개 전체 순열은 `3! = 6`개, r=2는 `6`개입니다.
+
+## combinations()로 조합 생성하기
+
+순서 없이 r개를 고를 때 `combinations()`를 사용합니다. 같은 항목 쌍은 한 번만 나오고, 입력 순서대로 고릅니다.
+
+```python
+from itertools import combinations
+
+items = ['A', 'B', 'C', 'D']
+for pair in combinations(items, 2):
+    print(pair)
+```
+
+```text
+('A', 'B')
+('A', 'C')
+('A', 'D')
+('B', 'C')
+('B', 'D')
+('C', 'D')
+```
+
+n개에서 r개를 고르는 조합의 수는 `n! / (r! * (n-r)!)`입니다. 4개에서 2개는 6가지입니다. 항목을 중복 없이 선택하는 경우에 씁니다.
+
+## combinations_with_replacement()로 중복 조합 만들기
+
+같은 항목을 여러 번 선택할 수 있는 경우를 모두 나열할 때 `combinations_with_replacement()`를 사용합니다. `combinations()`와 달리 같은 항목끼리의 쌍도 포함합니다.
+
+```python
+from itertools import combinations_with_replacement
+
+dice = [1, 2, 3]
+for roll in combinations_with_replacement(dice, 2):
+    print(roll)
+```
+
+```text
+(1, 1)
+(1, 2)
+(1, 3)
+(2, 2)
+(2, 3)
+(3, 3)
+```
+
+n개에서 중복 허용으로 r개를 고르는 경우의 수는 `(n+r-1)! / (r! * (n-1)!)`입니다. 3개 주사위에서 2개는 6가지입니다. `combinations()`보다 경우의 수가 많으므로 실용적으로 필요한 r 범위를 확인합니다.
+
+공식 Python [itertools 문서](https://docs.python.org/3.12/library/itertools.html)의 `count`, `cycle`, `repeat`, `product`, `permutations`, `combinations`, `combinations_with_replacement` 동작을 기준으로 Python 3.12 예제를 구성했습니다.
