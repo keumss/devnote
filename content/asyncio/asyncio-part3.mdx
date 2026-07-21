@@ -1,0 +1,214 @@
+---
+title: "Part 3. 고급: 실행 제어와 블로킹 코드 격리"
+---
+
+## asyncio.TaskGroup으로 작업 그룹과 오류 전파 관리하기
+
+여러 태스크를 묶어 하나라도 실패하면 나머지를 취소하고 싶을 때 `asyncio.TaskGroup`을 사용합니다. Python 3.11에서 추가됐으며, `gather()`보다 오류 전파를 명확하게 제어합니다.
+
+```python
+import asyncio
+
+
+async def fetch(name: str, should_fail: bool) -> str:
+    await asyncio.sleep(0.1)
+    if should_fail:
+        raise ValueError(f'{name} 실패')
+    return f'{name} 성공'
+
+
+async def main() -> None:
+    try:
+        async with asyncio.TaskGroup() as tg:
+            t1 = tg.create_task(fetch('A', False))
+            t2 = tg.create_task(fetch('B', True))
+            t3 = tg.create_task(fetch('C', False))
+    except* ValueError as eg:
+        for exc in eg.exceptions:
+            print(f'오류: {exc}')
+    else:
+        print(t1.result(), t2.result(), t3.result())
+
+
+asyncio.run(main())
+```
+
+```text
+오류: B 실패
+```
+
+`TaskGroup`을 벗어날 때 그룹 안의 태스크가 모두 완료(또는 취소)됩니다. 하나가 실패하면 나머지 태스크에 취소 신호를 보내고 `ExceptionGroup`으로 예외를 묶어 전파합니다.
+
+## loop.run_in_executor()로 블로킹 함수 격리하기
+
+`requests.get()`처럼 이벤트 루프를 차단하는 함수를 별도 스레드에서 실행할 때 `run_in_executor()`를 사용합니다.
+
+```python
+import asyncio
+import time
+
+
+def blocking_read(path: str) -> str:
+    time.sleep(0.1)  # 블로킹 파일 읽기 시뮬레이션
+    return f'{path} 내용'
+
+
+async def main() -> None:
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, blocking_read, 'data.log')
+    print(result)
+
+
+asyncio.run(main())
+```
+
+```text
+data.log 내용
+```
+
+`None`을 전달하면 기본 `ThreadPoolExecutor`를 사용합니다. `ProcessPoolExecutor`를 전달하면 CPU 집중 작업을 별도 프로세스에서 실행할 수 있습니다. 키워드 인수를 전달할 때는 `functools.partial`을 사용합니다.
+
+## asyncio.to_thread()로 블로킹 코드를 간결하게 감싸기
+
+블로킹 함수를 스레드에서 실행하는 더 간단한 방법으로 `asyncio.to_thread()`를 사용합니다. Python 3.9에서 추가됐으며 `run_in_executor(None, ...)` 의 축약형입니다.
+
+```python
+import asyncio
+
+
+def parse_log(path: str) -> list[str]:
+    # 실제로는 파일을 읽고 파싱하는 블로킹 작업
+    return [f'{path}: 오류 1', f'{path}: 오류 2']
+
+
+async def main() -> None:
+    paths = ['app.log', 'worker.log', 'db.log']
+    tasks = [asyncio.to_thread(parse_log, p) for p in paths]
+    results = await asyncio.gather(*tasks)
+    for lines in results:
+        print(lines)
+
+
+asyncio.run(main())
+```
+
+```text
+['app.log: 오류 1', 'app.log: 오류 2']
+['worker.log: 오류 1', 'worker.log: 오류 2']
+['db.log: 오류 1', 'db.log: 오류 2']
+```
+
+`to_thread()`는 키워드 인수를 직접 전달할 수 있어 `run_in_executor()`보다 사용하기 편합니다. 반환값은 어웨이터블이므로 `await`하거나 `create_task()`로 태스크를 만들 수 있습니다.
+
+## asyncio.shield()로 취소에서 작업 보호하기
+
+태스크가 취소될 때 내부의 중요한 작업(저장, 정리)은 끝까지 완료해야 할 경우 `asyncio.shield()`로 보호합니다.
+
+```python
+import asyncio
+
+
+async def save_result(data: str) -> None:
+    await asyncio.sleep(0.2)  # 데이터 저장 시뮬레이션
+    print(f'저장 완료: {data}')
+
+
+async def process(data: str) -> None:
+    await asyncio.shield(save_result(data))
+
+
+async def main() -> None:
+    task = asyncio.create_task(process('중요 데이터'))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print('process 취소됨')
+    await asyncio.sleep(0.3)  # save_result가 끝날 시간 확보
+
+
+asyncio.run(main())
+```
+
+```text
+process 취소됨
+저장 완료: 중요 데이터
+```
+
+`task`는 취소됐지만 `shield()` 안의 `save_result()`는 계속 실행됩니다. `shield()`는 외부 취소로부터 코루틴을 보호하지만, 보호된 코루틴을 직접 취소하면 `CancelledError`가 발생합니다.
+
+## asyncio.as_completed()로 먼저 끝난 순서로 처리하기
+
+여러 작업 중 빠른 것부터 처리하고 싶을 때 `asyncio.as_completed()`를 사용합니다. `gather()`가 모두 끝날 때까지 기다리는 것과 달리, 완료되는 순서대로 결과를 받습니다.
+
+```python
+import asyncio
+
+
+async def query(server: str, delay: float) -> str:
+    await asyncio.sleep(delay)
+    return f'{server} 응답 ({delay}s)'
+
+
+async def main() -> None:
+    coros = [
+        query('server-A', 0.3),
+        query('server-B', 0.1),
+        query('server-C', 0.2),
+    ]
+    for coro in asyncio.as_completed(coros):
+        result = await coro
+        print(result)
+
+
+asyncio.run(main())
+```
+
+```text
+server-B 응답 (0.1s)
+server-C 응답 (0.2s)
+server-A 응답 (0.3s)
+```
+
+`as_completed()`는 완료 순서대로 코루틴을 반환하므로 첫 번째 성공 결과만 사용하거나 느린 서버를 건너뛸 때 유용합니다. 반환 순서는 입력 순서와 다를 수 있습니다.
+
+## ExceptionGroup으로 여러 예외를 유형별로 처리하기
+
+`TaskGroup`에서 여러 태스크가 실패하면 예외가 `ExceptionGroup`으로 묶입니다. `except*` 구문으로 유형별로 나눠 처리할 수 있습니다.
+
+```python
+import asyncio
+
+
+async def risky(value: int) -> int:
+    await asyncio.sleep(0.01)
+    if value % 2 == 0:
+        raise ValueError(f'{value}는 짝수')
+    if value > 8:
+        raise RuntimeError(f'{value}는 너무 큼')
+    return value
+
+
+async def main() -> None:
+    try:
+        async with asyncio.TaskGroup() as tg:
+            for v in [1, 2, 5, 10]:
+                tg.create_task(risky(v))
+    except* ValueError as eg:
+        print('ValueError:', [str(e) for e in eg.exceptions])
+    except* RuntimeError as eg:
+        print('RuntimeError:', [str(e) for e in eg.exceptions])
+
+
+asyncio.run(main())
+```
+
+```text
+ValueError: ['2는 짝수']
+RuntimeError: ['10는 너무 큼']
+```
+
+`except*`는 Python 3.11에서 추가된 구문으로 `ExceptionGroup` 안의 예외를 유형별로 걸러냅니다. 여러 `except*` 절이 모두 실행될 수 있어 일반 `except`와 동작이 다릅니다.
+
+공식 Python [asyncio.TaskGroup](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.TaskGroup), [asyncio.to_thread](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.to_thread), [as_completed](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.as_completed)를 기준으로 Python 3.12 예제를 구성했습니다.

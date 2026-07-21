@@ -1,0 +1,201 @@
+---
+title: "Part 1. 기초: 코루틴과 이벤트 루프 시작하기"
+---
+
+## asyncio로 I/O 대기 없이 여러 작업을 처리하는 이유
+
+`asyncio`는 I/O 대기 중에 다른 작업을 실행해 한 스레드로 여러 작업을 동시에 진행할 때 사용합니다. 네트워크 요청, 파일 읽기처럼 외부를 기다리는 작업이 많을 때 효과적입니다. FastAPI의 `async def` 엔드포인트도 이 구조 위에서 동작합니다.
+
+```python
+import asyncio
+
+
+async def notify(user: str, delay: float) -> str:
+    await asyncio.sleep(delay)  # 네트워크 대기 시뮬레이션
+    return f'{user}에게 알림 전송 완료'
+
+
+async def main() -> None:
+    results = await asyncio.gather(
+        notify('alice', 0.3),
+        notify('bob', 0.1),
+        notify('carol', 0.2),
+    )
+    for r in results:
+        print(r)
+
+
+asyncio.run(main())
+```
+
+```text
+alice에게 알림 전송 완료
+bob에게 알림 전송 완료
+carol에게 알림 전송 완료
+```
+
+세 알림을 순서대로 보내면 0.6초가 걸리지만 동시에 실행하면 0.3초에 가깝습니다. 모든 예제는 Python 3.12 기준입니다.
+
+## async def와 await로 코루틴 정의하기
+
+I/O 대기가 포함된 함수를 정의할 때 `async def`를 사용합니다. `await`는 현재 코루틴을 일시 중단하고 이벤트 루프가 다른 코루틴을 실행할 수 있도록 제어권을 넘깁니다.
+
+```python
+import asyncio
+
+
+async def fetch_score(user_id: int) -> int:
+    await asyncio.sleep(0.1)  # 데이터베이스 조회 시뮬레이션
+    return user_id * 10
+
+
+async def main() -> None:
+    score = await fetch_score(5)
+    print(score)
+
+
+asyncio.run(main())
+```
+
+```text
+50
+```
+
+`async def` 함수를 호출하면 코루틴 객체가 만들어지고, `await`로 실행할 때까지 코드가 실행되지 않습니다. 일반 함수처럼 직접 호출하면 코루틴 객체만 반환되고 실행되지 않습니다.
+
+## asyncio.sleep()으로 비동기 대기 표현하기
+
+코루틴 안에서 기다려야 할 때 `time.sleep()` 대신 `asyncio.sleep()`을 사용합니다. `time.sleep()`은 스레드 전체를 멈추지만, `asyncio.sleep()`은 현재 코루틴만 중단하고 다른 코루틴이 실행되도록 합니다.
+
+```python
+import asyncio
+
+
+async def correct() -> None:
+    print('시작')
+    await asyncio.sleep(0.1)  # 이벤트 루프에 제어권 반환
+    print('끝')
+```
+
+`time.sleep()`을 `async def` 안에서 쓰면 이벤트 루프가 멈춰 다른 코루틴이 실행되지 않습니다. CPU 집중 작업도 같은 이유로 `asyncio.to_thread()`로 분리합니다.
+
+## asyncio.create_task()로 작업 동시에 시작하기
+
+두 코루틴을 동시에 실행하되 각 결과를 따로 받을 때 `create_task()`로 태스크를 만듭니다. 태스크는 생성 즉시 이벤트 루프에 등록돼 `await` 없이도 실행이 시작됩니다.
+
+```python
+import asyncio
+
+
+async def load_profile(user: str) -> str:
+    await asyncio.sleep(0.2)
+    return f'{user} 프로필'
+
+
+async def load_settings(user: str) -> str:
+    await asyncio.sleep(0.1)
+    return f'{user} 설정'
+
+
+async def main() -> None:
+    task_profile = asyncio.create_task(load_profile('alice'))
+    task_settings = asyncio.create_task(load_settings('alice'))
+
+    profile = await task_profile
+    settings = await task_settings
+    print(profile, settings)
+
+
+asyncio.run(main())
+```
+
+```text
+alice 프로필 alice 설정
+```
+
+두 `await`를 순서대로 적어도 태스크는 이미 동시에 실행 중이므로 전체 소요 시간은 0.2초에 가깝습니다. `await 코루틴()`을 직접 쓰면 앞 코루틴이 끝날 때까지 뒤가 시작되지 않습니다.
+
+## asyncio.gather()로 여러 태스크 결과 모으기
+
+여러 코루틴을 동시에 실행하고 모두 끝날 때까지 기다릴 때 `asyncio.gather()`를 사용합니다. 결과는 전달한 코루틴의 순서와 같습니다.
+
+```python
+import asyncio
+
+
+async def ping(host: str) -> str:
+    await asyncio.sleep(0.1)
+    return f'{host} 응답'
+
+
+async def main() -> None:
+    hosts = ['api.example.com', 'db.example.com', 'cache.example.com']
+    results = await asyncio.gather(*[ping(h) for h in hosts])
+    for r in results:
+        print(r)
+
+
+asyncio.run(main())
+```
+
+```text
+api.example.com 응답
+db.example.com 응답
+cache.example.com 응답
+```
+
+`gather()`는 코루틴과 태스크를 섞어 전달할 수 있습니다. 하나라도 예외가 발생하면 나머지 결과 없이 즉시 예외가 전파됩니다. 예외를 각각 받으려면 `return_exceptions=True`를 전달합니다.
+
+## asyncio.wait_for()로 제한 시간 안에 끝내기
+
+느린 코루틴에 제한 시간을 두고 초과하면 `asyncio.TimeoutError`를 발생시킬 때 `wait_for()`를 사용합니다.
+
+```python
+import asyncio
+
+
+async def slow_query() -> str:
+    await asyncio.sleep(2.0)
+    return '결과'
+
+
+async def main() -> None:
+    try:
+        result = await asyncio.wait_for(slow_query(), timeout=0.5)
+        print(result)
+    except asyncio.TimeoutError:
+        print('조회 시간 초과')
+
+
+asyncio.run(main())
+```
+
+```text
+조회 시간 초과
+```
+
+`wait_for()`는 시간 초과 시 내부 코루틴에 취소 신호를 보냅니다. 취소 처리가 필요한 작업은 `CancelledError`를 잡아 정리 코드를 실행해야 합니다.
+
+## asyncio.run()으로 비동기 진입점 만들기
+
+최상위 비동기 함수를 실행할 때 `asyncio.run()`을 사용합니다. 이벤트 루프를 만들고 전달한 코루틴을 실행한 뒤 루프를 닫습니다.
+
+```python
+import asyncio
+
+
+async def main() -> None:
+    await asyncio.sleep(0)
+    print('완료')
+
+
+asyncio.run(main())
+```
+
+```text
+완료
+```
+
+`asyncio.run()`은 스크립트의 진입점에서 한 번만 호출합니다. 이미 실행 중인 이벤트 루프 안에서 호출하면 오류가 발생합니다. Jupyter나 FastAPI처럼 이미 루프가 있는 환경에서는 `await main()`을 직접 쓰거나 프레임워크가 제공하는 방식을 따릅니다.
+
+공식 Python [asyncio 문서](https://docs.python.org/3.12/library/asyncio.html)의 `run`, `gather`, `create_task`, `wait_for`, `sleep` 동작을 기준으로 Python 3.12 예제를 구성했습니다.

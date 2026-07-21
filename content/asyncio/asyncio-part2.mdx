@@ -1,0 +1,236 @@
+---
+title: "Part 2. 중급: 동시 실행 제어와 공유 데이터"
+---
+
+## asyncio.Semaphore로 동시 실행 수 제한하기
+
+외부 API처럼 동시 연결 수에 제한이 있을 때 `asyncio.Semaphore`로 동시에 실행할 수 있는 코루틴 수를 제어합니다. 지정한 수만큼 동시 진입을 허용하고, 초과하면 세마포어가 해제될 때까지 대기합니다.
+
+```python
+import asyncio
+
+
+sem = asyncio.Semaphore(3)
+
+
+async def call_api(item: int) -> str:
+    async with sem:
+        await asyncio.sleep(0.1)  # API 호출 시뮬레이션
+        return f'item {item} 처리 완료'
+
+
+async def main() -> None:
+    tasks = [call_api(i) for i in range(8)]
+    results = await asyncio.gather(*tasks)
+    for r in results:
+        print(r)
+
+
+asyncio.run(main())
+```
+
+```text
+item 0 처리 완료
+item 1 처리 완료
+item 2 처리 완료
+item 3 처리 완료
+item 4 처리 완료
+item 5 처리 완료
+item 6 처리 완료
+item 7 처리 완료
+```
+
+`asyncio.Semaphore(3)`은 동시에 3개의 코루틴만 `async with` 블록에 진입할 수 있게 합니다. 나머지는 세마포어가 해제될 때까지 대기합니다.
+
+## asyncio.Lock으로 공유 상태 보호하기
+
+여러 코루틴이 같은 변수나 파일을 수정할 때 `asyncio.Lock`으로 한 번에 하나만 접근하게 합니다.
+
+```python
+import asyncio
+
+
+lock = asyncio.Lock()
+counter = 0
+
+
+async def increment(n: int) -> None:
+    global counter
+    for _ in range(n):
+        async with lock:
+            value = counter
+            await asyncio.sleep(0)  # 다른 코루틴에게 제어권 반환
+            counter = value + 1
+
+
+async def main() -> None:
+    await asyncio.gather(increment(100), increment(100))
+    print(counter)
+
+
+asyncio.run(main())
+```
+
+```text
+200
+```
+
+`await asyncio.sleep(0)`은 이벤트 루프에 한 번 제어권을 넘깁니다. 락 없이 실행하면 `counter`가 200보다 작아질 수 있습니다. `asyncio.Lock`은 동일 코루틴에서 중첩 획득하면 교착 상태가 되므로 주의합니다.
+
+## asyncio.Queue로 생산자-소비자 연결하기
+
+데이터를 생산하는 코루틴과 처리하는 코루틴을 분리할 때 `asyncio.Queue`를 사용합니다. 큐가 비어 있으면 `get()`이, 가득 차면 `put()`이 대기합니다.
+
+```python
+import asyncio
+
+
+async def producer(queue: asyncio.Queue[int], items: list[int]) -> None:
+    for item in items:
+        await queue.put(item)
+        await asyncio.sleep(0.05)
+    await queue.put(-1)  # 종료 신호
+
+
+async def consumer(queue: asyncio.Queue[int]) -> list[int]:
+    results = []
+    while True:
+        item = await queue.get()
+        if item == -1:
+            break
+        results.append(item * 2)
+    return results
+
+
+async def main() -> None:
+    queue: asyncio.Queue[int] = asyncio.Queue(maxsize=5)
+    consumer_task = asyncio.create_task(consumer(queue))
+    await producer(queue, [1, 2, 3, 4, 5])
+    results = await consumer_task
+    print(results)
+
+
+asyncio.run(main())
+```
+
+```text
+[2, 4, 6, 8, 10]
+```
+
+`maxsize`를 지정하면 생산자가 소비자보다 너무 앞서 나가는 것을 막습니다. 소비자를 여러 개 만들 때는 `task_done()`과 `join()`으로 처리 완료를 확인합니다.
+
+## asyncio.Event로 신호 보내고 기다리기
+
+여러 코루틴이 특정 조건이 갖춰질 때까지 기다리다 한꺼번에 시작해야 할 때 `asyncio.Event`를 사용합니다.
+
+```python
+import asyncio
+
+
+async def worker(name: str, ready: asyncio.Event) -> None:
+    print(f'{name} 대기 중')
+    await ready.wait()
+    print(f'{name} 작업 시작')
+
+
+async def coordinator(ready: asyncio.Event) -> None:
+    await asyncio.sleep(0.2)
+    print('신호 전송')
+    ready.set()
+
+
+async def main() -> None:
+    ready = asyncio.Event()
+    await asyncio.gather(
+        worker('worker-1', ready),
+        worker('worker-2', ready),
+        coordinator(ready),
+    )
+
+
+asyncio.run(main())
+```
+
+```text
+worker-1 대기 중
+worker-2 대기 중
+신호 전송
+worker-1 작업 시작
+worker-2 작업 시작
+```
+
+`ready.set()`을 호출하면 `ready.wait()`에서 대기 중인 모든 코루틴이 동시에 깨어납니다. `ready.clear()`로 다시 대기 상태로 돌릴 수 있습니다.
+
+## Task.cancel()로 실행 중인 작업 취소하기
+
+더 이상 필요 없어진 태스크를 중단할 때 `Task.cancel()`을 사용합니다. 취소된 태스크는 다음 `await` 지점에서 `CancelledError`가 발생합니다.
+
+```python
+import asyncio
+
+
+async def long_running() -> str:
+    try:
+        await asyncio.sleep(10)
+        return '완료'
+    except asyncio.CancelledError:
+        print('취소 처리 중')
+        raise  # 반드시 다시 발생시켜야 취소가 완료됨
+
+
+async def main() -> None:
+    task = asyncio.create_task(long_running())
+    await asyncio.sleep(0.1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        print('태스크 취소됨')
+
+
+asyncio.run(main())
+```
+
+```text
+취소 처리 중
+태스크 취소됨
+```
+
+`CancelledError`를 잡은 뒤 `raise`하지 않으면 취소가 무시돼 태스크가 정상 종료처럼 처리됩니다. 정리 코드가 필요하면 `finally` 블록을 사용합니다.
+
+## asyncio.timeout()으로 컨텍스트에서 시간 제한하기
+
+여러 단계로 구성된 코드 블록 전체에 제한 시간을 두려면 `asyncio.timeout()` 컨텍스트 매니저를 사용합니다. Python 3.11에서 추가됐으며, 단일 코루틴이 아닌 블록 전체에 적용할 때 `wait_for()`보다 가독성이 좋습니다.
+
+```python
+import asyncio
+
+
+async def step1() -> None:
+    await asyncio.sleep(0.1)
+
+
+async def step2() -> None:
+    await asyncio.sleep(0.3)
+
+
+async def main() -> None:
+    try:
+        async with asyncio.timeout(0.2):
+            await step1()
+            await step2()  # 여기서 시간 초과 발생
+            print('모두 완료')
+    except TimeoutError:
+        print('시간 초과: 블록 전체 취소')
+
+
+asyncio.run(main())
+```
+
+```text
+시간 초과: 블록 전체 취소
+```
+
+`asyncio.timeout()`은 내장 `TimeoutError`를 발생시킵니다. `wait_for()`가 코루틴 하나를 감싸는 것과 달리, `timeout()`은 `async with` 블록 안의 모든 `await`에 시간 제한을 적용합니다.
+
+공식 Python [asyncio 동기화](https://docs.python.org/3.12/library/asyncio-sync.html), [asyncio.timeout](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.timeout)을 기준으로 Python 3.12 예제를 구성했습니다.

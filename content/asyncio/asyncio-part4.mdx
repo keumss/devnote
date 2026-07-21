@@ -1,0 +1,186 @@
+---
+title: "Part 4. 실전: 비동기 로그 파일 처리 파이프라인 만들기"
+---
+
+이번에는 디렉터리 안의 여러 로그 파일을 동시에 읽고, 오류 줄을 필터링해 집계한 결과를 JSON 파일로 저장하는 파이프라인을 만듭니다. `asyncio`와 표준 라이브러리만 사용합니다. 첫 토픽의 모델과 진입점을 준비한 뒤 코드를 순서대로 추가합니다.
+
+## 데이터 모델·경로·asyncio.run() 진입점 준비하기
+
+결과를 담을 dataclass와 파이프라인을 감싸는 진입점을 준비합니다.
+
+```python
+# log_pipeline.py
+import asyncio
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class FileReport:
+    path: str
+    error_count: int
+    errors: list[str] = field(default_factory=list)
+
+
+async def run_pipeline(log_dir: Path, output: Path, timeout: float = 2.0) -> None:
+    ...  # 이후 토픽에서 채웁니다
+
+
+if __name__ == '__main__':
+    asyncio.run(run_pipeline(Path('logs'), Path('report.json')))
+```
+
+파이프라인 전체는 `run_pipeline()`에 담고, `asyncio.run()`이 이벤트 루프를 시작합니다. `timeout`은 파일 하나를 읽는 제한 시간입니다.
+
+## to_thread()와 TaskGroup으로 로그 파일 동시에 읽기
+
+`Path.read_text()`는 블로킹 호출이므로 `to_thread()`로 스레드에서 실행합니다. `wait_for()`로 시간 제한을 걸고, 읽기 오류는 내부에서 처리해 `TaskGroup` 전체가 취소되지 않도록 합니다.
+
+```python
+# log_pipeline.py 에 추가
+async def read_file(path: Path, timeout: float) -> tuple[str, list[str]]:
+    try:
+        text = await asyncio.wait_for(
+            asyncio.to_thread(path.read_text, encoding='utf-8'),
+            timeout=timeout,
+        )
+        return path.name, text.splitlines()
+    except TimeoutError:
+        return path.name, [f'[ERROR] 읽기 시간 초과: {path.name}']
+    except OSError as e:
+        return path.name, [f'[ERROR] 읽기 실패: {e}']
+```
+
+`wait_for(to_thread(...))` 조합으로 블로킹 파일 읽기에 시간 제한을 걸 수 있습니다. 예외를 내부에서 잡아 정상 값으로 반환하면 생산자가 실패해도 다른 파일 결과는 보존됩니다.
+
+## 생산자·소비자로 오류 줄 필터링·집계하기
+
+파일 내용을 `Queue`에 넣는 생산자와 오류 줄만 골라 `FileReport`로 만드는 소비자를 분리합니다.
+
+```python
+# log_pipeline.py 에 추가
+async def _read_and_enqueue(
+    path: Path,
+    queue: asyncio.Queue[tuple[str, list[str]] | None],
+    timeout: float,
+) -> None:
+    result = await read_file(path, timeout)
+    await queue.put(result)
+
+
+async def producer(
+    paths: list[Path],
+    queue: asyncio.Queue[tuple[str, list[str]] | None],
+    timeout: float,
+) -> None:
+    async with asyncio.TaskGroup() as tg:
+        for path in paths:
+            tg.create_task(_read_and_enqueue(path, queue, timeout))
+    await queue.put(None)  # 소비자 종료 신호
+
+
+async def consumer(
+    queue: asyncio.Queue[tuple[str, list[str]] | None],
+) -> list[FileReport]:
+    reports = []
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        name, lines = item
+        errors = [line for line in lines if 'ERROR' in line]
+        reports.append(FileReport(path=name, error_count=len(errors), errors=errors))
+    return reports
+```
+
+`TaskGroup`이 모든 생산자 태스크를 마친 뒤에만 `None` 종료 신호가 전송됩니다. 소비자는 `None`을 받을 때까지 큐에서 항목을 꺼냅니다.
+
+## run_pipeline() 완성과 결과 파일 저장하기
+
+생산자·소비자를 `gather()`로 동시에 실행하고 결과를 JSON으로 저장합니다.
+
+```python
+# run_pipeline()을 완성합니다
+async def run_pipeline(log_dir: Path, output: Path, timeout: float = 2.0) -> None:
+    paths = sorted(log_dir.glob('*.log'))
+    if not paths:
+        print('로그 파일이 없습니다.')
+        return
+
+    queue: asyncio.Queue[tuple[str, list[str]] | None] = asyncio.Queue()
+
+    producer_task = asyncio.create_task(producer(paths, queue, timeout))
+    consumer_task = asyncio.create_task(consumer(queue))
+    await asyncio.gather(producer_task, consumer_task)
+
+    reports: list[FileReport] = consumer_task.result()
+    summary = {
+        'total_files': len(reports),
+        'total_errors': sum(r.error_count for r in reports),
+        'files': [
+            {'path': r.path, 'error_count': r.error_count, 'errors': r.errors}
+            for r in sorted(reports, key=lambda r: r.path)
+        ],
+    }
+    await asyncio.to_thread(
+        output.write_text,
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding='utf-8',
+    )
+    print(f'처리 완료: {len(reports)}개 파일, 오류 {summary["total_errors"]}건')
+    print(f'결과 저장: {output}')
+```
+
+`to_thread()`로 JSON 파일 쓰기도 이벤트 루프를 차단하지 않고 실행합니다. `consumer_task.result()`로 소비자가 수집한 보고서를 가져옵니다.
+
+## 테스트 로그 파일로 파이프라인 실행하고 결과 확인하기
+
+테스트용 로그 파일을 만들고 파이프라인을 실행합니다.
+
+```python
+# make_test_logs.py
+from pathlib import Path
+
+Path('logs').mkdir(exist_ok=True)
+Path('logs/app.log').write_text(
+    'INFO 시작\nERROR 연결 실패\nINFO 재시도\nERROR 타임아웃\n',
+    encoding='utf-8',
+)
+Path('logs/worker.log').write_text(
+    'INFO 작업 시작\nINFO 완료\n',
+    encoding='utf-8',
+)
+Path('logs/db.log').write_text(
+    'ERROR 쿼리 실패\nERROR 연결 끊김\nINFO 복구\n',
+    encoding='utf-8',
+)
+```
+
+```bash
+python make_test_logs.py
+python log_pipeline.py
+```
+
+```text
+처리 완료: 3개 파일, 오류 4건
+결과 저장: report.json
+```
+
+`report.json`의 내용입니다.
+
+```json
+{
+  "total_files": 3,
+  "total_errors": 4,
+  "files": [
+    {"path": "app.log", "error_count": 2, "errors": ["ERROR 연결 실패", "ERROR 타임아웃"]},
+    {"path": "db.log", "error_count": 2, "errors": ["ERROR 쿼리 실패", "ERROR 연결 끊김"]},
+    {"path": "worker.log", "error_count": 0, "errors": []}
+  ]
+}
+```
+
+파이프라인이 확장될 때는 소비자를 여러 개 띄워 집계 속도를 높이거나, `Semaphore`로 동시 파일 읽기 수를 제한할 수 있습니다. 파일 읽기 대신 HTTP 요청을 받는 생산자로 교체하면 구조 변경 없이 외부 API 수집기로 전환됩니다.
+
+공식 Python [asyncio Queue](https://docs.python.org/3.12/library/asyncio-queue.html), [asyncio.to_thread](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.to_thread), [asyncio.TaskGroup](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.TaskGroup)을 기준으로 구성했습니다.

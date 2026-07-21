@@ -12,6 +12,7 @@
     "chainmap",
     "pytest",
     "logging",
-    "itertools"
+    "itertools",
+    "asyncio"
   ]
 }
