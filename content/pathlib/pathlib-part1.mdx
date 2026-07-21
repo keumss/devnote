@@ -1,0 +1,118 @@
+---
+title: "Part 1. 기초: 경로 객체와 파일 정보 다루기"
+---
+
+`pathlib`는 시스템 독립적인 파일 경로를 객체로 다루기 위해 사용하는 Python 표준 라이브러리입니다. 기존의 `os.path`가 경로를 단순 문자열로 다루어 운영체제별 구분자나 문자열 접합 시 실수가 잦았던 점을 개선하여, 파일 시스템 조작을 더 직관적이고 안전한 객체 지향 방식으로 제공합니다.
+
+## Path로 시스템 독립적인 경로 생성하기
+
+서로 다른 운영체제(Windows, Linux/macOS)에서 경로 구분자 차이로 인해 발생할 수 있는 오류를 예방할 때 `Path` 클래스를 사용합니다. `Path` 생성자에 각 경로 요소를 전달하면 현재 실행 중인 운영체제에 맞는 경로 형식으로 자동 변환됩니다.
+
+```python
+from pathlib import Path
+
+# 상대 경로 생성
+component_path = Path('src', 'components')
+print(component_path)
+```
+
+```text
+src/components
+```
+
+문자열 결합 대신 `Path('directory', 'subdirectory')`와 같이 인수 형태로 요소를 구분하여 전달하면 OS에 구애받지 않는 안전한 경로 객체가 생성됩니다.
+
+## / 연산자로 하위 경로 직관적으로 연결하기
+
+경로 하위의 특정 폴더나 파일을 덧붙여 나갈 때 `os.path.join` 대신 나눗셈 연산자(`/`)를 사용하여 경로를 연결합니다. 문자열 접합 과정에서 발생하기 쉬운 누락되거나 이중으로 들어간 슬래시(`/`) 문제를 방지해 줍니다.
+
+```python
+from pathlib import Path
+
+base_dir = Path('/home/user/project')
+config_file = base_dir / 'config' / 'settings.json'
+print(config_file)
+```
+
+```text
+/home/user/project/config/settings.json
+```
+
+`/` 연산자의 왼쪽 피연산자는 반드시 `Path` 객체여야 하며, 오른쪽은 `Path` 객체 혹은 일반 문자열 모두 사용 가능합니다.
+
+## exists로 파일이나 디렉토리 존재 여부 확인하기
+
+파일 시스템에 접근하거나 파일 내용을 읽기 전에 해당 파일 또는 디렉토리가 실제로 존재하는지 검사할 때 `exists()` 메서드를 사용합니다.
+
+```python
+from pathlib import Path
+
+target = Path('nonexistent_file.txt')
+print(target.exists())
+```
+
+```text
+False
+```
+
+`exists()`는 심볼릭 링크가 깨져 있을 경우 링크 대상 파일이 없기 때문에 `False`를 반환합니다.
+
+## is_file과 is_dir로 경로 타입 구분하기
+
+지정된 경로가 일반 파일인지 혹은 디렉토리(폴더)인지 판별하여 조건부 처리를 실행할 때 `is_file()`과 `is_dir()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+current_dir = Path('.')
+print(current_dir.is_dir())
+print(current_dir.is_file())
+```
+
+```text
+True
+```
+
+`is_file()`과 `is_dir()` 메서드는 대상 경로가 파일 시스템에 실제로 존재하고 해당 타입과 일치할 때만 `True`를 리턴합니다. 경로가 존재하지 않으면 모두 `False`입니다.
+
+## name, suffix, parent로 경로 정보 추출하기
+
+경로 전체 문자열에서 파일 이름만 추출하거나, 파일의 확장자만 검사하거나, 바로 위 부모 디렉토리의 경로를 얻을 때 경로 속성 필드를 사용합니다.
+
+```python
+from pathlib import Path
+
+log_path = Path('/var/log/nginx/access.log')
+print(log_path.name)
+print(log_path.suffix)
+print(log_path.parent)
+```
+
+```text
+access.log
+.log
+/var/log/nginx
+```
+
+`suffix`는 파일의 가장 마지막 확장자(예: `.log`)를 온점(`.`)과 함께 반환합니다. `.tar.gz`처럼 다중 확장자인 경우 `suffixes` 속성을 사용해 모든 확장자의 리스트(`['.tar', '.gz']`)를 얻을 수 있습니다.
+
+## stat로 파일 크기와 수정 시간 확인하기
+
+파일의 크기(Byte 단위)나 최종 수정 시각(mtime) 등 시스템 메타데이터 정보를 조회하여 파일을 모니터링하거나 관리할 때 `stat()`을 사용합니다.
+
+```python
+from pathlib import Path
+
+file_path = Path('package.json')
+if file_path.exists():
+    info = file_path.stat()
+    print(f"Size: {info.st_size} bytes")
+```
+
+```text
+Size: 1017 bytes
+```
+
+`stat()`이 반환하는 시간 데이터(`st_mtime`, `st_ctime`)는 에포크 시간 기준의 초 단위를 나타내므로, 필요할 경우 `datetime.fromtimestamp()` 등을 사용해 변환해야 합니다.
+
+공식 Python [pathlib 문서](https://docs.python.org/3.12/library/pathlib.html) 스펙을 바탕으로 작성되었습니다.

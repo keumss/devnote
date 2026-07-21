@@ -1,0 +1,131 @@
+---
+title: "Part 3. 고급: 파일 읽기·쓰기와 시스템 관리"
+---
+
+## read_text와 write_text로 파일 내용 간편하게 다루기
+
+크기가 크지 않은 텍스트 파일의 내용을 한 번에 읽어오거나 새로 쓸 때, `open`을 통한 다중 컨텍스트 선언 없이 간단히 입출력을 수행하고자 할 때 `read_text()`와 `write_text()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+note_file = Path('temp_note.txt')
+note_file.write_text('pathlib study log', encoding='utf-8')
+content = note_file.read_text(encoding='utf-8')
+
+print(content)
+```
+
+```text
+pathlib study log
+```
+
+운영체제 기본 인코딩 방식 차이로 한글 등 다국어 텍스트가 깨지거나 에러가 발생하는 것을 막기 위해 입출력 시 반드시 `encoding='utf-8'` 인수를 함께 기재합니다.
+
+## read_bytes와 write_bytes로 이진 데이터 처리하기
+
+이미지, 압축파일, 혹은 바이트 스트림 데이터처럼 텍스트 인코딩 변환을 필요로 하지 않는 로우(raw) 이진 파일을 쓰거나 불러올 때 `read_bytes()`와 `write_bytes()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+data_file = Path('binary_data.bin')
+data_file.write_bytes(b'\x48\x45\x4c\x4c\x4f')
+binary_content = data_file.read_bytes()
+
+print(binary_content)
+```
+
+```text
+b'HELLO'
+```
+
+바이트 모드로 파일을 읽고 쓰므로 인코딩 지정을 피하며, `bytes` 인스턴스 객체를 매개변수로 주고받아야 합니다.
+
+## touch로 빈 파일 생성하고 시간 갱신하기
+
+내용물이 비어 있는 0바이트 크기의 새 파일을 파일 시스템에 만들거나, 기존 파일의 최종 접근/수정 시각(mtime)을 현재 시각으로 즉시 갱신할 때 `touch()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+heartbeat = Path('app.heartbeat')
+heartbeat.touch()
+
+print(heartbeat.exists())
+```
+
+```text
+True
+```
+
+대상 파일이 이미 존재하는 경우 파일 내부 데이터를 지우지 않으면서 수정 시각만을 최근으로 갱신하여, 실행 신호 플래그 역할을 하도록 사용할 수도 있습니다.
+
+## mkdir로 디렉토리 계층 생성하기
+
+특정 디렉토리를 생성하려 할 때, 필요한 상위 부모 폴더 계층까지 자동으로 함께 만들거나 이미 폴더가 존재하더라도 예외를 발생시키지 않도록 하려면 `mkdir(parents=True, exist_ok=True)`를 사용합니다.
+
+```python
+from pathlib import Path
+
+nested_dir = Path('logs/application/auth')
+nested_dir.mkdir(parents=True, exist_ok=True)
+
+print(nested_dir.exists())
+```
+
+```text
+True
+```
+
+`parents=True` 옵션은 상위 경로 폴더(`logs/application`)가 아직 생성되지 않은 상태일 경우 같이 만들도록 지시하며, `exist_ok=True`를 전달해야 대상 경로가 이미 만들어져 있을 때 발생하는 `FileExistsError` 오류를 무시합니다.
+
+## rename과 replace로 파일 이동 및 덮어쓰기
+
+완성된 처리 결과 파일을 목적 폴더로 이동시키거나 기존에 있던 특정 파일 위치로 덮어쓰기 교체를 시도할 때 `rename()`과 `replace()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+source = Path('temp_note.txt')
+target = Path('saved_note.txt')
+
+if source.exists():
+    source.replace(target)
+    print(target.exists())
+```
+
+```text
+True
+```
+
+`rename()`은 타겟 위치에 이미 동일 파일명이 존재하면 플랫폼에 따라 실패하지만, `replace()`는 타겟 경로에 이미 다른 파일이 존재하더라도 강제로 기존 대상을 지우고 덮어씁니다.
+
+## unlink와 rmdir로 파일 및 빈 폴더 삭제하기
+
+임시 생성했던 필요 없는 작업 파일들을 파일 시스템에서 안전하게 영구 지우거나 비어 있는 디렉토리를 제거할 때 `unlink()`와 `rmdir()`을 사용합니다.
+
+```python
+from pathlib import Path
+
+target_file = Path('saved_note.txt')
+target_dir = Path('logs/application/auth')
+
+if target_file.exists():
+    target_file.unlink()
+    print("File remaining:", target_file.exists())
+
+# 비어 있는 디렉토리 삭제
+if target_dir.exists():
+    target_dir.rmdir()
+    print("Dir remaining:", target_dir.exists())
+```
+
+```text
+File remaining: False
+Dir remaining: False
+```
+
+`unlink()`는 일반 파일이나 심볼릭 링크를 지울 때 쓰며, `rmdir()`는 디렉토리가 완전히 비어 있는 상태일 때만 지울 수 있습니다. 디렉토리 안에 하나라도 파일이 남아 있다면 `OSError`가 납니다.
+
+공식 Python [pathlib 문서](https://docs.python.org/3.12/library/pathlib.html) 스펙을 바탕으로 작성되었습니다.

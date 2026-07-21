@@ -1,0 +1,135 @@
+---
+title: "Part 2. 중급: 경로 조작과 탐색"
+---
+
+## with_name과 with_suffix로 기존 경로 수정하기
+
+상위 디렉토리 경로는 바꾸지 않고 파일 이름만 다른 것으로 변경하거나, 파일 확장자 포맷을 바꿀 때 `with_name()`과 `with_suffix()` 메서드를 사용합니다.
+
+```python
+from pathlib import Path
+
+original = Path('src/data/user.csv')
+backup = original.with_name('user_backup.csv')
+json_version = original.with_suffix('.json')
+
+print(backup)
+print(json_version)
+```
+
+```text
+src/data/user_backup.csv
+src/data/user.json
+```
+
+이들 메서드는 디스크 상의 파일을 직접 수정하거나 변경하지 않으며, 단지 경로 구성 요소가 바뀐 새로운 `Path` 인스턴스를 반환할 뿐입니다.
+
+## iterdir로 디렉토리 직속 항목 나열하기
+
+특정 디렉토리 바로 아래에 존재하는 파일 및 하위 폴더 목록들을 하나씩 불러와 순회 처리할 때 `iterdir()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+dataclass_dir = Path('content/dataclass')
+if dataclass_dir.exists():
+    for item in sorted(dataclass_dir.iterdir()):
+        print(item.name)
+```
+
+```text
+dataclass-part1.mdx
+dataclass-part2.mdx
+dataclass-part3.mdx
+dataclass-part4.mdx
+meta.json
+```
+
+`iterdir()`는 반복자(iterator) 제너레이터를 반환하며, 운영체제나 파일 시스템에 따라 파일 순서가 달라질 수 있으므로 일정 기준의 순서대로 정렬하려면 `sorted()`로 감싸서 사용하는 것이 좋습니다.
+
+## glob로 특정 패턴의 파일 검색하기
+
+와일드카드 패턴(`*`, `?` 등)을 사용하여 현재 디렉토리 내부에서 파일 이름이 특정 확장자나 단어를 포함하는 대상을 필터링할 때 `glob()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+dataclass_dir = Path('content/dataclass')
+mdx_files = list(dataclass_dir.glob('*.mdx'))
+for f in sorted(mdx_files):
+    print(f.name)
+```
+
+```text
+dataclass-part1.mdx
+dataclass-part2.mdx
+dataclass-part3.mdx
+dataclass-part4.mdx
+```
+
+`glob` 메서드에서 일반적인 `*` 패턴은 현재 타겟 폴더 내에 위치한 파일들에만 매칭되며, 하위 서브폴더 깊숙이 들어가는 재귀 검색은 수행하지 않습니다.
+
+## rglob로 하위 디렉토리까지 재귀 검색하기
+
+지정한 타겟 디렉토리 하위의 모든 서브 디렉토리를 깊이 제한 없이 파고들며 특정 패턴에 만족하는 전체 파일 목록을 탐색할 때 `rglob()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+src_dir = Path('src')
+test_files = list(src_dir.rglob('*.test.ts*'))
+for f in sorted(test_files[:3]):  # 처음 3개만 출력
+    print(f.name)
+```
+
+```text
+IndexPage.test.tsx
+Layout.test.tsx
+LearningSectionCard.test.tsx
+```
+
+`rglob('*.ext')`는 내부적으로 `glob('**/*.ext')`와 동일하게 수행되어 하위 계층에 무관하게 모든 대상 확장자를 찾아옵니다.
+
+## cwd와 home으로 현재 및 홈 디렉토리 경로 얻기
+
+프로그램이 현재 동작 중인 프로세스의 작업 디렉토리를 알거나, 시스템 로그인 사용자의 고유 홈 폴더 경로를 OS 무관하게 구하고자 할 때 `cwd()`와 `home()` 클래스 메서드를 사용합니다.
+
+```python
+from pathlib import Path
+
+current_workdir = Path.cwd()
+user_home = Path.home()
+
+print("Is absolute path:", current_workdir.is_absolute())
+print("Home path suffix:", user_home.parts[-1])
+```
+
+```text
+Is absolute path: True
+Home path suffix: seongsu
+``` (실제 환경에 따라 폴더 이름은 변경될 수 있습니다)
+
+`cwd()`와 `home()`은 인스턴스 메서드가 아니라 클래스 메서드이므로, `Path` 클래스로부터 직접 호출하여 경로 객체를 획득합니다.
+
+## resolve로 절대 경로와 심볼릭 링크 해결하기
+
+경로 중간에 위치한 상대 경로 기호(`.`, `..`)를 전부 계산하여 제거하고, 심볼릭 링크가 가리키는 실제 장치 상의 순수 절대 경로를 확인하고자 할 때 `resolve()`를 사용합니다.
+
+```python
+from pathlib import Path
+
+relative_path = Path('content/dataclass/../argparse/meta.json')
+absolute_path = relative_path.resolve()
+
+print(absolute_path.name)
+print(absolute_path.is_absolute())
+```
+
+```text
+meta.json
+True
+```
+
+`resolve()` 메서드는 실제로 존재하는 물리적 절대 경로를 단일화해 주어, 동일한 파일을 가리키는 서로 다른 표현식의 경로 비교에 매우 유용합니다.
+
+공식 Python [pathlib 문서](https://docs.python.org/3.12/library/pathlib.html) 스펙을 바탕으로 작성되었습니다.
