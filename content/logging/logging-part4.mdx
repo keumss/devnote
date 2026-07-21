@@ -1,0 +1,252 @@
+---
+title: "Part 4. 실전: FastAPI 주문 API의 요청 추적 로그 만들기"
+---
+
+이번에는 주문 조회 API에 요청 ID와 한 줄 로그를 연결합니다. 목표는 각 요청의 시작·완료·예상한 404·예상 밖 서버 오류를 같은 ID로 찾고, 응답에도 그 ID를 돌려줘 사용자가 문의한 요청을 추적하는 것입니다. 요청 본문과 인증 헤더는 기록하지 않습니다.
+
+## 주문 데이터와 logging 설정 준비하기
+
+첫 실행에서는 메모리 주문 데이터, API logger, 콘솔 formatter를 준비합니다. 설정 함수는 서버를 시작할 때 한 번만 호출하고, 실제 endpoint 코드는 `order_api` logger에 record만 남깁니다.
+
+```python
+# app.py
+from __future__ import annotations
+
+import logging
+import time
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+
+orders = {
+    'O-100': {'id': 'O-100', 'status': 'paid', 'total': 59_000},
+}
+logger = logging.getLogger('order_api')
+
+
+def find_order(order_id: str) -> dict[str, object] | None:
+    return orders.get(order_id)
+
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, 'request_id'):
+            record.request_id = '-'
+        return True
+
+
+def configure_logging() -> None:
+    handler = logging.StreamHandler()
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(
+        logging.Formatter(
+            (
+                '%(asctime)s %(levelname)s %(name)s '
+                'request_id=%(request_id)s %(message)s'
+            ),
+            datefmt='%H:%M:%S',
+        )
+    )
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+
+app = FastAPI()
+```
+
+`RequestIdFilter`는 Uvicorn처럼 요청 ID를 모르는 logger에도 `-` 기본값을 넣어 formatter 오류를 막습니다. 이 설정 함수는 서버 시작 코드에서만 한 번 호출하며, 테스트처럼 다른 코드가 logging 설정을 관리하는 환경에서는 호출하지 않습니다.
+
+## middleware로 요청 ID와 시작 로그 남기기
+
+요청마다 `X-Request-Id`를 받거나 새 UUID를 만들고 `request.state`에 보관합니다. 시작 로그에는 HTTP 메서드와 경로만 남겨 인증 헤더나 본문이 섞이지 않게 합니다.
+
+```python
+@app.middleware('http')
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get('X-Request-Id') or str(uuid4())
+    request.state.request_id = request_id
+    request.state.started_at = time.perf_counter()
+
+    logger.info(
+        'request started method=%s path=%s',
+        request.method,
+        request.url.path,
+        extra={'request_id': request_id},
+    )
+    response = await call_next(request)
+    response.headers['X-Request-Id'] = request_id
+    return response
+```
+
+클라이언트가 지정한 ID를 그대로 받아들이는 정책은 내부 시스템에서만 사용합니다. 인터넷에 공개된 API라면 길이·문자 집합을 제한하거나 서버가 만든 ID만 사용해 로그 위조와 지나치게 긴 값을 막습니다.
+
+## 완료 상태와 처리 시간을 한 줄로 기록하기
+
+middleware가 다음 처리 결과를 받은 뒤 상태 코드와 경과 시간을 기록합니다. 경과 시간은 사람이 읽기 쉬운 밀리초로 바꾸되, 주문 내용이나 응답 본문은 로그에 넣지 않습니다.
+
+```python
+# add_request_id()에서 response를 받은 뒤, X-Request-Id를 넣기 전에 추가합니다.
+elapsed_ms = (time.perf_counter() - request.state.started_at) * 1_000
+logger.info(
+    'request completed method=%s path=%s status=%d duration_ms=%.1f',
+    request.method,
+    request.url.path,
+    response.status_code,
+    elapsed_ms,
+    extra={'request_id': request.state.request_id},
+)
+```
+
+`response.headers['X-Request-Id']`를 설정하기 전에 이 코드를 넣습니다. 시간은 실행 환경에 따라 달라지므로 테스트에서는 정확한 숫자 대신 `duration_ms=`가 기록됐는지만 확인합니다.
+
+## GET `/orders/{order_id}`에서 정상·404 업무 로그 남기기
+
+주문이 있으면 필요한 공개 데이터만 반환하고, 없으면 404와 함께 `WARNING`을 남깁니다. 404는 사용자가 요청한 리소스가 없다는 예상한 결과이므로 traceback이 필요한 서버 오류로 기록하지 않습니다.
+
+```python
+@app.get('/orders/{order_id}')
+def read_order(order_id: str, request: Request) -> dict[str, object]:
+    order = find_order(order_id)
+    if order is None:
+        logger.warning(
+            'order not found order_id=%s',
+            order_id,
+            extra={'request_id': request.state.request_id},
+        )
+        raise HTTPException(status_code=404, detail='주문을 찾을 수 없습니다.')
+
+    logger.info(
+        'order returned order_id=%s',
+        order_id,
+        extra={'request_id': request.state.request_id},
+    )
+    return order
+```
+
+`order_id`는 업무 데이터를 찾는 데 필요한 식별자지만 고객 이름, 배송지, 결제 정보는 아닙니다. 식별자도 외부에 공개할 수 없는 값이라면 별도의 내부 상관관계 ID를 사용합니다.
+
+## 예상 밖 예외는 traceback과 요청 ID로 남기기
+
+코드 버그나 연결 실패처럼 예상하지 못한 예외는 전역 exception handler에서 traceback과 함께 기록하고, 사용자에게는 일반적인 500 응답만 보냅니다. 원래 예외는 handler 안에서 활성 상태이므로 `logger.exception()`이 traceback을 포함합니다.
+
+```python
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    request_id = getattr(request.state, 'request_id', '-')
+    logger.exception(
+        'unexpected server error',
+        extra={'request_id': request_id},
+    )
+    return JSONResponse(
+        status_code=500,
+        content={'detail': '서버 오류가 발생했습니다.'},
+        headers={'X-Request-Id': request_id},
+    )
+```
+
+오류 응답에는 traceback이나 예외 문자열을 넣지 않습니다. 내부 로그의 traceback과 요청 ID로 조사하고, 사용자에게는 동일한 요청 ID를 전달해 문의와 로그를 연결합니다.
+
+## TestClient와 caplog로 요청 로그 계약 확인하기
+
+성공, 404, 서버 오류가 응답 ID와 알맞은 로그를 남기는지 검증합니다. `raise_server_exceptions=False`는 테스트 클라이언트가 500을 다시 던지지 않고 응답으로 관찰하게 합니다.
+
+```python
+# test_app.py
+import logging
+
+from fastapi.testclient import TestClient
+
+import app as order_app
+
+
+def test_read_order_logs_request_id(caplog) -> None:
+    caplog.set_level(logging.INFO, logger='order_api')
+    client = TestClient(order_app.app)
+
+    response = client.get('/orders/O-100', headers={'X-Request-Id': 'request-100'})
+
+    assert response.status_code == 200
+    assert response.headers['X-Request-Id'] == 'request-100'
+    assert any(
+        record.request_id == 'request-100'
+        and record.getMessage() == 'order returned order_id=O-100'
+        for record in caplog.records
+    )
+    assert any(
+        record.request_id == 'request-100'
+        and 'request completed' in record.getMessage()
+        and 'duration_ms=' in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_missing_order_is_warning(caplog) -> None:
+    caplog.set_level(logging.INFO, logger='order_api')
+    client = TestClient(order_app.app)
+
+    response = client.get('/orders/O-999', headers={'X-Request-Id': 'request-404'})
+
+    assert response.status_code == 404
+    assert response.headers['X-Request-Id'] == 'request-404'
+    assert any(
+        record.levelno == logging.WARNING
+        and record.request_id == 'request-404'
+        and record.getMessage() == 'order not found order_id=O-999'
+        for record in caplog.records
+    )
+
+
+def test_unexpected_error_logs_traceback(caplog, monkeypatch) -> None:
+    caplog.set_level(logging.INFO, logger='order_api')
+
+    def raise_database_error(order_id: str) -> dict[str, object] | None:
+        raise RuntimeError('database is unavailable')
+
+    monkeypatch.setattr(order_app, 'find_order', raise_database_error)
+    client = TestClient(order_app.app, raise_server_exceptions=False)
+
+    response = client.get('/orders/O-100', headers={'X-Request-Id': 'request-500'})
+
+    assert response.status_code == 500
+    assert response.headers['X-Request-Id'] == 'request-500'
+    assert response.json() == {'detail': '서버 오류가 발생했습니다.'}
+    assert any(
+        record.levelno == logging.ERROR
+        and record.request_id == 'request-500'
+        and record.getMessage() == 'unexpected server error'
+        and record.exc_info is not None
+        for record in caplog.records
+    )
+```
+
+`monkeypatch`는 조회 경계를 테스트 중에만 실패시키므로 실제 주문 데이터는 바꾸지 않습니다. 로그의 시간과 UUID 전체 문자열보다 요청 ID, 레벨, 메시지, 상태처럼 안정적인 계약을 검증합니다.
+
+```bash
+python run.py
+```
+
+```text
+10:30:00 INFO order_api request_id=request-100 request started method=GET path=/orders/O-100
+10:30:00 INFO order_api request_id=request-100 order returned order_id=O-100
+10:30:00 INFO order_api request_id=request-100 request completed method=GET path=/orders/O-100 status=200 duration_ms=0.4
+```
+
+`run.py`에서는 서버를 시작하기 전에 `configure_logging()`을 호출합니다.
+
+```python
+# run.py
+import uvicorn
+
+from app import app, configure_logging
+
+
+if __name__ == '__main__':
+    configure_logging()
+    uvicorn.run(app, host='127.0.0.1', port=8000)
+```
+
+공식 Python [logging](https://docs.python.org/3.12/library/logging.html), [logging cookbook](https://docs.python.org/3.12/howto/logging-cookbook.html), FastAPI [middleware](https://fastapi.tiangolo.com/tutorial/middleware/), pytest [로그 캡처](https://docs.pytest.org/en/stable/how-to/logging.html)를 기준으로 구성했습니다.

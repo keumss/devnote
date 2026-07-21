@@ -1,0 +1,163 @@
+---
+title: "Part 2. 중급: 출력 대상과 logger 계층 관리하기"
+---
+
+애플리케이션이 여러 모듈로 커지면 각 모듈은 자기 logger에 사건을 기록하고, 진입점은 handler와 formatter로 출력 정책을 정합니다. 이 노트에서는 로그가 상위 logger로 전달되는 구조를 이용해 콘솔과 파일의 책임을 나눕니다.
+
+## 점으로 구분된 이름으로 logger 계층 만들기
+
+주문 애플리케이션의 서로 다른 모듈을 구분해 기록하려면 패키지 이름을 닮은 logger 이름을 사용합니다. `shop.orders`는 `shop`의 하위 logger라서 상위 설정을 물려받습니다.
+
+```python
+import logging
+
+
+app_logger = logging.getLogger('shop')
+order_logger = logging.getLogger('shop.orders')
+payment_logger = logging.getLogger('shop.payments')
+
+app_logger.setLevel(logging.INFO)
+
+print(order_logger.getEffectiveLevel() == logging.INFO)
+print(payment_logger.getEffectiveLevel() == logging.INFO)
+```
+
+```text
+True
+True
+```
+
+보통은 모듈에서 `logging.getLogger(__name__)`을 쓰고, 애플리케이션 시작 코드에서 가장 높은 패키지 logger 또는 root logger를 설정합니다. 하위 logger마다 같은 handler를 붙일 필요가 없습니다.
+
+## StreamHandler로 INFO와 ERROR의 목적지 나누기
+
+정상 흐름과 실패를 다른 콘솔 스트림으로 보내려면 handler마다 레벨과 stream을 정합니다. handler 레벨은 logger를 통과한 record 중 실제로 내보낼 최소 레벨입니다.
+
+```python
+import logging
+import sys
+
+
+logger = logging.getLogger('shop.cli')
+logger.setLevel(logging.DEBUG)
+logger.propagate = False
+
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setLevel(logging.INFO)
+stdout_handler.addFilter(lambda record: record.levelno < logging.ERROR)
+
+stderr_handler = logging.StreamHandler(sys.stderr)
+stderr_handler.setLevel(logging.ERROR)
+
+logger.handlers = [stdout_handler, stderr_handler]
+
+logger.info('order O-100 created')
+logger.error('payment was declined')
+```
+
+```text
+# stdout
+order O-100 created
+
+# stderr
+payment was declined
+```
+
+`INFO` handler만 두면 `ERROR`도 함께 처리합니다. 정상 로그를 stdout에만 남기려면 위처럼 `ERROR` 미만을 통과시키는 filter를 추가합니다.
+
+## Formatter로 한 줄 로그의 공통 형식 정하기
+
+여러 handler가 같은 정보를 같은 순서로 보여 주게 하려면 `Formatter`를 만들어 연결합니다. 시간, 레벨, logger 이름, 메시지는 장애 상황에서 가장 먼저 찾는 기본 필드입니다.
+
+```python
+import logging
+
+
+formatter = logging.Formatter(
+    '%(asctime)s %(levelname)s %(name)s %(message)s',
+    datefmt='%H:%M:%S',
+)
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+
+logger = logging.getLogger('shop.orders')
+logger.setLevel(logging.INFO)
+logger.handlers = [handler]
+logger.propagate = False
+logger.info('order O-100 shipped')
+```
+
+```text
+10:30:00 INFO shop.orders order O-100 shipped
+```
+
+예제의 시간은 실행 시점에 따라 달라집니다. 운영 환경에서는 시간대와 타임스탬프 형식을 팀의 로그 검색 도구에 맞춰 한 곳에서 통일합니다.
+
+## RotatingFileHandler로 파일 크기 제한하기
+
+한 프로세스의 로그를 파일에도 보관하되 디스크를 계속 차지하지 않게 하려면 `RotatingFileHandler`를 사용합니다. 파일이 지정한 크기를 넘으면 이름을 바꿔 보관하고 새 파일에 계속 기록합니다.
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+
+handler = RotatingFileHandler(
+    'shop.log',
+    maxBytes=1_000_000,
+    backupCount=3,
+    encoding='utf-8',
+)
+handler.setFormatter(logging.Formatter('%(levelname)s %(message)s'))
+
+logger = logging.getLogger('shop')
+logger.setLevel(logging.INFO)
+logger.handlers = [handler]
+logger.propagate = False
+logger.info('daily report completed')
+```
+
+`backupCount=3`이면 현재 파일 외에 이전 파일을 최대 세 개 보관합니다. 컨테이너처럼 파일 시스템이 일시적인 환경에서는 파일 회전 대신 stdout으로 내보내고 플랫폼의 로그 수집 기능에 맡기는 편이 보통 더 적합합니다.
+
+## propagate로 같은 record가 두 번 출력되는 문제 막기
+
+하위 logger와 root logger에 모두 handler를 붙이면 기본적으로 하위 record가 위로 전파되어 같은 로그가 두 번 보일 수 있습니다. handler를 한 계층에만 두거나 하위 logger의 전파를 끕니다.
+
+```python
+import logging
+
+
+root = logging.getLogger()
+root.addHandler(logging.StreamHandler())
+
+orders = logging.getLogger('shop.orders')
+orders.addHandler(logging.StreamHandler())
+orders.propagate = False
+```
+
+이 예제에서는 `shop.orders` handler만 출력합니다. 애플리케이션 전체를 한 정책으로 운영한다면 하위 logger에는 handler를 붙이지 않고 `propagate=True`인 기본값을 유지하는 방식이 더 단순합니다.
+
+## 라이브러리는 구성하지 않고 애플리케이션만 구성하기
+
+재사용할 모듈은 logger로 record를 만들기만 하고, handler·레벨·포맷은 실행하는 애플리케이션이 정합니다. 그래야 테스트, CLI, 웹 서버가 같은 모듈을 각자 필요한 방식으로 관찰할 수 있습니다.
+
+```python
+# shop/orders.py
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def ship(order_id: str) -> None:
+    logger.info('shipping order %s', order_id)
+
+
+# main.py
+import logging
+
+logging.basicConfig(level=logging.INFO)
+```
+
+모듈 가져오기 시점에 `basicConfig()`나 파일 handler를 만들면, 호출자가 이미 정한 설정을 덮어쓰거나 테스트 출력에 불필요한 로그를 남길 수 있습니다. 설정 함수는 `main()`이나 서버 시작 지점에서 한 번만 호출합니다.
+
+공식 Python [logger 계층](https://docs.python.org/3.12/library/logging.html#logger-objects), [handler](https://docs.python.org/3.12/library/logging.html#handler-objects), [logging cookbook](https://docs.python.org/3.12/howto/logging-cookbook.html)을 기준으로 구성했습니다.
