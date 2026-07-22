@@ -15,6 +15,7 @@
     "itertools",
     "asyncio",
     "argparse",
-    "pathlib"
+    "pathlib",
+    "httpx"
   ]
 }

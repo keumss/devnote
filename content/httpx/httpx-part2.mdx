@@ -1,0 +1,194 @@
+---
+title: "Part 2. 중급: 타임아웃·리트라이와 비동기 동시성 처리하기"
+---
+
+기초적인 HTTP 요청 방법을 익혔다면, 이제 실제 네트워크 환경에서 발생할 수 있는 지연, 동시성 제어, 예외 분류 및 인증 자동화 패턴을 다룹니다.
+
+## httpx.Timeout으로 연결·읽기 타임아웃 세부 설정하기
+
+외부 서비스의 무한 대기나 네트워크 응답 지연을 방지하기 위해 `httpx.Timeout` 객체로 타임아웃 규칙을 설정합니다. 기본 전체 타임아웃은 5초입니다.
+
+```python
+import httpx
+
+# 세부 타임아웃 설정 (단위: 초)
+custom_timeout = httpx.Timeout(
+    timeout=10.0,  # 전체 기본 타임아웃
+    connect=2.0,   # TCP 커넥션 수립 타임아웃
+    read=5.0,      # 응답 데이터 읽기 타임아웃
+    write=5.0,     # 요청 데이터 전송 타임아웃
+)
+
+with httpx.Client(timeout=custom_timeout) as client:
+    response = client.get('https://httpbin.org/delay/1')
+    print(response.status_code)
+```
+
+```text
+200
+```
+
+타임아웃 시간을 초과하면 `httpx.TimeoutException`의 세부 하위 클래스(`ConnectTimeout`, `ReadTimeout` 등)가 발생합니다.
+
+## httpx.Limits로 커넥션 풀 크기 제한하기
+
+많은 동시 요청이 발생할 때 서버 리소스 고갈이나 파일 디스크립터 오버플로우를 막으려면 `httpx.Limits`로 최대 커넥션 수와 유효 유지(Keep-Alive) 커넥션 수를 제한합니다.
+
+```python
+import httpx
+
+limits = httpx.Limits(
+    max_connections=100,          # 전체 최대 동시 커넥션 개수
+    max_keepalive_connections=20, # 재사용을 위해 유지할 커넥션 개수
+    keepalive_expiry=30.0,        # Keep-Alive 커넥션 유효 시간(초)
+)
+
+client = httpx.AsyncClient(limits=limits)
+print(client.limits.max_connections, client.limits.max_keepalive_connections)
+```
+
+```text
+100 20
+```
+
+커넥션 풀 한도에 도달한 상태에서 새로운 요청이 오면 기존 커넥션이 반납될 때까지 대기하거나 타임아웃이 발생합니다.
+
+## asyncio.gather와 AsyncClient로 비동기 동시 요청 보내기
+
+여러 외부 API(예: 사용자 정보, 주문 내역, 배송 정보)를 순차적으로 기다리지 않고 동시에 병렬 호출하여 전체 응답 시간을 단축합니다.
+
+```python
+import asyncio
+import httpx
+
+
+async def fetch_item(client: httpx.AsyncClient, item_id: int) -> dict:
+    res = await client.get(f'https://httpbin.org/anything/item/{item_id}')
+    return res.json()
+
+
+async def main():
+    async with httpx.AsyncClient() as client:
+        tasks = [fetch_item(client, i) for i in range(1, 4)]
+        results = await asyncio.gather(*tasks)
+        print([r['url'].split('/')[-1] for r in results])
+
+
+asyncio.run(main())
+```
+
+```text
+['1', '2', '3']
+```
+
+단일 `AsyncClient` 인스턴스를 공유하면서 `asyncio.gather`로 다수의 비동기 요청을 동시에 전송하여 네트워크 I/O 병목을 해결합니다.
+
+## httpx.HTTPStatusError와 RequestError 구분하여 에러 처리하기
+
+네트워크 커넥션 단락이나 DNS 조회 실패 등의 네트워크 수준 에러(`httpx.RequestError`)와 서버의 4xx/5xx 응답 에러(`httpx.HTTPStatusError`)를 명확히 구분하여 처리합니다.
+
+```python
+import httpx
+
+
+def safe_fetch(url: str):
+    try:
+        response = httpx.get(url, timeout=2.0)
+        response.raise_for_status()
+        return response.status_code
+    except httpx.HTTPStatusError as exc:
+        print(f'[HTTP 에러] 상태 코드: {exc.response.status_code}')
+    except httpx.RequestError as exc:
+        print(f'[네트워크 에러] 요청 실패: {type(exc).__name__}')
+
+
+safe_fetch('https://httpbin.org/status/500')
+safe_fetch('https://invalid-domain-name-devnote.org')
+```
+
+```text
+[HTTP 에러] 상태 코드: 500
+[네트워크 에러] 요청 실패: ConnectError
+```
+
+모든 HTTPX 예외는 `httpx.HTTPError`를 상속받으므로 범용 예외 포착 시 최상위 `HTTPError`를 활용할 수도 있습니다.
+
+## httpx.BasicAuth와 커스텀 Auth 클래스로 인증 자동화하기
+
+HTTP Basic Auth나 Bearer 토큰 등 모든 요청 헤더에 반복적으로 필요한 인증 정보를 클라이언트 레벨에서 커스텀 `Auth` 클래스로 자동 처리합니다.
+
+```python
+import httpx
+
+
+class BearerAuth(httpx.Auth):
+
+    def __init__(self, token: str):
+        self.token = token
+
+    def auth_flow(self, request: httpx.Request):
+        request.headers['Authorization'] = f'Bearer {self.token}'
+        yield request
+
+
+with httpx.Client(auth=BearerAuth('my-secret-token')) as client:
+    res = client.get('https://httpbin.org/headers')
+    auth_header = res.json()['headers'].get('Authorization')
+    print(auth_header)
+```
+
+```text
+Bearer my-secret-token
+```
+
+`httpx.Auth`를 상속받아 `auth_flow` 제너레이터를 구현하면 요청이 전송되기 전에 자동으로 헤더나 서명을 주입할 수 있습니다.
+
+## httpx.AsyncByteStream으로 대용량 파일 스트리밍 다운로드하기
+
+대용량 이미지, 비디오, 대규모 압축 파일을 메모리에 한 번에 올리지 않고 조각(chunk) 단위로 스트리밍 받아 수신합니다.
+
+```python
+import asyncio
+import httpx
+
+
+async def stream_download():
+    url = 'https://httpbin.org/stream-bytes/1024'
+    async with httpx.AsyncClient() as client:
+        async with client.stream('GET', url) as response:
+            total_bytes = 0
+            async for chunk in response.aiter_bytes(chunk_size=256):
+                total_bytes += len(chunk)
+            print(f'수신 완료: {total_bytes} bytes')
+
+
+asyncio.run(stream_download())
+```
+
+```text
+수신 완료: 1024 bytes
+```
+
+`client.stream()` 컨텍스트 매니저와 `response.aiter_bytes()`를 함께 사용하면 메모리 사용량을 최소화하면서 파일을 수신할 수 있습니다.
+
+## httpx.URL로 요청 URL 조작 및 검증하기
+
+상대 경로와 절대 경로를 안전하게 결합하거나 URL의 포트, 쿼리 파라미터를 동적으로 검증하고 변경할 때 `httpx.URL` 클래스를 활용합니다.
+
+```python
+import httpx
+
+base_url = httpx.URL('https://api.example.com/v1/')
+full_url = base_url.join('users/profile').copy_with(
+    params={'ref': 'devnote'})
+
+print(full_url.scheme, full_url.host, full_url.path, full_url.query)
+print(str(full_url))
+```
+
+```text
+b'https' b'api.example.com' /v1/users/profile b'ref=devnote'
+https://api.example.com/v1/users/profile?ref=devnote
+```
+
+`httpx.URL` 객체는 파싱 및 결합 시 슬래시(`/`) 중복 여부를 자동으로 처리해 주므로 URL 결합 오류를 예방할 수 있습니다.

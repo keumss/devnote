@@ -1,0 +1,165 @@
+---
+title: "Part 1. 기초: 동기·비동기 HTTP 클라이언트 시작하기"
+---
+
+HTTPX는 Python 3에서 동기(Synchronous) 및 비동기(Asynchronous) HTTP 요청을 모두 지원하는 현대적인 HTTP 클라이언트 라이브러리입니다. 기존 `requests`와 호환되는 API를 제공하면서도 FastAPI, asyncio 등 비동기 백엔드 환경에서 HTTP/1.1과 HTTP/2 기반 비동기 통신을 처리하는 데 최적화되어 있습니다.
+
+## httpx.get으로 첫 HTTP 요청 보내기
+
+외부 Web API나 백엔드 서비스에서 일회성 HTTP GET 요청을 보내 데이터를 가져올 때 `httpx.get()` 함수를 사용합니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install httpx
+```
+
+가장 기본적인 GET 요청 예제입니다.
+
+```python
+import httpx
+
+response = httpx.get('https://httpbin.org/get')
+print(response.status_code)
+```
+
+```text
+200
+```
+
+`httpx.get()`은 `Response` 객체를 반환합니다. `status_code` 속성으로 HTTP 응답 상태를 즉시 확인할 수 있습니다.
+
+## httpx.Client로 동기 커넥션 재사용하기
+
+여러 번의 HTTP 요청을 보낼 때 매번 새로운 TCP 연결을 맺는 비용을 줄이려면 `httpx.Client` 컨텍스트 매니저를 활용해 커넥션 풀(Connection Pool)을 유지합니다.
+
+```python
+import httpx
+
+with httpx.Client(base_url='https://httpbin.org') as client:
+    res1 = client.get('/get')
+    res2 = client.get('/headers')
+    print(res1.status_code, res2.status_code)
+```
+
+```text
+200 200
+```
+
+`base_url`을 설정하면 상대 경로만으로 요청을 보낼 수 있으며, `with` 블록을 벗어날 때 열려 있는 커넥션이 자동으로 닫힙니다.
+
+## httpx.AsyncClient로 비동기 HTTP 요청 처리하기
+
+FastAPI나 asyncio 기반 비동기 애플리케이션에서 이벤트 루프 블로킹 없이 HTTP 요청을 처리하려면 `httpx.AsyncClient`와 `async with` 구문을 사용합니다.
+
+```python
+import asyncio
+import httpx
+
+
+async def fetch_status():
+    async with httpx.AsyncClient(base_url='https://httpbin.org') as client:
+        response = await client.get('/get')
+        print(response.status_code)
+
+
+asyncio.run(fetch_status())
+```
+
+```text
+200
+```
+
+비동기 클라이언트의 모든 요청 메서드(`get`, `post` 등)는 `await` 키워드와 함께 호출해야 합니다.
+
+## params와 headers로 쿼리 스트링과 요청 헤더 전달하기
+
+API 요청 시 검색 조건이나 인증 토큰, User-Agent 등의 메타데이터를 전달해야 할 때 `params` 및 `headers` 인수를 전달합니다.
+
+```python
+import httpx
+
+params = {'page': 1, 'sort': 'desc'}
+headers = {'User-Agent': 'DevNoteApp/1.0', 'Authorization': 'Bearer sample-token'}
+
+response = httpx.get('https://httpbin.org/get', params=params, headers=headers)
+data = response.json()
+
+print(data['args'])
+print(data['headers']['User-Agent'])
+```
+
+```text
+{'page': '1', 'sort': 'desc'}
+DevNoteApp/1.0
+```
+
+`params` 딕셔너리는 URL 쿼리 스트링(`?page=1&sort=desc`)으로 자동 변환되어 전달됩니다.
+
+## json과 data로 JSON 및 Form 데이터 전송하기
+
+서버에 데이터를 생성하거나 수정(POST, PUT, PATCH)할 때 `json` 인수나 `data` 인수를 지정하여 요청 본문(Body)을 전송합니다.
+
+```python
+import httpx
+
+# JSON 바디 전송
+json_payload = {'title': 'HTTPX 시작하기', 'views': 100}
+res_json = httpx.post('https://httpbin.org/post', json=json_payload)
+
+# Form 바디 전송 (application/x-www-form-urlencoded)
+form_payload = {'username': 'seongsu'}
+res_form = httpx.post('https://httpbin.org/post', data=form_payload)
+
+print(res_json.json()['json'])
+print(res_form.json()['form'])
+```
+
+```text
+{'title': 'HTTPX 시작하기', 'views': 100}
+{'username': 'seongsu'}
+```
+
+`json` 인수를 지정하면 `Content-Type: application/json` 헤더가 자동 추가되고 직렬화되어 전송됩니다.
+
+## response.raise_for_status로 HTTP 에러 상태 감지하기
+
+상태 코드가 4xx(클라이언트 에러)나 5xx(서버 에러)일 때 조용히 넘어가서 이후 로직에서 오류가 나는 것을 방지하려면 `raise_for_status()`를 호출합니다.
+
+```python
+import httpx
+
+response = httpx.get('https://httpbin.org/status/404')
+
+try:
+    response.raise_for_status()
+except httpx.HTTPStatusError as exc:
+    print(f'요청 실패: {exc.response.status_code} - {exc.request.url}')
+```
+
+```text
+요청 실패: 404 - https://httpbin.org/status/404
+```
+
+정상적인 2xx 응답에서는 아무런 예외도 발생하지 않고 `Response` 객체 그대로 유지됩니다.
+
+## response.json으로 API 응답 역직렬화하기
+
+HTTP 응답으로 돌아온 JSON 문자열을 Python 딕셔너리나 리스트 객체로 변환할 때 `response.json()`을 사용합니다.
+
+```python
+import httpx
+
+response = httpx.get('https://httpbin.org/json')
+data = response.json()
+
+slideshow_title = data['slideshow']['title']
+print(f'Slideshow Title: {slideshow_title}')
+```
+
+```text
+Slideshow Title: Sample Slide Show
+```
+
+응답 본문이 유효한 JSON 형식이 아니면 `ValueError`(또는 `json.JSONDecodeError`)가 발생합니다.

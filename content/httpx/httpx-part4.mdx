@@ -1,0 +1,189 @@
+---
+title: "Part 4. 실전: FastAPI 백엔드에서 외부 API 집계 마이크로서비스 만들기"
+---
+
+이 노트에서는 FastAPI 웹 백엔드 서비스에서 외부 날씨(Weather) API와 환율(Currency) API를 비동기로 병렬 호출하고, 장애 발생 시 Fallback 처리를 포함해 결과를 집계(Aggregation)하여 돌려주는 완전한 마이크로서비스를 완성합니다.
+
+## FastAPI Lifespan에서 글로벌 AsyncClient 생명주기 관리하기
+
+FastAPI 애플리케이션 시작(Startup) 시 단일 `httpx.AsyncClient` 인스턴스를 커넥션 풀과 함께 생성하고, 서버 종료(Shutdown) 시 커넥션을 닫도록 `lifespan` 컨텍스트 매니저를 설정합니다.
+
+`main.py` 파일의 기초 준비 코드입니다.
+
+```python
+from contextlib import asynccontextmanager
+from typing import Any
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+import httpx
+
+
+class State:
+    httpx_client: httpx.AsyncClient | None = None
+
+
+state = State()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 커넥션 풀 한도 및 기본 타임아웃 설정
+    limits = httpx.Limits(max_connections=50, max_keepalive_connections=10)
+    timeout = httpx.Timeout(5.0)
+
+    state.httpx_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+    yield
+    if state.httpx_client:
+        await state.httpx_client.aclose()
+
+
+app = FastAPI(title="Dashboard Aggregator Service", lifespan=lifespan)
+```
+
+매 요청마다 `AsyncClient`를 새로 만들지 않고, 애플리케이션 전역에서 하나의 `AsyncClient` 커넥션 풀을 공유하여 소켓 재사용률과 통신 성능을 극대화합니다.
+
+## 외부 API Pydantic 스키마 및 서비스 클라이언트 클래스 구현하기
+
+외부 응답 데이터를 타입 안전하게 검증하는 Pydantic 모델과 `AsyncClient`를 주입받아 외부 통신을 전담하는 `AggregatorService` 클래스를 정의합니다.
+
+앞선 `main.py` 코드 아래에 다음 스키마와 서비스를 연결하여 작성합니다.
+
+```python
+class WeatherResponse(BaseModel):
+    city: str
+    temperature: float
+    condition: str
+
+
+class CurrencyResponse(BaseModel):
+    base: str
+    rate_usd_to_krw: float
+
+
+class DashboardResponse(BaseModel):
+    weather: WeatherResponse
+    currency: CurrencyResponse
+
+
+class AggregatorService:
+
+    def __init__(self, client: httpx.AsyncClient):
+        self.client = client
+
+    async def fetch_weather(self, city: str) -> WeatherResponse:
+        url = f'https://api.external.com/weather/{city}'
+        res = await self.client.get(url)
+        res.raise_for_status()
+        data = res.json()
+        return WeatherResponse(**data)
+
+    async def fetch_currency(self) -> CurrencyResponse:
+        url = 'https://api.external.com/currency/latest'
+        res = await self.client.get(url)
+        res.raise_for_status()
+        data = res.json()
+        return CurrencyResponse(**data)
+```
+
+외부 API 호출의 세부 URL이나 HTTPX 제어 로직을 서비스 클래스 내부에 캡슐화하여 FastAPI 엔드포인트 계층과 분리합니다.
+
+## asyncio.gather 기반 멀티 API 동시 호출 및 데이터 집계 엔드포인트 구현하기
+
+두 외부 API(날씨, 환율)를 `asyncio.gather`로 동시에 병렬 호출하고 결과를 묶어서 반환하는 `/api/dashboard/{city}` 엔드포인트를 추가합니다.
+
+앞선 `main.py`에 다음 API 라우트를 추가합니다.
+
+```python
+import asyncio
+
+
+@app.get('/api/dashboard/{city}', response_model=DashboardResponse)
+async def get_dashboard(city: str):
+    if not state.httpx_client:
+        raise HTTPException(status_code=500, detail='HTTP 클라이언트 미초기화')
+
+    service = AggregatorService(state.httpx_client)
+
+    # 두 외부 API를 동시에 동시 호출
+    weather_task = service.fetch_weather(city)
+    currency_task = service.fetch_currency()
+
+    weather_res, currency_res = await asyncio.gather(weather_task,
+                                                     currency_task)
+
+    return DashboardResponse(weather=weather_res, currency=currency_res)
+```
+
+`asyncio.gather`를 통해 날씨 API 대기시간(예: 1초)과 환율 API 대기시간(예: 1초)이 더해지지 않고, 전체 응답 시간이 약 1초 내외로 유지됩니다.
+
+## 외부 API 타임아웃 및 장애 발생 시 Fallback 처리 패턴 작성하기
+
+특정 외부 API에 문제가 발생하거나 타임아웃이 일어나더라도 전체 대시보드 조회가 실패하지 않도록 기본값(Fallback)을 적용하도록 서비스 메서드를 보완합니다.
+
+`AggregatorService` 클래스의 `fetch_weather` 및 `fetch_currency` 메서드에 안전한 에러 핸들링을 추가합니다.
+
+```python
+class SafeAggregatorService(AggregatorService):
+
+    async def fetch_weather_safe(self, city: str) -> WeatherResponse:
+        try:
+            return await self.fetch_weather(city)
+        except (httpx.HTTPError, Exception):
+            # 외부 날씨 API 장애 시 기본값(Fallback) 반환
+            return WeatherResponse(city=city,
+                                   temperature=20.0,
+                                   condition='Unknown')
+
+    async def fetch_currency_safe(self) -> CurrencyResponse:
+        try:
+            return await self.fetch_currency()
+        except (httpx.HTTPError, Exception):
+            # 외부 환율 API 장애 시 기본값 반환
+            return CurrencyResponse(base='USD', rate_usd_to_krw=1300.0)
+```
+
+외부 의존성 장애 발생 시 500 에러를 바로 던지는 대신, 캐시된 데이터나 안전한 기본값을 반환함으로써 서비스 전체의 가용성(Availability)을 높입니다.
+
+## respx와 ASGITransport를 활용해 통합 API 테스트 완성하기
+
+서버를 직접 띄우지 않고 `respx`로 외부 API를 가로채 모킹(Mocking)한 뒤, `ASGITransport`로 FastAPI 앱의 대시보드 집계 엔드포인트를 검증하는 테스트 코드를 작성합니다.
+
+`test_main.py`에 작성하는 통합 테스트 코드입니다.
+
+```python
+import pytest
+import httpx
+import respx
+from main import app
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_dashboard_endpoint_success():
+    # 1. 외부 API 가로채기 정의
+    respx.get("https://api.external.com/weather/seoul").mock(
+        return_value=httpx.Response(
+            200, json={"city": "seoul", "temperature": 24.5, "condition": "Sunny"}
+        )
+    )
+    respx.get("https://api.external.com/currency/latest").mock(
+        return_value=httpx.Response(
+            200, json={"base": "USD", "rate_usd_to_krw": 1350.0}
+        )
+    )
+
+    # 2. FastAPI ASGITransport 인메모리 테스트 클라이언트 생성
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        # lifespan 실행을 위한 요청 전송
+        response = await client.get("/api/dashboard/seoul")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["weather"]["city"] == "seoul"
+        assert data["weather"]["temperature"] == 24.5
+        assert data["currency"]["rate_usd_to_krw"] == 1350.0
+```
+
+`respx`와 `ASGITransport`의 조합으로 실제 네트워크 연결 없이 완벽히 격리된 통합 테스트 환경을 구축하고 백엔드 API를 검증합니다.
