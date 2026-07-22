@@ -48,7 +48,7 @@ export default function IndexPage() {
                 <BookOpen className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.5} />
                 DEVNOTE LIBRARY
               </p>
-              <h1 id="index-page-title" className="text-base font-bold tracking-tight text-slate-950 dark:text-dark-slate-200 sm:text-xl">
+              <h1 id="index-page-title" className="text-lg font-bold tracking-tight text-slate-950 dark:text-dark-slate-200 sm:text-xl">
                 개발 학습 노트
               </h1>
               <p className="mt-0.5 truncate text-[11px] text-slate-600 dark:text-dark-slate-400 sm:text-sm">
@@ -124,7 +124,7 @@ export default function IndexPage() {
                   <Layers className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.5} />
                   EXPLORE BY TOPIC
                 </p>
-                <h2 id="section-list-title" className="mt-0.5 text-base font-bold tracking-tight text-slate-900 dark:text-dark-slate-200 sm:mt-1 sm:text-xl">
+                <h2 id="section-list-title" className="mt-0.5 text-lg font-bold tracking-tight text-slate-900 dark:text-dark-slate-200 sm:mt-1 sm:text-xl">
                   학습 노트 둘러보기
                 </h2>
               </div>
