@@ -120,8 +120,11 @@ export default function IndexPage() {
               className="mb-3.5 flex items-end justify-between gap-4 sm:mb-4"
             >
               <div>
-                <p className="text-xs font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-400">EXPLORE BY TOPIC</p>
-                <h2 id="section-list-title" className="mt-1 text-xl font-bold tracking-tight text-slate-900 dark:text-dark-slate-200 sm:text-2xl">
+                <p className="mb-0.5 flex items-center gap-1 text-[9px] font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-400 sm:mb-1 sm:gap-1.5 sm:text-[10px]">
+                  <Layers className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.5} />
+                  EXPLORE BY TOPIC
+                </p>
+                <h2 id="section-list-title" className="mt-0.5 text-base font-bold tracking-tight text-slate-900 dark:text-dark-slate-200 sm:mt-1 sm:text-xl">
                   학습 노트 둘러보기
                 </h2>
               </div>
