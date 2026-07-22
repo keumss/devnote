@@ -34,40 +34,40 @@ export default function IndexPage() {
 
   return (
     <Layout>
-      <main className="flex-1 bg-slate-50 px-4 py-8 dark:bg-surface-canvas sm:px-6 sm:py-12 lg:px-8">
+      <main className="flex-1 bg-slate-50 px-3 py-3.5 dark:bg-surface-canvas sm:px-6 sm:py-8 lg:px-8">
         <div className="mx-auto max-w-7xl">
           <motion.section
             initial={{ opacity: 0, y: -16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
-            className="mb-7 flex flex-col gap-4 border-b border-slate-200 pb-6 dark:border-dark-slate-800 sm:mb-8 sm:flex-row sm:items-end sm:justify-between sm:gap-6 sm:pb-7"
+            className="mb-4 flex flex-row items-center justify-between gap-2 border-b border-slate-200 pb-3.5 dark:border-dark-slate-800 sm:mb-5 sm:gap-4 sm:pb-4"
             aria-labelledby="index-page-title"
           >
-            <div>
-              <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-400">
-                <BookOpen className="h-3.5 w-3.5" strokeWidth={2.5} />
+            <div className="min-w-0 flex-1">
+              <p className="mb-0.5 flex items-center gap-1 text-[9px] font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-400 sm:mb-1 sm:gap-1.5 sm:text-[10px]">
+                <BookOpen className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.5} />
                 DEVNOTE LIBRARY
               </p>
-              <h1 id="index-page-title" className="text-xl font-bold tracking-tight text-slate-950 dark:text-dark-slate-200 sm:text-2xl">
+              <h1 id="index-page-title" className="text-base font-bold tracking-tight text-slate-950 dark:text-dark-slate-200 sm:text-xl">
                 개발 학습 노트
               </h1>
-              <p className="mt-1.5 text-sm text-slate-600 dark:text-dark-slate-400">
+              <p className="mt-0.5 truncate text-[11px] text-slate-600 dark:text-dark-slate-400 sm:text-sm">
                 기술별로 정리한 노트를 탐색하세요.
               </p>
             </div>
 
-            <dl className="flex items-center divide-x divide-slate-200 rounded-xl border border-slate-200 bg-white/60 text-sm dark:divide-dark-slate-800 dark:border-dark-slate-800 dark:bg-dark-slate-900/40">
-              <div className="flex flex-1 items-center gap-2 px-3 py-2.5 sm:px-4">
-                <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
+            <dl className="flex shrink-0 items-center divide-x divide-slate-200 rounded-lg border border-slate-200 bg-white/60 text-xs dark:divide-dark-slate-800 dark:border-dark-slate-800 dark:bg-dark-slate-900/40 sm:rounded-xl sm:text-sm">
+              <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2 sm:px-3.5">
+                <Layers className="h-3.5 w-3.5 shrink-0 text-indigo-500 sm:h-4 sm:w-4" />
                 <div>
-                  <dt className="text-[10px] font-semibold text-slate-500 dark:text-dark-slate-400">학습 섹션</dt>
+                  <dt className="text-[9px] font-semibold text-slate-500 dark:text-dark-slate-400 sm:text-[10px]">학습 섹션</dt>
                   <dd className="font-bold text-slate-900 dark:text-dark-slate-200">{navData.length}개</dd>
                 </div>
               </div>
-              <div className="flex flex-1 items-center gap-2 px-3 py-2.5 sm:px-4">
-                <FileText className="h-4 w-4 shrink-0 text-indigo-500" />
+              <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2 sm:px-3.5">
+                <FileText className="h-3.5 w-3.5 shrink-0 text-indigo-500 sm:h-4 sm:w-4" />
                 <div>
-                  <dt className="text-[10px] font-semibold text-slate-500 dark:text-dark-slate-400">학습 노트</dt>
+                  <dt className="text-[9px] font-semibold text-slate-500 dark:text-dark-slate-400 sm:text-[10px]">학습 노트</dt>
                   <dd className="font-bold text-slate-900 dark:text-dark-slate-200">{totalNotes}개</dd>
                 </div>
               </div>
@@ -79,22 +79,22 @@ export default function IndexPage() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.05 }}
-              className="mb-8 overflow-hidden rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-5 shadow-sm dark:border-dark-indigo-500/20 dark:from-dark-indigo-500/10 dark:to-dark-slate-900/60 sm:mb-10 sm:flex sm:items-center sm:justify-between sm:gap-8 sm:p-6"
+              className="mb-4 overflow-hidden rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-3.5 shadow-sm dark:border-dark-indigo-500/20 dark:from-dark-indigo-500/10 dark:to-dark-slate-900/60 sm:mb-5 sm:flex sm:items-center sm:justify-between sm:gap-6 sm:p-4"
               aria-labelledby="continue-learning-title"
             >
               <div>
-                <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-300">
+                <p className="mb-1 flex items-center gap-1.5 text-[10px] font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-300">
                   <Clock3 className="h-3.5 w-3.5" strokeWidth={2.5} />
                   CONTINUE LEARNING
                 </p>
-                <h2 id="continue-learning-title" className="text-lg font-bold tracking-tight text-slate-900 dark:text-dark-slate-200 sm:text-xl">
+                <h2 id="continue-learning-title" className="text-base font-bold tracking-tight text-slate-900 dark:text-dark-slate-200 sm:text-lg">
                   이어서 학습하기
                 </h2>
-                <p className="mt-2 text-sm font-medium text-slate-700 dark:text-dark-slate-200">
+                <p className="mt-1 text-xs font-medium text-slate-700 dark:text-dark-slate-200 sm:text-sm">
                   {continueLearning.section.title} · {continueLearning.note.title}
                 </p>
                 {continueLearning.topic && (
-                  <p className="mt-1 text-sm text-slate-500 dark:text-dark-slate-400">
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-dark-slate-400">
                     마지막으로 읽은 토픽: {continueLearning.topic.title}
                   </p>
                 )}
@@ -104,10 +104,10 @@ export default function IndexPage() {
                   pathname: getNotePath(continueLearning.section.id, continueLearning.note.id),
                   hash: continueLearning.topic ? getTopicHash(continueLearning.topic.id) : '',
                 }}
-                className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-bold text-indigo-700 transition-[color] hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-dark-indigo-400/20 dark:bg-dark-indigo-500/15 dark:text-dark-indigo-200 dark:hover:bg-dark-indigo-500/25 dark:focus-visible:ring-dark-indigo-400 dark:focus-visible:ring-offset-dark-slate-950 sm:mt-0 sm:shrink-0"
+                className="mt-3 inline-flex min-h-[38px] items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-xs font-bold text-indigo-700 transition-[color] hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-dark-indigo-400/20 dark:bg-dark-indigo-500/15 dark:text-dark-indigo-200 dark:hover:bg-dark-indigo-500/25 dark:focus-visible:ring-dark-indigo-400 dark:focus-visible:ring-offset-dark-slate-950 sm:mt-0 sm:shrink-0 sm:text-sm"
               >
                 이어서 읽기
-                <Play className="h-4 w-4" fill="currentColor" />
+                <Play className="h-3.5 w-3.5" fill="currentColor" />
               </Link>
             </motion.section>
           )}
@@ -117,7 +117,7 @@ export default function IndexPage() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.1 }}
-              className="mb-5 flex items-end justify-between gap-4 sm:mb-6"
+              className="mb-3.5 flex items-end justify-between gap-4 sm:mb-4"
             >
               <div>
                 <p className="text-xs font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-400">EXPLORE BY TOPIC</p>
@@ -130,7 +130,7 @@ export default function IndexPage() {
               </p>
             </motion.div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 lg:gap-5">
+            <div className="flex flex-col gap-4 sm:gap-5">
               {navData.map((section, idx) => (
                 <LearningSectionCard
                   key={section.id}

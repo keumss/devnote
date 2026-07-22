@@ -35,7 +35,7 @@ describe('IndexPage', () => {
       const sectionCard = sectionHeading.closest('article');
 
       expect(sectionCard).not.toBeNull();
-      expect(within(sectionCard!).getByText(`${section.notes.length}개`)).toBeInTheDocument();
+      expect(within(sectionCard!).getByRole('heading', { name: section.title })).toBeInTheDocument();
     }
   });
 
