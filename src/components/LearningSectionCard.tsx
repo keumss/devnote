@@ -21,12 +21,9 @@ export default function LearningSectionCard({ section, index }: LearningSectionC
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-[10px] font-extrabold text-indigo-600 dark:bg-dark-indigo-500/15 dark:text-dark-indigo-300 sm:h-8 sm:w-8 sm:rounded-xl sm:text-[11px]">
           {String(index + 1).padStart(2, '0')}
         </span>
-        <div>
-          <p className="text-[9px] font-semibold tracking-wide text-slate-500 dark:text-dark-slate-400 sm:text-[10px]">학습 섹션</p>
-          <h3 className="text-xs font-bold leading-tight text-slate-900 dark:text-dark-slate-200 sm:text-base">
-            {section.title}
-          </h3>
-        </div>
+        <h3 className="text-sm font-bold leading-tight text-slate-900 dark:text-dark-slate-200 sm:text-lg">
+          {section.title}
+        </h3>
       </div>
 
       <div className="grid flex-1 grid-cols-2 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 sm:gap-2">
