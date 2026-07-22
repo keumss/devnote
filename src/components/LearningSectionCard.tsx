@@ -21,7 +21,7 @@ export default function LearningSectionCard({ section, index }: LearningSectionC
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-[10px] font-extrabold text-indigo-600 dark:bg-dark-indigo-500/15 dark:text-dark-indigo-300 sm:h-8 sm:w-8 sm:rounded-xl sm:text-[11px]">
           {String(index + 1).padStart(2, '0')}
         </span>
-        <h3 className="text-sm font-bold leading-tight text-slate-900 dark:text-dark-slate-200 sm:text-lg">
+        <h3 className="text-sm font-bold leading-tight text-slate-900 dark:text-dark-slate-200 sm:text-base">
           {section.title}
         </h3>
       </div>
@@ -32,15 +32,15 @@ export default function LearningSectionCard({ section, index }: LearningSectionC
             key={note.id}
             to={getNotePath(section.id, note.id)}
             aria-label={`${note.navigationLabel ? `${note.navigationLabel} ` : ''}${note.displayTitle}`}
-            className="group flex min-h-[38px] items-center justify-between gap-1.5 rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-1.5 outline-none transition-[color] hover:border-indigo-200 hover:bg-indigo-50 focus-visible:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 dark:border-dark-slate-800/60 dark:bg-surface-canvas/60 dark:hover:border-dark-indigo-500/30 dark:hover:bg-dark-indigo-500/10 dark:focus-visible:bg-dark-indigo-500/10 sm:min-h-[44px] sm:gap-2 sm:px-3 sm:py-2"
+            className="group flex min-h-[40px] items-center justify-between gap-1.5 rounded-lg border border-slate-100 bg-slate-50/60 px-2.5 py-1.5 outline-none transition-[color] hover:border-indigo-200 hover:bg-indigo-50 focus-visible:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 dark:border-dark-slate-800/60 dark:bg-surface-canvas/60 dark:hover:border-dark-indigo-500/30 dark:hover:bg-dark-indigo-500/10 dark:focus-visible:bg-dark-indigo-500/10 sm:min-h-[44px] sm:gap-2 sm:px-3 sm:py-2"
           >
             <span className="min-w-0 flex-1">
               {note.navigationLabel && (
-                <span className="block text-[8px] font-bold tracking-wide text-indigo-500 dark:text-dark-indigo-400 sm:text-[9px]">
+                <span className="block text-[9px] font-bold tracking-wide text-indigo-500 dark:text-dark-indigo-400 sm:text-[10px]">
                   {note.navigationLabel}
                 </span>
               )}
-              <span className="block text-[11px] font-semibold leading-tight text-slate-700 transition-colors group-hover:text-indigo-700 group-focus-visible:text-indigo-700 dark:text-dark-slate-300 dark:group-hover:text-dark-indigo-300 dark:group-focus-visible:text-dark-indigo-300 sm:text-xs">
+              <span className="block text-[13px] font-semibold leading-snug text-slate-700 transition-colors group-hover:text-indigo-700 group-focus-visible:text-indigo-700 dark:text-dark-slate-300 dark:group-hover:text-dark-indigo-300 dark:group-focus-visible:text-dark-indigo-300 sm:text-sm">
                 {note.displayTitle}
               </span>
             </span>
