@@ -6,7 +6,7 @@ import TopicNav from './TopicNav';
 import Layout from './Layout';
 import { navData } from '../content';
 import { mdxComponents } from './MdxContent';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, ListTree } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getNotePath, getHashTarget, getTopicHash, resolveNote } from '../navigation';
 import { saveContinueLearningItem } from '../hooks/useContinueLearning';
@@ -104,13 +104,13 @@ export default function NotePage() {
 
   return (
     <Layout activeSectionId={activeSectionId} activeNoteId={activeNoteId}>
-      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-sm bg-white dark:bg-surface-canvas">
+      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col lg:flex-row shadow-xs bg-white dark:bg-surface-canvas">
         
         {/* Desktop Left Sidebar Navigation */}
         <aside className="hidden lg:block w-72 shrink-0 border-r border-slate-200 dark:border-dark-slate-800 bg-white/50 dark:bg-dark-slate-950/50 min-h-[calc(100vh-4rem)]">
           <div className="sticky top-16 pt-8 px-6 pb-12 max-h-[calc(100vh-4rem)] overflow-y-auto custom-scrollbar">
             <div className="flex items-center gap-2 mb-6 px-1 text-slate-800 dark:text-dark-slate-200 font-semibold text-sm uppercase tracking-wider">
-              <BookOpen size={16} />
+              <BookOpen size={16} className="text-indigo-500" />
               <span>학습 노트</span>
             </div>
             <SidebarNav activeSectionId={activeSectionId} activeNoteId={activeNoteId} />
@@ -129,7 +129,7 @@ export default function NotePage() {
               className="max-w-3xl mx-auto"
             >
               <div className="mb-10 block">
-                <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-dark-slate-800/80 text-slate-600 dark:text-dark-slate-300 text-xs font-semibold uppercase tracking-widest mb-4 border border-slate-200 dark:border-dark-slate-700/50 shadow-sm">
+                <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-dark-slate-800/80 text-slate-600 dark:text-dark-slate-300 text-xs font-semibold uppercase tracking-widest mb-4 border border-slate-200 dark:border-dark-slate-700/50 shadow-xs">
                   {activeSection.title}
                 </span>
                 <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-dark-slate-200 tracking-tight leading-tight">
@@ -137,11 +137,15 @@ export default function NotePage() {
                 </h2>
               </div>
 
-              <details className="mb-8 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 dark:border-dark-slate-800 dark:bg-dark-slate-900/40 xl:hidden">
-                <summary className="cursor-pointer text-sm font-semibold text-slate-700 marker:text-indigo-500 dark:text-dark-slate-200">
-                  이 노트의 목차 · {activeNote.topics.length}개 토픽
+              <details className="mb-8 rounded-xl border border-slate-200/90 bg-slate-50/80 px-4 py-3 shadow-xs dark:border-dark-slate-800/90 dark:bg-dark-slate-900/50 xl:hidden">
+                <summary className="flex cursor-pointer items-center justify-between text-sm font-semibold text-slate-700 dark:text-dark-slate-200">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <ListTree size={15} className="text-indigo-500 shrink-0" />
+                    <span>이 노트의 목차</span>
+                    <span className="text-xs font-normal text-slate-400 dark:text-dark-slate-500">· {activeNote.topics.length}개 토픽</span>
+                  </div>
                 </summary>
-                <div className="mt-3 border-t border-slate-200 pt-3 dark:border-dark-slate-800">
+                <div className="mt-3 border-t border-slate-200/80 pt-3 dark:border-dark-slate-800/80">
                   <TopicNav
                     topics={activeNote.topics}
                     onSelectTopic={handleSelectTopic}
@@ -180,7 +184,13 @@ export default function NotePage() {
 
         <aside className="hidden xl:block w-64 shrink-0 border-l border-slate-200 bg-white/50 dark:border-dark-slate-800 dark:bg-dark-slate-950/50">
           <div className="sticky top-16 max-h-[calc(100vh-4rem)] overflow-y-auto px-5 py-8 custom-scrollbar">
-            <p className="mb-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-dark-slate-400">이 노트의 목차</p>
+            <div className="flex items-center gap-2 mb-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-dark-slate-400">
+              <ListTree size={15} className="text-indigo-500" />
+              <span>이 노트의 목차</span>
+              <span className="ml-auto rounded-full bg-slate-100 dark:bg-dark-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-dark-slate-300">
+                {activeNote.topics.length}개
+              </span>
+            </div>
             <TopicNav
               topics={activeNote.topics}
               onSelectTopic={handleSelectTopic}

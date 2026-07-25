@@ -23,7 +23,13 @@ function NavNoteItem({
   onNavigate?: () => void;
 }) {
   return (
-    <li>
+    <li className="relative">
+      {isActive && (
+        <span
+          className="absolute -left-[11px] top-1/2 -translate-y-1/2 w-1 h-5 bg-indigo-600 dark:bg-dark-indigo-400 rounded-r-full z-20 shadow-xs"
+          aria-hidden="true"
+        />
+      )}
       <Link
         to={getNotePath(sectionId, note.id)}
         onClick={onNavigate}
@@ -37,7 +43,7 @@ function NavNoteItem({
       >
         {isActive && (
           <div
-            className="absolute inset-0 bg-indigo-50 dark:bg-dark-indigo-500/10 rounded-lg border border-indigo-100 dark:border-dark-indigo-500/20 shadow-sm"
+            className="absolute inset-0 bg-indigo-50 dark:bg-dark-indigo-500/10 rounded-lg border border-indigo-100 dark:border-dark-indigo-500/20 shadow-xs"
           />
         )}
         <span className="relative z-10 min-w-0">
@@ -76,14 +82,19 @@ function NavSectionItem({
       <button
         type="button"
         onClick={onToggle}
-        className={`w-full flex items-center justify-between text-left text-xs font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded transition-colors ${
+        className={`group w-full flex items-center justify-between text-left text-xs font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded transition-colors ${
           isExpanded 
             ? 'text-indigo-600 dark:text-dark-indigo-400'
             : 'text-slate-400 dark:text-dark-slate-500 hover:text-slate-700 dark:hover:text-dark-slate-300'
         }`}
       >
         <span>{section.title}</span>
-        <ChevronDown size={14} className={`transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+        <div className="flex items-center gap-1.5">
+          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-slate-100 text-slate-500 dark:bg-dark-slate-800 dark:text-dark-slate-400">
+            {section.notes.length}
+          </span>
+          <ChevronDown size={14} className={`transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+        </div>
       </button>
       <AnimatePresence initial={false}>
         {isExpanded && (
@@ -92,19 +103,21 @@ function NavSectionItem({
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.25, ease: 'easeInOut' }}
-            className="overflow-hidden"
+            className="overflow-hidden pl-2.5"
           >
-            <ul className="space-y-1 pb-2">
-              {section.notes.map((note) => (
-                <NavNoteItem
-                  key={note.id}
-                  sectionId={section.id}
-                  note={note}
-                  isActive={activeNoteId === note.id}
-                  onNavigate={onNavigate}
-                />
-              ))}
-            </ul>
+            <div className="ml-1 pl-2.5 border-l border-slate-200/80 dark:border-dark-slate-800/80">
+              <ul className="space-y-1 pb-2">
+                {section.notes.map((note) => (
+                  <NavNoteItem
+                    key={note.id}
+                    sectionId={section.id}
+                    note={note}
+                    isActive={activeNoteId === note.id}
+                    onNavigate={onNavigate}
+                  />
+                ))}
+              </ul>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -138,3 +151,4 @@ export default function SidebarNav({ activeSectionId, activeNoteId, onNavigate }
     </nav>
   );
 }
+
