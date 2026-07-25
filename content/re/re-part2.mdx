@@ -1,0 +1,164 @@
+---
+title: Part 2. 메타문자와 그룹화 및 패턴 캡처
+---
+
+## () 캡처 그룹으로 메타데이터 부분 추출하기
+
+전체 패턴 매칭 중에서 날짜의 연/월/일이나 이메일의 ID/도메인처럼 특정 부분 텍스트만 조각내어 추출해야 할 때 사용합니다.
+
+```python
+import re
+
+email = "devnote_admin@example.com"
+pattern = r"([a-zA-Z0-9_]+)@([a-zA-Z0-9]+\.[a-zA-Z]+)"
+match = re.search(pattern, email)
+
+if match:
+    username = match.group(1)
+    domain = match.group(2)
+    print(f"아이디: {username}, 도메인: {domain}")
+```
+
+```text
+아이디: devnote_admin, 도메인: example.com
+```
+
+- 소괄호 `()`로 감싼 부분은 순서대로 1번, 2번... 캡처 그룹 번호가 부여됩니다.
+- 전체 매칭 문자열은 `group(0)` 또는 `group()`으로 가져옵니다.
+
+## (?P) 이름 붙은 캡처 그룹(Named Group) 활용하기
+
+캡처 그룹이 많아질 경우 숫자 인덱스(`group(1)`, `group(2)`) 대신 의미 있는 이름으로 그룹을 참조할 때 사용합니다.
+
+```python
+import re
+
+log = "IP: 192.168.1.10, Status: 200"
+pattern = r"IP: (?P<ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}), Status: (?P<status>\d{3})"
+match = re.search(pattern, log)
+
+if match:
+    print("클라이언트 IP:", match.group("ip"))
+    print("응답 상태 코드:", match.group("status"))
+```
+
+```text
+클라이언트 IP: 192.168.1.10
+응답 상태 코드: 200
+```
+
+- 구문 형식은 `(?P...)` 구조에 그룹 이름을 지정하여 사용합니다.
+- 정규식이 복잡해지더라도 인덱스 번호 계산 없이 그룹 이름으로 직관적인 코드 작성이 가능합니다.
+
+## Match.group() 및 groupdict()로 추출 데이터 조회하기
+
+캡처된 데이터들을 파이썬 튜플이나 딕셔너리 구조로 한 번에 변환하여 애플리케이션 데이터 모델로 매핑할 때 사용합니다.
+
+```python
+import re
+
+date_str = "2026-07-25"
+pattern = r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})"
+match = re.search(pattern, date_str)
+
+if match:
+    print("튜플 캡처 목록:", match.groups())
+    print("딕셔너리 캡처 목록:", match.groupdict())
+```
+
+```text
+튜플 캡처 목록: ('2026', '07', '25')
+딕셔너리 캡처 목록: {'year': '2026', 'month': '07', 'day': '25'}
+```
+
+- `match.groups()`는 모든 캡처 그룹의 결과를 튜플로 반환합니다.
+- `match.groupdict()`는 Named Group의 이름과 매칭 문자열을 key-value 딕셔너리로 반환합니다.
+
+## (?:) 비캡처 그룹으로 그룹화만 적용하기
+
+수량자(`+`, `*`)나 OR 조건(`|`)을 패턴 일부에 적용해야 하지만, 해당 부분을 캡처 결과에 포함하고 싶지 않을 때 사용합니다.
+
+```python
+import re
+
+text = "http://google.com and https://python.org"
+pattern = r"(?:http|https)://([a-zA-Z0-9\.]+)"
+matches = re.findall(pattern, text)
+
+print("도메인 목록만 추출:", matches)
+```
+
+```text
+도메인 목록만 추출: ['google.com', 'python.org']
+```
+
+- 구문 형식은 `(?:패턴)`입니다.
+- 캡처 메모리를 소비하지 않으므로 정규식 실행 속도가 향상되고 `findall()` 호출 시 원치 않는 수식그룹이 결과 리스트에 섞이지 않습니다.
+
+## 문자 클래스 []와 메타 기호 (\d, \w, \s) 다루기
+
+특정 위치에 들어올 수 있는 문자 범위를 지정하거나 대표 메타 기호를 활용해 간결한 정규식을 만들 때 사용합니다.
+
+```python
+import re
+
+text = "Code: A-12, B_34, C#56"
+pattern = r"[A-Z][-_]\d{2}"
+results = re.findall(pattern, text)
+
+print("매칭 결과:", results)
+```
+
+```text
+매칭 결과: ['A-12', 'B_34']
+```
+
+- `[A-Z]`: 대문자 알파벳 1자, `[^0-9]`: 숫자가 아닌 문자 1자.
+- `\d`: 숫자(`[0-9]`), `\w`: 문자와 숫자 및 언더스코어(`[a-zA-Z0-9_]`), `\s`: 공백 문자.
+
+## 수량자 반복 횟수 및 넌그리디 매칭 제어하기
+
+패턴 반복 횟수를 지정하거나 기본 탐욕적(Greedy) 매칭으로 인해 너무 길게 일치하는 문제를 방지할 때 사용합니다.
+
+```python
+import re
+
+html = "<div>First</div><div>Second</div>"
+greedy_match = re.findall(r"<div>.*</div>", html)
+non_greedy_match = re.findall(r"<div>.*?</div>", html)
+
+print("탐욕적 매칭(Greedy):", greedy_match)
+print("비탐욕적 매칭(Non-greedy):", non_greedy_match)
+```
+
+```text
+탐욕적 매칭(Greedy): ['<div>First</div><div>Second</div>']
+비탐욕적 매칭(Non-greedy): ['<div>First</div>', '<div>Second</div>']
+```
+
+- `*`(0회 이상), `+`(1회 이상), `?`(0회 또는 1회).
+- 수량자 뒤에 `?`를 붙이면(`*?`, `+?`, `??`) 가능한 가장 짧은 구간만 찾는 비탐욕적(Non-Greedy / Lazy) 매칭으로 전환됩니다.
+
+## 앵커 (^, $, \b, \B)로 경계 조건 정확히 지정하기
+
+문자열의 시작(`^`), 끝(`$`) 또는 단어 경계(`\b`)를 지정하여 오탐(False Positive)을 방지할 때 사용합니다.
+
+```python
+import re
+
+text = "cat category concatenate"
+word_boundary = re.findall(r"\bcat\b", text)
+start_anchor = re.findall(r"^cat", text)
+
+print("단어 독립 매칭(\\bcat\\b):", word_boundary)
+print("문자열 시작 매칭(^cat):", start_anchor)
+```
+
+```text
+단어 독립 매칭(\bcat\b): ['cat']
+문자열 시작 매칭(^cat): ['cat']
+```
+
+- `^`: 문자열(또는 줄)의 시작 지점.
+- `$`: 문자열(또는 줄)의 끝 지점.
+- `\b`: 알파벳, 숫자, 언더스코어(`\w`)와 공백 또는 기호 사이의 단어 경계.

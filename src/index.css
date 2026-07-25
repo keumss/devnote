@@ -51,6 +51,10 @@
     @apply text-dark-slate-100 bg-dark-slate-950;
   }
 
+  code, pre {
+    font-variant-ligatures: none;
+  }
+
   /* Exclude syntax highlighter spans from transition to prevent jank */
   .syntax-highlighter-container * {
     transition: none !important;

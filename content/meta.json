@@ -16,6 +16,7 @@
     "asyncio",
     "argparse",
     "pathlib",
-    "httpx"
+    "httpx",
+    "re"
   ]
 }

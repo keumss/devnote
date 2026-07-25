@@ -1,0 +1,168 @@
+---
+title: Part 3. 고급 정규표현식 패턴과 성능 최적화
+---
+
+## re.compile()로 자주 쓰는 패턴 사전 컴파일하기
+
+동일한 정규표현식을 반복문이나 여러 함수에서 자주 호출할 때 패턴 객체를 미리 컴파일하여 정규식 파싱 오버헤드를 줄이고 연산 속도를 향상시킵니다.
+
+```python
+import re
+
+pattern = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
+emails = ["valid@test.com", "invalid-email", "admin@domain.co.kr"]
+valid_emails = [e for e in emails if pattern.search(e)]
+
+print("유효 이메일:", valid_emails)
+```
+
+```text
+유효 이메일: ['valid@test.com', 'admin@domain.co.kr']
+```
+
+- `re.compile(pattern)`은 `Pattern` 객체를 반환하며, `pattern.search()`, `pattern.findall()` 등의 메서드를 직접 호출할 수 있습니다.
+- 대용량 데이터 전처리 시 불필요한 문자열 해석 과정을 생략할 수 있어 성능 최적화의 첫 단계로 권장됩니다.
+
+## re.IGNORECASE 및 re.MULTILINE 플래그 조합하기
+
+대소문자를 구분하지 않거나 여러 줄로 구성된 텍스트에서 각 줄 단위로 앵커(`^`, `$`)를 매칭하고자 할 때 플래그 옵션을 조합합니다.
+
+```python
+import re
+
+multiline_text = """Header: OK
+Error: Timeout
+error: Unknown Failure"""
+
+pattern = re.compile(r"^error: (.*)$", re.IGNORECASE | re.MULTILINE)
+matches = pattern.findall(multiline_text)
+
+print("매칭된 에러 메시지:", matches)
+```
+
+```text
+매칭된 에러 메시지: ['Timeout', 'Unknown Failure']
+```
+
+- `re.IGNORECASE` (또는 `re.I`): 대소문자 구분을 무시합니다.
+- `re.MULTILINE` (또는 `re.M`): `^`와 `$`가 전체 문자열의 처음/끝뿐만 아니라 각 줄(newline)의 시작과 끝에도 매칭되도록 합니다.
+- 여러 플래그는 비트 OR 연산자(`|`)로 결합합니다.
+
+## re.VERBOSE (re.X) 플래그로 주석 포함 가독성 높은 패턴 작성하기
+
+복잡한 정규식에 공백과 주석(`#`)을 허용하여 가독성과 유지보수성을 극대화할 때 사용합니다.
+
+```python
+import re
+
+phone_pattern = re.compile(r"""
+    (?P<area>\d{2,3})  # 지역번호 또는 국번 (2-3자리)
+    -                  # 구분선
+    (?P<prefix>\d{3,4})# 중간 번호 (3-4자리)
+    -                  # 구분선
+    (?P<line>\d{4})    # 끝 번호 (4자리)
+""", re.VERBOSE)
+
+match = phone_pattern.search("TEL: 02-123-4567")
+if match:
+    print("분해 결과:", match.groupdict())
+```
+
+```text
+분해 결과: {'area': '02', 'prefix': '123', 'line': '4567'}
+```
+
+- `re.VERBOSE` 플래그 사용 시 정규표현식 내부의 일반 공백 및 개행 문자는 무시되며, `#` 뒤의 문자열은 주석으로 처리됩니다.
+- 실제 공백을 매칭해야 할 때는 `\s` 또는 `[ ]`를 명시해야 합니다.
+
+## (?=) 및 (?!) 긍정/부정 전방탐색(Lookahead) 활용하기
+
+특정 패턴이 뒤따라 나오는지(긍정) 또는 나오지 않는지(부정) 조건만 검사하되, 해당 텍스트를 최종 매칭 결과에는 소비(Consume)하지 않을 때 사용합니다.
+
+```python
+import re
+
+passwords = ["abc123", "abcdef", "123456", "Pass123"]
+pattern = re.compile(r"^(?=.*[A-Za-z])(?=.*\d).{6,}$")
+
+valid = [p for p in passwords if pattern.match(p)]
+print("영문과 숫자가 모두 포함된 6자리 이상 비번:", valid)
+```
+
+```text
+영문과 숫자가 모두 포함된 6자리 이상 비번: ['abc123', 'Pass123']
+```
+
+- `(?=pattern)`: 긍정 전방탐색. 뒤에 해당 pattern이 위치해야 함.
+- `(?!pattern)`: 부정 전방탐색. 뒤에 해당 pattern이 위치하지 않아야 함.
+- 위치 확인용 제약 조건(Assertion)이므로 텍스트 이동 커서를 앞으로 진행시키지 않습니다.
+
+## 긍정 및 부정 후방탐색(Lookbehind) 활용하기
+
+특정 패턴이 앞에 선행하는지(긍정) 또는 선행하지 않는지(부정) 검사하여 조건부로 본문 문자열을 추출할 때 사용합니다.
+
+```python
+import re
+
+text = "Apple: $15, Banana: €20, Orange: $8"
+dollars = re.findall(r"(?<=\$)\d+", text)
+
+print("달러 가격만 추출:", dollars)
+```
+
+```text
+달러 가격만 추출: ['15', '8']
+```
+
+- `(?<=pattern)`: 긍정 후방탐색. 앞에 해당 pattern이 위치해야 함.
+- `(?<!pattern)`: 부정 후방탐색. 앞에 해당 pattern이 위치하지 않아야 함.
+- 후방탐색 내부 패턴은 파이썬 `re` 모듈 기본 사양상 고정 길이(Fixed length) 패턴이어야 합니다.
+
+## re.sub()에 치환 콜백 함수(Replacement Function) 전달하기
+
+단순 고정 문자열 치환이 아닌, 매칭된 텍스트 값에 동적 연산(대소문자 변환, 단위 계산 등)을 적용해 치환할 때 사용합니다.
+
+```python
+import re
+
+def convert_temp(match: re.Match) -> str:
+    fahrenheit = float(match.group(1))
+    celsius = (fahrenheit - 32) * 5 / 9
+    return f"{celsius:.1f}C"
+
+text = "오늘의 기온: 77.0F, 내일: 86.0F"
+converted = re.sub(r"(\d+\.\d+)F", convert_temp, text)
+
+print("섭씨 변환 결과:", converted)
+```
+
+```text
+섭씨 변환 결과: 오늘의 기온: 25.0C, 내일: 30.0C
+```
+
+- `re.sub(pattern, replacement_func, string)` 형태로 호출하며, 콜백 함수는 매 호출 시 `Match` 객체를 인자로 전달받습니다.
+- 콜백 함수가 반환하는 문자열이 최종 치환값으로 반영됩니다.
+
+## 백트래킹(Backtracking) 지연 방지 및 파이썬 3.12 패턴 작성 주의사항
+
+중첩된 와일드카드 수량자(`(.*)*`) 사용으로 인한 재앙적 백트래킹(Catastrophic Backtracking)을 예방하고 안전한 정규표현식을 작성해야 합니다.
+
+```python
+import re
+
+# 비효율적인 패턴 (재앙적 백트래킹 위험): r"(a+)+b"
+# 개선된 패턴 (명확한 경계 지정)
+safe_pattern = re.compile(r"a+b")
+
+text = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+match = safe_pattern.search(text)
+print("안전한 매칭 검사 완료:", match)
+```
+
+```text
+안전한 매칭 검사 완료: None
+```
+
+- 파이썬 3.12 환경에서도 복잡한 NFA 정규식 엔진 특성상 모호한 수량자 중첩은 CPU 점유율 100% 폭증(ReDoS) 원인이 될 수 있습니다.
+- 수량자 중첩을 피하고, 넌그리디(`*?`) 또는 문자 클래스 범위를 명확히 제한(`[^"]*`)하여 매칭 범위를 축소해야 합니다.
