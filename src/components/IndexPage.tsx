@@ -175,6 +175,7 @@ export default function IndexPage() {
                         key={section.id}
                         section={section}
                         index={idx}
+                        isCurrentSection={continueLearning?.section.id === section.id}
                       />
                     ))}
                   </div>
