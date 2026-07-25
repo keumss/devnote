@@ -17,6 +17,7 @@
     "argparse",
     "pathlib",
     "httpx",
-    "re"
+    "re",
+    "auth"
   ]
 }

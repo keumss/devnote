@@ -1,0 +1,123 @@
+---
+title: "Part 1. 기초: 비밀번호 안전하게 해싱하고 검증하기"
+---
+
+웹 서비스 데이터베이스에 사용자 비밀번호를 평문(Plaintext)으로 저장하면 데이터베이스 유출 시 심각한 보안 사고가 발생합니다. 이 노트에서는 `passlib` 라이브러리와 `bcrypt` 알고리즘을 사용해 비밀번호를 단방향 암호화 해시로 변환하고 안전하게 검증하는 기초 패턴을 다룹니다.
+
+## passlib과 bcrypt 설치하고 환경 구성하기
+
+사용자 비밀번호를 암호화 해시로 변환하려면 비밀번호 해싱 라이브러리인 `passlib`과 암호화 알고리즘 패키지인 `bcrypt`가 필요합니다.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install "passlib[bcrypt]" bcrypt
+```
+
+`passlib`은 다양한 해싱 알고리즘을 단일 인터페이스로 다룰 수 있게 해주며, Python 3.12 환경에서도 안정적으로 동작합니다.
+
+## CryptContext(schemes=["bcrypt"])로 암호화 맥락 준비하기
+
+비밀번호 해싱 및 검증 알고리즘을 프로젝트 전역에서 통일해서 사용할 때 `passlib.context.CryptContext` 객체를 선언합니다.
+
+```python
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+```
+
+`schemes` 옵션에 기본 알고리즘인 `bcrypt`를 지정합니다. `deprecated="auto"`는 추후 보안 정책이 변경되어 오래된 알고리즘 해시를 만났을 때 재해싱 대상으로 감지해 줍니다.
+
+## pwd_context.hash()로 평문 비밀번호를 해시 문자열로 변환하기
+
+사용자가 회원가입 시 입력한 평문 비밀번호를 데이터베이스에 저장하기 직전 단방향 해시 문자열로 변환할 때 `hash()` 메서드를 사용합니다.
+
+```python
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+raw_password = "MySecretPassword123!"
+hashed_password = pwd_context.hash(raw_password)
+
+print(f"Original: {raw_password}")
+print(f"Hashed: {hashed_password}")
+```
+
+```text
+Original: MySecretPassword123!
+Hashed: $2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW
+```
+
+동일한 비밀번호를 `hash()`에 여러 번 전달하더라도 매번 내부적으로 무작위 솔트(Salt)가 결합되어 서로 다른 해시 문자열이 생성됩니다.
+
+## pwd_context.verify()로 입력 비밀번호와 저장된 해시 비교하기
+
+로그인 시 사용자가 입력한 평문 비밀번호가 데이터베이스에 저장된 해시 문자열과 일치하는지 확인할 때 `verify()` 메서드를 사용합니다.
+
+```python
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+stored_hash = "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW"
+
+is_correct = pwd_context.verify("MySecretPassword123!", stored_hash)
+is_wrong = pwd_context.verify("WrongPassword!", stored_hash)
+
+print(f"Correct attempt: {is_correct}")
+print(f"Wrong attempt: {is_wrong}")
+```
+
+```text
+Correct attempt: True
+Wrong attempt: False
+```
+
+`verify()`는 암호화 해시에서 솔트와 라운드 정보를 추출한 뒤 입력받은 비밀번호를 동일한 방식으로 해싱하여 일치 여부를 `bool` 값으로 반환합니다.
+
+## Salt와 Work Factor로 레인보우 테이블 공격 방어하기
+
+미리 계산된 해시 테이블(Rainbow Table)을 이용한 무차별 대입 공격을 방어할 때 `bcrypt`의 솔트(Salt)와 연산 비용(Work Factor / Rounds) 규칙을 이해하고 설정합니다.
+
+```python
+from passlib.context import CryptContext
+
+# bcrypt 라운드(비용)를 12로 지정 (기본값 12)
+pwd_context = CryptContext(schemes=["bcrypt"], bcrypt__rounds=12, deprecated="auto")
+
+hash_a = pwd_context.hash("same_password")
+hash_b = pwd_context.hash("same_password")
+
+print(hash_a != hash_b)
+```
+
+```text
+True
+```
+
+`bcrypt` 해시의 첫 부분(`$2b$12$`)은 알고리즘과 라운드 수(12 = $2^{12}$ 회 반복 연산)를 나타내며, 뒤따르는 22자리는 자동 생성된 솔트입니다. 라운드가 높아질수록 해싱 속도는 느려지지만 공격자의 해시 해독 비용이 크게 증가합니다.
+
+## validate_password_strength()로 비밀번호 기본 규칙 검사하기
+
+비밀번호를 해싱하기 전 최소 길이와 문자 조합 등 최소한의 보안 유효성 검사를 수행할 때 검증 함수를 정의합니다.
+
+```python
+def validate_password_strength(password: str) -> tuple[bool, str]:
+    if len(password) < 8:
+        return False, "비밀번호는 최소 8자 이상이어야 합니다."
+    if not any(char.isdigit() for char in password):
+        return False, "비밀번호에는 최소 1개 이상의 숫자가 포함되어야 합니다."
+    return True, "유효한 비밀번호입니다."
+
+
+print(validate_password_strength("short"))
+print(validate_password_strength("validPass123"))
+```
+
+```text
+(False, '비밀번호는 최소 8자 이상이어야 합니다.')
+(True, '유효한 비밀번호입니다.')
+```
+
+너무 짧거나 단순한 비밀번호는 해싱 연산을 거치더라도 공격에 취약하므로, 해싱 수행 전 애플리케이션 입구에서 미리 검증하여 불필요한 연산을 줄입니다.

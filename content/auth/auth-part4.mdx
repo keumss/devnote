@@ -1,0 +1,215 @@
+---
+title: "Part 4. 실전: 블로그 사용자 회원가입, 로그인 및 권한별 포스트 관리 API 완성하기"
+---
+
+앞서 배운 비밀번호 해싱(`passlib`), JWT 토큰 인코딩(`PyJWT`), FastAPI 보안 의존성(`OAuth2PasswordBearer`)을 하나로 조합합니다. 이 노트에서는 SQLModel 데이터베이스 테이블과 연동하여 회원가입, 로그인, 그리고 본인 또는 관리자만 수정/삭제할 수 있는 실전 블로그 API를 완성합니다.
+
+## User 및 BlogPost SQLModel 테이블 선언과 인증 설정 준비하기
+
+블로그 사용자(`User`)와 블로그 포스트(`BlogPost`) 모델을 SQLModel로 정의하고, 비밀번호 해싱 및 JWT 발급을 위한 모듈과 설정을 준비합니다.
+
+```python
+from datetime import datetime, timezone, timedelta
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from passlib.context import CryptContext
+from sqlmodel import Field, Session, SQLModel, create_engine, select
+import jwt
+
+# 1. 암호화 및 토큰 설정
+SECRET_KEY = "blog-backend-secret-key-change-in-production"
+ALGORITHM = "HS256"
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+# 2. SQLModel 테이블 정의
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)
+    hashed_password: str
+    role: str = Field(default="author")  # admin, author
+
+
+class BlogPost(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    title: str
+    content: str
+    author_id: int = Field(foreign_key="user.id")
+
+
+# 3. 데이터베이스 엔진 생성
+sqlite_file_name = "blog_auth.db"
+engine = create_engine(f"sqlite:///{sqlite_file_name}", connect_args={"check_same_thread": False})
+
+app = FastAPI()
+
+
+@app.on_event("startup")
+def on_startup():
+    SQLModel.metadata.create_all(engine)
+
+
+def get_db():
+    with Session(engine) as session:
+        yield session
+```
+
+`User` 모델의 `hashed_password` 필드에는 절대로 평문 비밀번호를 저장하지 않고 해시 문자열만 저장하며, `author_id` 외래키를 통해 블로그 포스트의 소유자를 추적합니다.
+
+## POST /auth/register 회원가입 엔드포인트 구현하기
+
+사용자 아이디 중복을 검사하고 평문 비밀번호를 해싱하여 새 `User` 행을 데이터베이스에 저장하는 회원가입 API를 작성합니다.
+
+```python
+from pydantic import BaseModel
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    role: str = "author"
+
+
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    # 1. 중복 사용자 검사
+    existing_user = db.exec(select(User).where(User.username == user_in.username)).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="이미 존재하는 사용자 이름입니다.",
+        )
+
+    # 2. 비밀번호 해싱 및 유저 생성
+    hashed_pwd = pwd_context.hash(user_in.password)
+    new_user = User(username=user_in.username, hashed_password=hashed_pwd, role=user_in.role)
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return {"id": new_user.id, "username": new_user.username, "role": new_user.role}
+```
+
+```text
+{"id": 1, "username": "writer1", "role": "author"}
+```
+
+비밀번호 해싱 `pwd_context.hash()`가 적용된 후 DB에 영속화되므로 DB 파일이 노출되더라도 사용자 원본 비밀번호는 안전하게 보호됩니다.
+
+## POST /auth/login 로그인 엔드포인트 구현하기
+
+FastAPI 표준 `OAuth2PasswordRequestForm`을 수신하여 비밀번호를 검증하고 Access Token을 발급하는 로그인 API를 구현합니다.
+
+```python
+@app.post("/auth/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    # 1. 유저 조회
+    user = db.exec(select(User).where(User.username == form_data.username)).first()
+    if not user or not pwd_context.verify(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="아이디 또는 비밀번호가 올바르지 않습니다.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 2. JWT Access Token 발급
+    access_token_expires = timedelta(minutes=60)
+    expire = datetime.now(timezone.utc) + access_token_expires
+    payload = {"sub": user.username, "exp": expire}
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+    return {"access_token": token, "token_type": "bearer"}
+```
+
+```text
+{"access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", "token_type": "bearer"}
+```
+
+`OAuth2PasswordRequestForm`은 form-data 형식의 `username`과 `password` 필드를 자동으로 처리하며, Swagger UI(`/docs`)의 Authorize 기능과 완벽하게 호환됩니다.
+
+## GET /users/me 내 정보 조회 엔드포인트 구현하기
+
+요청 헤더의 Bearer 토큰을 검증하고 로그인된 유저 정보를 반환하는 `get_current_user` 의존성과 내 정보 조회 API를 연결합니다.
+
+```python
+def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="자격 증명을 검증할 수 없습니다.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str | None = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except jwt.InvalidTokenError:
+        raise credentials_exception
+
+    user = db.exec(select(User).where(User.username == username)).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+
+@app.get("/users/me")
+def read_users_me(current_user: User = Depends(get_current_user)):
+    return {"id": current_user.id, "username": current_user.username, "role": current_user.role}
+```
+
+```text
+{"id": 1, "username": "writer1", "role": "author"}
+```
+
+`Depends(get_current_user)`를 사용하는 모든 엔드포인트는 유효한 Access Token이 없으면 진입할 수 없는 보호된 구역(Protected Route)이 됩니다.
+
+## POST /posts 및 DELETE /posts/id 권한 검증 API 완성하기
+
+현재 로그인한 유저 정보로 포스트를 작성하고, 포스트 작성자 본인 또는 `admin` 관리자만 포스트를 삭제할 수 있도록 인가(Authorization)를 검증하는 API를 완성합니다.
+
+```python
+class PostCreate(BaseModel):
+    title: str
+    content: str
+
+
+@app.post("/posts", status_code=status.HTTP_201_CREATED)
+def create_post(
+    post_in: PostCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    post = BlogPost(title=post_in.title, content=post_in.content, author_id=current_user.id)
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+    return post
+
+
+@app.delete("/posts/{post_id}")
+def delete_post(
+    post_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    post = db.get(BlogPost, post_id)
+    if not post:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="포스트를 찾을 수 없습니다.")
+
+    # 소유자 본인이거나 관리자(admin)인지 권한 검사
+    if post.author_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="해당 포스트를 삭제할 권한이 없습니다.",
+        )
+
+    db.delete(post)
+    db.commit()
+    return {"message": f"포스트 {post_id}가 삭제되었습니다."}
+```
+
+```text
+{"message": "포스트 1가 삭제되었습니다."}
+```
+
+이로써 비밀번호 보안, JWT 무상태 인증, FastAPI OAuth2 Bearer 헤더 검증, 그리고 포스트 작성자 및 관리자 권한 제어(RBAC)까지 갖춘 FastAPI 백엔드 블로그 인증 시스템이 완성되었습니다.
