@@ -3,37 +3,37 @@
     {
       "id": "database-orm",
       "title": "데이터베이스 & ORM",
-      "description": "PostgreSQL 기초부터 SQLAlchemy, Alembic 마이그레이션 및 SQLModel",
+      "description": "관계형 데이터베이스 구조 설계부터 ORM 기반 데이터 모델링 및 마이그레이션",
       "pages": ["sql", "sqlalchemy", "alembic", "sqlmodel"]
     },
     {
       "id": "fastapi-backend",
       "title": "FastAPI 백엔드 & 보안",
-      "description": "FastAPI 라우터/의존성 주입과 JWT/OAuth2 로그인 회원 보안",
+      "description": "웹 API 라우팅 구조 설계, 의존성 주입 및 인증·보안 체계 구축",
       "pages": ["fastapi", "auth"]
     },
     {
       "id": "view-rendering-client",
       "title": "뷰 렌더링 & 외부 통신",
-      "description": "Jinja2 HTML 템플릿 렌더링 및 HTTPX 비동기 외부 연동 클라이언트",
+      "description": "서버 템플릿 기반 UI 렌더링 및 비동기 HTTP 외부 API 연동",
       "pages": ["jinja2", "httpx"]
     },
     {
       "id": "testing-operations",
       "title": "테스트 & 운영",
-      "description": "pytest 자동화 테스트, 로깅 모니터링 및 argparse CLI 주입 스크립트",
+      "description": "코드 품질 검증을 위한 자동화 테스트, 시스템 로깅 및 CLI 실행 환경",
       "pages": ["pytest", "logging", "argparse"]
     },
     {
       "id": "async-validation",
       "title": "비동기 & 데이터 검증",
-      "description": "Pydantic 데이터 검증/스키마 및 asyncio 비동기 입출력 엔진",
+      "description": "타입 안전 데이터 스키마 검증 및 비동기 I/O 동시성 처리",
       "pages": ["pydantic", "asyncio"]
     },
     {
       "id": "python-core",
       "title": "파이썬 코어 유틸리티",
-      "description": "타입 힌팅, dataclass, pathlib, re, chainmap, itertools 등 파이썬 핵심 도구",
+      "description": "타입 시스템, 표준 라이브러리 및 핵심 데이터 구조·유틸리티 활용",
       "pages": ["typing", "dataclass", "pathlib", "re", "chainmap", "itertools"]
     }
   ],
