@@ -184,10 +184,10 @@ export default function NotePage() {
 
         <aside className="hidden xl:block w-64 shrink-0 border-l border-slate-200 bg-white/50 dark:border-dark-slate-800 dark:bg-dark-slate-950/50">
           <div className="sticky top-16 max-h-[calc(100vh-4rem)] overflow-y-auto px-5 py-8 custom-scrollbar">
-            <div className="flex items-center gap-2 mb-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-dark-slate-400">
-              <ListTree size={15} className="text-indigo-500" />
-              <span>이 노트의 목차</span>
-              <span className="ml-auto rounded-full bg-slate-100 dark:bg-dark-slate-800 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:text-dark-slate-300">
+            <div className="flex items-center gap-1.5 mb-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-dark-slate-500">
+              <ListTree size={14} className="text-indigo-500/80 dark:text-dark-indigo-400/80 shrink-0" />
+              <span>목차</span>
+              <span className="ml-auto text-[10px] font-medium text-slate-400 dark:text-dark-slate-500">
                 {activeNote.topics.length}개
               </span>
             </div>

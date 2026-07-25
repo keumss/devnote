@@ -23,42 +23,28 @@ function NavNoteItem({
   onNavigate?: () => void;
 }) {
   return (
-    <li className="relative">
-      {isActive && (
-        <span
-          className="absolute -left-[11px] top-1/2 -translate-y-1/2 w-1 h-5 bg-indigo-600 dark:bg-dark-indigo-400 rounded-r-full z-20 shadow-xs"
-          aria-hidden="true"
-        />
-      )}
+    <li>
       <Link
         to={getNotePath(sectionId, note.id)}
         onClick={onNavigate}
         aria-label={`${note.navigationLabel ? `${note.navigationLabel} ` : ''}${note.displayTitle}`}
         aria-current={isActive ? 'page' : undefined}
-        className={`relative w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-left transition-[color] duration-200 ${
+        className={`w-full flex items-start justify-between px-2.5 py-1.5 rounded-md text-left transition-[color] duration-150 ${
           isActive
-            ? 'text-indigo-700 dark:text-dark-indigo-300 font-medium'
-            : 'text-slate-600 dark:text-dark-slate-400 hover:text-slate-900 dark:hover:text-dark-slate-200 hover:bg-slate-100/50 dark:hover:bg-dark-slate-800/30'
+            ? 'bg-indigo-50/80 dark:bg-dark-indigo-500/15 text-indigo-600 dark:text-dark-indigo-300 font-normal'
+            : 'text-slate-600 dark:text-dark-slate-400 hover:text-slate-900 dark:hover:text-dark-slate-200 hover:bg-slate-100/60 dark:hover:bg-dark-slate-800/30 font-normal'
         }`}
       >
-        {isActive && (
-          <div
-            className="absolute inset-0 bg-indigo-50 dark:bg-dark-indigo-500/10 rounded-lg border border-indigo-100 dark:border-dark-indigo-500/20 shadow-xs"
-          />
-        )}
-        <span className="relative z-10 min-w-0">
+        <span className="min-w-0">
           {note.navigationLabel && (
-            <span className="mb-0.5 block text-[10px] font-bold tracking-wide text-indigo-500 dark:text-dark-indigo-400">
+            <span className="block text-[10px] font-semibold text-indigo-500/90 dark:text-dark-indigo-400 mb-0.5">
               {note.navigationLabel}
             </span>
           )}
-          <span className="block text-sm leading-snug transition-all duration-200">
+          <span className="block text-xs leading-normal">
             {note.displayTitle}
           </span>
         </span>
-        {isActive && (
-          <ChevronRight size={14} className="text-indigo-500 min-w-4 relative z-10" />
-        )}
       </Link>
     </li>
   );
@@ -77,23 +63,26 @@ function NavSectionItem({
   onToggle: () => void, 
   onNavigate?: () => void;
 }) {
+  const isSectionActive = activeNoteId ? section.notes.some((n) => n.id === activeNoteId) : false;
+
   return (
     <div>
       <button
         type="button"
         onClick={onToggle}
-        className={`group w-full flex items-center justify-between text-left text-xs font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded transition-colors ${
-          isExpanded 
+        aria-expanded={isExpanded}
+        className={`w-full flex items-center justify-between text-left text-xs font-semibold px-2 py-1.5 rounded-md transition-colors ${
+          isSectionActive
             ? 'text-indigo-600 dark:text-dark-indigo-400'
-            : 'text-slate-500 dark:text-dark-slate-400 hover:text-slate-800 dark:hover:text-dark-slate-200'
+            : 'text-slate-700 dark:text-dark-slate-300 hover:text-slate-900 dark:hover:text-dark-slate-100 hover:bg-slate-100/60 dark:hover:bg-dark-slate-800/40'
         }`}
       >
-        <span>{section.title}</span>
-        <div className="flex items-center gap-1.5">
-          <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-slate-100 text-slate-500 dark:bg-dark-slate-800 dark:text-dark-slate-400">
+        <span className="truncate">{section.title}</span>
+        <div className="flex items-center gap-1.5 shrink-0 ml-1">
+          <span className="text-[10px] font-medium text-slate-400 dark:text-dark-slate-500">
             {section.notes.length}
           </span>
-          <ChevronDown size={14} className={`transform transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+          <ChevronDown size={13} className={`transform transition-transform duration-200 text-slate-400 dark:text-dark-slate-500 ${isExpanded ? 'rotate-180' : ''}`} />
         </div>
       </button>
       <AnimatePresence initial={false}>
@@ -102,11 +91,11 @@ function NavSectionItem({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25, ease: 'easeInOut' }}
-            className="overflow-hidden pl-2.5"
+            transition={{ duration: 0.18, ease: 'easeInOut' }}
+            className="overflow-hidden"
           >
-            <div className="ml-1 pl-2.5 border-l border-slate-200/80 dark:border-dark-slate-800/80">
-              <ul className="space-y-1 pb-2">
+            <div className="ml-3 pl-2.5 my-1 border-l border-slate-200/70 dark:border-dark-slate-800/70">
+              <ul className="space-y-0.5">
                 {section.notes.map((note) => (
                   <NavNoteItem
                     key={note.id}
@@ -135,15 +124,18 @@ export default function SidebarNav({ activeSectionId, activeNoteId, onNavigate }
   }, [activeSectionId]);
 
   return (
-    <nav className="space-y-5">
+    <nav className="space-y-4">
       {navGroupData.map((group) => (
-        <div key={group.id} className="space-y-1.5">
+        <div
+          key={group.id}
+          className="pt-3 first:pt-0 space-y-0.5"
+        >
           {group.title && (
-            <div className="flex items-center justify-between px-2 py-1 text-[11px] font-extrabold tracking-wider text-slate-400 dark:text-dark-slate-400 uppercase border-b border-slate-200/60 dark:border-dark-slate-800/60 pb-1 mb-2">
-              <span className="truncate">{group.title}</span>
+            <div className="px-2 py-1 text-[11px] font-bold tracking-wider text-slate-400 dark:text-dark-slate-500 uppercase truncate">
+              {group.title}
             </div>
           )}
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             {group.sections.map((section) => (
               <NavSectionItem
                 key={section.id}

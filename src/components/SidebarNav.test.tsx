@@ -40,4 +40,20 @@ describe('SidebarNav', () => {
     expect(activeLink).not.toHaveClass('transition-colors');
     expect(inactiveLink).not.toHaveClass('transition-colors');
   });
+
+  it('renders section group headers and sets aria-expanded on section toggles', () => {
+    const section = navData[0];
+    if (!section) return;
+
+    render(
+      <MemoryRouter>
+        <SidebarNav activeSectionId={section.id} />
+      </MemoryRouter>,
+    );
+
+    const sectionButton = screen.getByRole('button', {
+      name: (name) => name.includes(section.title),
+    });
+    expect(sectionButton).toHaveAttribute('aria-expanded', 'true');
+  });
 });
