@@ -40,7 +40,7 @@ export default function IndexPage() {
             initial={{ opacity: 0, y: -16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
-            className="mb-4 flex flex-row items-center justify-between gap-2 border-b border-slate-200/80 pb-4 dark:border-dark-slate-800/80 sm:mb-6 sm:gap-4 sm:pb-5"
+            className="mb-4 flex flex-col gap-3 border-b border-slate-200/80 pb-4 dark:border-dark-slate-800/80 sm:mb-6 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:pb-5"
             aria-labelledby="index-page-title"
           >
             <div className="min-w-0 flex-1">
@@ -48,15 +48,15 @@ export default function IndexPage() {
                 <BookOpen className="h-3.5 w-3.5" strokeWidth={2.5} />
                 DEVNOTE ROADMAP
               </p>
-              <h1 id="index-page-title" className="text-xl font-extrabold tracking-tight text-slate-950 dark:text-dark-slate-100 sm:text-2xl">
+              <h1 id="index-page-title" className="text-xl font-extrabold tracking-tight text-slate-950 dark:text-dark-slate-100 sm:text-2xl whitespace-nowrap">
                 개발 학습 노트
               </h1>
-              <p className="mt-1 truncate text-xs text-slate-600 dark:text-dark-slate-400 sm:text-sm">
-                FastAPI 기반 블로그 개발 학습 순서에 따른 로드맵을 탐색하세요.
+              <p className="mt-1 text-xs text-slate-600 dark:text-dark-slate-400 sm:text-sm">
+                체계적인 학습 순서에 따른 개발 기술 스택 로드맵을 탐색하세요.
               </p>
             </div>
 
-            <dl className="flex shrink-0 items-center divide-x divide-slate-200/80 rounded-xl border border-slate-200/80 bg-white/80 p-1 shadow-xs backdrop-blur-xs dark:divide-dark-slate-800/80 dark:border-dark-slate-800/80 dark:bg-dark-slate-900/50 text-xs sm:text-sm">
+            <dl className="flex shrink-0 items-center divide-x divide-slate-200/80 rounded-xl border border-slate-200/80 bg-white/80 p-1 shadow-xs backdrop-blur-xs dark:divide-dark-slate-800/80 dark:border-dark-slate-800/80 dark:bg-dark-slate-900/50 text-xs sm:text-sm self-start sm:self-auto">
               <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2.5 sm:px-3">
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 dark:bg-dark-indigo-500/10 text-indigo-600 dark:text-dark-indigo-400">
                   <FolderKanban className="h-4 w-4 shrink-0" />
@@ -149,27 +149,27 @@ export default function IndexPage() {
               </p>
             </motion.div>
 
-            <div className="space-y-8">
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3 sm:gap-6">
               {navGroupData.map((group, groupIdx) => (
                 <motion.div
                   key={group.id}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.35, delay: 0.05 * groupIdx }}
-                  className="relative rounded-2xl border border-slate-200/80 bg-slate-100/40 p-4 shadow-xs dark:border-dark-slate-800/80 dark:bg-dark-slate-900/30 sm:p-5"
+                  className="flex flex-col rounded-2xl border border-slate-200/80 bg-slate-100/40 p-4 shadow-xs dark:border-dark-slate-800/80 dark:bg-dark-slate-900/30 sm:p-5"
                 >
-                  <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/60 pb-3 dark:border-dark-slate-800/60">
-                    <h3 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-dark-slate-100 sm:text-lg">
+                  <div className="mb-3.5 flex flex-col gap-1 border-b border-slate-200/60 pb-3 dark:border-dark-slate-800/60">
+                    <h3 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-dark-slate-100">
                       {group.title}
                     </h3>
                     {group.description && (
-                      <p className="text-xs text-slate-500 dark:text-dark-slate-400 sm:text-right">
+                      <p className="text-xs text-slate-500 dark:text-dark-slate-400">
                         {group.description}
                       </p>
                     )}
                   </div>
 
-                  <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-3">
                     {group.sections.map((section, idx) => (
                       <LearningSectionCard
                         key={section.id}

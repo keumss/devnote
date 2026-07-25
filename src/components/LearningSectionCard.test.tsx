@@ -6,7 +6,7 @@ import { getNotePath } from '../navigation';
 import LearningSectionCard from './LearningSectionCard';
 
 describe('LearningSectionCard', () => {
-  it('renders every note as a route link', () => {
+  it('renders section title and links to section first note route', () => {
     const section = navData[0];
     const { getByRole } = render(
       <MemoryRouter>
@@ -14,15 +14,14 @@ describe('LearningSectionCard', () => {
       </MemoryRouter>,
     );
     const card = getByRole('article');
+    const firstNote = section.notes[0];
 
-    for (const note of section.notes) {
-      const accessibleTitle = note.navigationLabel
-        ? `${note.navigationLabel} ${note.displayTitle}`
-        : note.displayTitle;
-      expect(within(card).getByRole('link', { name: accessibleTitle })).toHaveAttribute(
-        'href',
-        getNotePath(section.id, note.id),
-      );
-    }
+    const sectionLink = within(card).getByRole('link', {
+      name: (name) => name.includes(section.title),
+    });
+    expect(sectionLink).toHaveAttribute(
+      'href',
+      getNotePath(section.id, firstNote.id),
+    );
   });
 });

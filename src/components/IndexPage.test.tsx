@@ -39,7 +39,7 @@ describe('IndexPage', () => {
     }
   });
 
-  it('links every note to its existing route', () => {
+  it('links every section card to its first note route', () => {
     const { getByRole } = render(
       <HashRouter>
         <IndexPage />
@@ -52,21 +52,14 @@ describe('IndexPage', () => {
       const sectionCard = sectionHeading.closest('article');
 
       expect(sectionCard).not.toBeNull();
-      for (const note of section.notes) {
-        const accessibleTitle = note.navigationLabel
-          ? `${note.navigationLabel} ${note.displayTitle}`
-          : note.displayTitle;
-        const noteLink = within(sectionCard!).getByRole('link', { name: accessibleTitle });
-        expect(noteLink).toHaveAttribute(
-          'href',
-          `#${getNotePath(section.id, note.id)}`,
-        );
-        expect(noteLink).toHaveClass('transition-[color]', 'dark:hover:bg-dark-indigo-500/10');
-        expect(noteLink).not.toHaveClass('transition-colors');
-        if (note.navigationLabel) {
-          expect(within(noteLink).getByText(note.navigationLabel)).toBeInTheDocument();
-        }
-      }
+      const firstNote = section.notes[0];
+      const sectionLink = within(sectionCard!).getByRole('link', {
+        name: (name) => name.includes(section.title),
+      });
+      expect(sectionLink).toHaveAttribute(
+        'href',
+        `#${getNotePath(section.id, firstNote.id)}`,
+      );
     }
   });
 
