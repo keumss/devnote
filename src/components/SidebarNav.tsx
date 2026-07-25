@@ -37,11 +37,11 @@ function NavNoteItem({
       >
         <span className="min-w-0">
           {note.navigationLabel && (
-            <span className="block text-[10px] font-semibold text-indigo-500/90 dark:text-dark-indigo-400 mb-0.5">
+            <span className="block text-[11px] font-semibold text-indigo-500/90 dark:text-dark-indigo-400 mb-0.5">
               {note.navigationLabel}
             </span>
           )}
-          <span className="block text-xs leading-normal">
+          <span className="block text-[13px] leading-normal">
             {note.displayTitle}
           </span>
         </span>
@@ -71,7 +71,7 @@ function NavSectionItem({
         type="button"
         onClick={onToggle}
         aria-expanded={isExpanded}
-        className={`w-full flex items-center justify-between text-left text-xs font-semibold px-2 py-1.5 rounded-md transition-colors ${
+        className={`w-full flex items-center justify-between text-left text-[13px] font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
           isSectionActive
             ? 'text-indigo-600 dark:text-dark-indigo-400'
             : 'text-slate-700 dark:text-dark-slate-300 hover:text-slate-900 dark:hover:text-dark-slate-100 hover:bg-slate-100/60 dark:hover:bg-dark-slate-800/40'
@@ -79,10 +79,10 @@ function NavSectionItem({
       >
         <span className="truncate">{section.title}</span>
         <div className="flex items-center gap-1.5 shrink-0 ml-1">
-          <span className="text-[10px] font-medium text-slate-400 dark:text-dark-slate-500">
+          <span className="text-[11px] font-medium text-slate-400 dark:text-dark-slate-500">
             {section.notes.length}
           </span>
-          <ChevronDown size={13} className={`transform transition-transform duration-200 text-slate-400 dark:text-dark-slate-500 ${isExpanded ? 'rotate-180' : ''}`} />
+          <ChevronDown size={14} className={`transform transition-transform duration-200 text-slate-400 dark:text-dark-slate-500 ${isExpanded ? 'rotate-180' : ''}`} />
         </div>
       </button>
       <AnimatePresence initial={false}>
@@ -131,7 +131,7 @@ export default function SidebarNav({ activeSectionId, activeNoteId, onNavigate }
           className="pt-3 first:pt-0 space-y-0.5"
         >
           {group.title && (
-            <div className="px-2 py-1 text-[11px] font-bold tracking-wider text-slate-400 dark:text-dark-slate-500 uppercase truncate">
+            <div className="px-2 py-1 text-xs font-bold tracking-wider text-slate-400 dark:text-dark-slate-500 uppercase truncate">
               {group.title}
             </div>
           )}
