@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { navData, type Note, type Section } from '../content';
+import { navGroupData, type Note, type Section } from '../content';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { getNotePath } from '../navigation';
@@ -85,7 +85,7 @@ function NavSectionItem({
         className={`group w-full flex items-center justify-between text-left text-xs font-bold uppercase tracking-wider mb-2 px-2 py-1.5 rounded transition-colors ${
           isExpanded 
             ? 'text-indigo-600 dark:text-dark-indigo-400'
-            : 'text-slate-400 dark:text-dark-slate-500 hover:text-slate-700 dark:hover:text-dark-slate-300'
+            : 'text-slate-500 dark:text-dark-slate-400 hover:text-slate-800 dark:hover:text-dark-slate-200'
         }`}
       >
         <span>{section.title}</span>
@@ -135,18 +135,29 @@ export default function SidebarNav({ activeSectionId, activeNoteId, onNavigate }
   }, [activeSectionId]);
 
   return (
-    <nav className="space-y-4">
-      {navData.map((section) => (
-        <NavSectionItem
-          key={section.id}
-          section={section}
-          isExpanded={expandedSectionId === section.id}
-          activeNoteId={activeNoteId}
-          onToggle={() => {
-            setExpandedSectionId(prev => prev === section.id ? null : section.id);
-          }}
-          onNavigate={onNavigate}
-        />
+    <nav className="space-y-5">
+      {navGroupData.map((group) => (
+        <div key={group.id} className="space-y-1.5">
+          {group.title && (
+            <div className="flex items-center justify-between px-2 py-1 text-[11px] font-extrabold tracking-wider text-slate-400 dark:text-dark-slate-400 uppercase border-b border-slate-200/60 dark:border-dark-slate-800/60 pb-1 mb-2">
+              <span className="truncate">{group.title}</span>
+            </div>
+          )}
+          <div className="space-y-1">
+            {group.sections.map((section) => (
+              <NavSectionItem
+                key={section.id}
+                section={section}
+                isExpanded={expandedSectionId === section.id}
+                activeNoteId={activeNoteId}
+                onToggle={() => {
+                  setExpandedSectionId((prev) => (prev === section.id ? null : section.id));
+                }}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
+        </div>
       ))}
     </nav>
   );

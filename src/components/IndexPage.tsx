@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { navData } from '../content';
+import { navData, navGroupData } from '../content';
 import { Link } from 'react-router-dom';
-import { BookOpen, Clock3, FileText, Layers, Play } from 'lucide-react';
+import { BookOpen, Clock3, FileText, FolderKanban, Layers, Play } from 'lucide-react';
 import { motion } from 'motion/react';
 import Layout from './Layout';
 import { getNotePath, getTopicHash } from '../navigation';
@@ -46,18 +46,27 @@ export default function IndexPage() {
             <div className="min-w-0 flex-1">
               <p className="mb-1 flex items-center gap-1.5 text-[9px] font-bold tracking-[0.18em] text-indigo-600 dark:text-dark-indigo-400 sm:text-[10px]">
                 <BookOpen className="h-3.5 w-3.5" strokeWidth={2.5} />
-                DEVNOTE LIBRARY
+                DEVNOTE ROADMAP
               </p>
               <h1 id="index-page-title" className="text-xl font-extrabold tracking-tight text-slate-950 dark:text-dark-slate-100 sm:text-2xl">
                 개발 학습 노트
               </h1>
               <p className="mt-1 truncate text-xs text-slate-600 dark:text-dark-slate-400 sm:text-sm">
-                기술별로 정리한 노트를 탐색하세요.
+                FastAPI 기반 블로그 개발 학습 순서에 따른 로드맵을 탐색하세요.
               </p>
             </div>
 
             <dl className="flex shrink-0 items-center divide-x divide-slate-200/80 rounded-xl border border-slate-200/80 bg-white/80 p-1 shadow-xs backdrop-blur-xs dark:divide-dark-slate-800/80 dark:border-dark-slate-800/80 dark:bg-dark-slate-900/50 text-xs sm:text-sm">
-              <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2.5 sm:px-3.5">
+              <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2.5 sm:px-3">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 dark:bg-dark-indigo-500/10 text-indigo-600 dark:text-dark-indigo-400">
+                  <FolderKanban className="h-4 w-4 shrink-0" />
+                </div>
+                <div>
+                  <dt className="text-[9px] font-semibold text-slate-500 dark:text-dark-slate-400 sm:text-[10px]">학습 그룹</dt>
+                  <dd className="font-bold text-slate-900 dark:text-dark-slate-200">{navGroupData.length}개</dd>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2.5 sm:px-3">
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 dark:bg-dark-indigo-500/10 text-indigo-600 dark:text-dark-indigo-400">
                   <Layers className="h-4 w-4 shrink-0" />
                 </div>
@@ -66,7 +75,7 @@ export default function IndexPage() {
                   <dd className="font-bold text-slate-900 dark:text-dark-slate-200">{navData.length}개</dd>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2.5 sm:px-3.5">
+              <div className="flex items-center gap-1.5 px-2 py-1.5 sm:gap-2.5 sm:px-3">
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-50 dark:bg-dark-indigo-500/10 text-indigo-600 dark:text-dark-indigo-400">
                   <FileText className="h-4 w-4 shrink-0" />
                 </div>
@@ -124,29 +133,52 @@ export default function IndexPage() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.1 }}
-              className="mb-3.5 flex items-end justify-between gap-4 sm:mb-4"
+              className="mb-4 flex items-end justify-between gap-4 sm:mb-6"
             >
               <div>
                 <p className="mb-0.5 flex items-center gap-1 text-[9px] font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-400 sm:mb-1 sm:gap-1.5 sm:text-[10px]">
                   <Layers className="h-3 w-3 sm:h-3.5 sm:w-3.5" strokeWidth={2.5} />
-                  EXPLORE BY TOPIC
+                  ROADMAP BY GROUPS
                 </p>
                 <h2 id="section-list-title" className="mt-0.5 text-lg font-bold tracking-tight text-slate-900 dark:text-dark-slate-200 sm:mt-1 sm:text-xl">
-                  학습 노트 둘러보기
+                  학습 로드맵 둘러보기
                 </h2>
               </div>
               <p className="hidden text-sm text-slate-500 dark:text-dark-slate-400 sm:block">
-                {totalNotes}개의 노트
+                {navGroupData.length}개 그룹 · {totalNotes}개의 노트
               </p>
             </motion.div>
 
-            <div className="flex flex-col gap-4 sm:gap-5">
-              {navData.map((section, idx) => (
-                <LearningSectionCard
-                  key={section.id}
-                  section={section}
-                  index={idx}
-                />
+            <div className="space-y-8">
+              {navGroupData.map((group, groupIdx) => (
+                <motion.div
+                  key={group.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35, delay: 0.05 * groupIdx }}
+                  className="relative rounded-2xl border border-slate-200/80 bg-slate-100/40 p-4 shadow-xs dark:border-dark-slate-800/80 dark:bg-dark-slate-900/30 sm:p-5"
+                >
+                  <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between border-b border-slate-200/60 pb-3 dark:border-dark-slate-800/60">
+                    <h3 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-dark-slate-100 sm:text-lg">
+                      {group.title}
+                    </h3>
+                    {group.description && (
+                      <p className="text-xs text-slate-500 dark:text-dark-slate-400 sm:text-right">
+                        {group.description}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-4">
+                    {group.sections.map((section, idx) => (
+                      <LearningSectionCard
+                        key={section.id}
+                        section={section}
+                        index={idx}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
               ))}
             </div>
           </section>

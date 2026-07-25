@@ -32,8 +32,8 @@ DevNote는 Vite 기반 React 19·TypeScript 정적 앱이다.
 └── public/                 # 정적 자산
 ```
 
-- 섹션은 기술별 폴더, 노트는 MDX 파일, 토픽은 노트의 `##` 제목이다.
-- `content/meta.json`의 `pages`는 Fumadocs 스키마 필드다. 문서에서는 이를 섹션 순서로 부르고, 화면·라우트 외에는 “page”라는 표현을 쓰지 않는다.
+- 섹션은 기술별 폴더, 노트는 MDX 파일, 토픽은 노트의 `##` 제목이다. 연관된 섹션 묶음은 섹션그룹으로 부른다.
+- `content/meta.json`의 `pages`는 전체 섹션 순서, `groups`는 학습 목적에 맞춘 섹션그룹 정의다. 문서에서는 이를 섹션 순서 및 섹션그룹으로 부르고, 화면·라우트 외에는 “page”라는 표현을 쓰지 않는다.
 - 테스트는 구현 파일 옆이나 `src/` 아래에 `*.test.ts`·`*.test.tsx` 형식으로 둔다.
 - `.source/`, `build/`, `dist/`, `coverage/`, `node_modules/`는 생성 또는 설치 산출물이므로 커밋하지 않는다.
 
@@ -87,7 +87,7 @@ DevNote는 Vite 기반 React 19·TypeScript 정적 앱이다.
 
 1. 기존 섹션의 파일명·제목·코드 형식을 확인하고, 핵심 작업을 기초→중급→고급→실전으로 나눈다.
 2. `<section>-part1.mdx` 형식의 연속된 노트를 최소 4개 만든다. 제목은 `Part N. ...`으로 쓰고, 위 구성 규칙을 따른다.
-3. `content/<section>/meta.json`에는 표시 이름만, `content/meta.json`에는 섹션 순서를 기록한다. 순서가 애매하면 마지막에 둔다.
+3. `content/<section>/meta.json`에는 표시 이름만, `content/meta.json`에는 `pages`의 섹션 순서와 `groups`의 알맞은 섹션그룹을 기록한다. 순서가 애매하면 마지막에 둔다.
 
 ### 완료 점검
 
@@ -107,7 +107,7 @@ DevNote는 Vite 기반 React 19·TypeScript 정적 앱이다.
 ### UI 구조와 동작
 
 - 모든 화면은 `Layout`을 통해 헤더, 다크 모드, 검색 모달, 모바일 내비게이션을 공유한다. 전역 UI 상태를 개별 화면에 중복하지 않는다.
-- 데스크톱 노트 화면의 `SidebarNav`와 모바일의 `MobileNavDrawer`는 같은 탐색 데이터를 사용한다.
+- 데스크톱 노트 화면의 `SidebarNav`와 모바일의 `MobileNavDrawer`는 같은 탐색 데이터(`navGroupData`, `navData`)를 사용하고, 섹션그룹 단위로 시각적으로 묶어 탐색을 돕는다.
 - 검색은 `content/`에서 자동 생성된 토픽 데이터를 대상으로 하며, 결과 선택 시 해당 노트의 `##` 토픽 해시로 이동해야 한다.
 - 검색 모달과 모바일 내비게이션의 키보드 닫기, 포커스 복원·가두기, 배경 스크롤 잠금을 유지하고 관련 접근성 속성을 점검한다.
 - `useDarkMode`는 `localStorage` 및 시스템 색상 설정과 동기화되어야 한다.

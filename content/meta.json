@@ -1,23 +1,61 @@
 {
+  "groups": [
+    {
+      "id": "database-orm",
+      "title": "데이터베이스 & ORM",
+      "description": "PostgreSQL 기초부터 SQLAlchemy, Alembic 마이그레이션 및 SQLModel",
+      "pages": ["sql", "sqlalchemy", "alembic", "sqlmodel"]
+    },
+    {
+      "id": "fastapi-backend",
+      "title": "FastAPI 백엔드 & 보안",
+      "description": "FastAPI 라우터/의존성 주입과 JWT/OAuth2 로그인 회원 보안",
+      "pages": ["fastapi", "auth"]
+    },
+    {
+      "id": "view-rendering-client",
+      "title": "뷰 렌더링 & 외부 통신",
+      "description": "Jinja2 HTML 템플릿 렌더링 및 HTTPX 비동기 외부 연동 클라이언트",
+      "pages": ["jinja2", "httpx"]
+    },
+    {
+      "id": "testing-operations",
+      "title": "테스트 & 운영",
+      "description": "pytest 자동화 테스트, 로깅 모니터링 및 argparse CLI 주입 스크립트",
+      "pages": ["pytest", "logging", "argparse"]
+    },
+    {
+      "id": "async-validation",
+      "title": "비동기 & 데이터 검증",
+      "description": "Pydantic 데이터 검증/스키마 및 asyncio 비동기 입출력 엔진",
+      "pages": ["pydantic", "asyncio"]
+    },
+    {
+      "id": "python-core",
+      "title": "파이썬 코어 유틸리티",
+      "description": "타입 힌팅, dataclass, pathlib, re, chainmap, itertools 등 파이썬 핵심 도구",
+      "pages": ["typing", "dataclass", "pathlib", "re", "chainmap", "itertools"]
+    }
+  ],
   "pages": [
     "sql",
-    "typing",
-    "pydantic",
     "sqlalchemy",
     "alembic",
     "sqlmodel",
     "fastapi",
+    "auth",
     "jinja2",
-    "dataclass",
-    "chainmap",
+    "httpx",
     "pytest",
     "logging",
-    "itertools",
-    "asyncio",
     "argparse",
+    "pydantic",
+    "asyncio",
+    "typing",
+    "dataclass",
     "pathlib",
-    "httpx",
     "re",
-    "auth"
+    "chainmap",
+    "itertools"
   ]
 }

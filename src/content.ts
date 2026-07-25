@@ -6,8 +6,16 @@ export interface NoteFrontmatter {
   title: string;
 }
 
+export interface ContentGroupMeta {
+  id: string;
+  title: string;
+  description?: string;
+  pages: string[];
+}
+
 export interface ContentMeta {
   title?: string;
+  groups?: ContentGroupMeta[];
   pages?: string[];
 }
 
@@ -56,7 +64,16 @@ export interface Note {
 export interface Section {
   id: string;
   title: string;
+  groupId?: string;
+  groupTitle?: string;
   notes: Note[];
+}
+
+export interface SectionGroup {
+  id: string;
+  title: string;
+  description?: string;
+  sections: Section[];
 }
 
 export type SearchMatchKind =
@@ -125,6 +142,14 @@ const metaFiles = import.meta.glob<ContentMeta>(
     eager: true,
     import: 'default',
     query: { collection: 'docs' },
+  },
+);
+
+const rawMetaFiles = import.meta.glob<ContentMeta>(
+  '/content/**/meta.json',
+  {
+    eager: true,
+    import: 'default',
   },
 );
 
@@ -335,13 +360,55 @@ for (const [filePath, loadNote] of Object.entries(noteLoaders)) {
   sectionMap.set(section.id, section);
 }
 
+function getRootSectionGroups() {
+  const rootMeta = rawMetaFiles['/content/meta.json'];
+  if (!Array.isArray(rootMeta?.groups)) {
+    return [];
+  }
+  return rootMeta.groups;
+}
+
+const rawGroups = getRootSectionGroups();
+const sectionToGroupMap = new Map<string, { groupId: string; groupTitle: string }>();
+
+for (const group of rawGroups) {
+  for (const pageId of group.pages) {
+    sectionToGroupMap.set(pageId, { groupId: group.id, groupTitle: group.title });
+  }
+}
+
 export const navData: Section[] = [...sectionMap.values()]
   .sort((a, b) => {
     const aIndex = sectionOrderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
     const bIndex = sectionOrderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
     return aIndex - bIndex || naturalCollator.compare(a.id, b.id);
   })
-  .map((section) => ({
-    ...section,
-    notes: section.notes.sort((a, b) => naturalCollator.compare(a.id, b.id)),
-  }));
+  .map((section) => {
+    const groupInfo = sectionToGroupMap.get(section.id);
+    return {
+      ...section,
+      groupId: groupInfo?.groupId,
+      groupTitle: groupInfo?.groupTitle,
+      notes: section.notes.sort((a, b) => naturalCollator.compare(a.id, b.id)),
+    };
+  });
+
+export const navGroupData: SectionGroup[] = rawGroups.length > 0
+  ? rawGroups.map((group) => {
+      const sections = group.pages
+        .map((pageId) => navData.find((s) => s.id === pageId))
+        .filter((s): s is Section => Boolean(s));
+      return {
+        id: group.id,
+        title: group.title,
+        description: group.description,
+        sections,
+      };
+    })
+  : [
+      {
+        id: 'default',
+        title: '전체 섹션',
+        sections: navData,
+      },
+    ];
