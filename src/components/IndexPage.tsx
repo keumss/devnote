@@ -156,9 +156,9 @@ export default function IndexPage() {
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.35, delay: 0.05 * groupIdx }}
-                  className="flex flex-col rounded-2xl border border-slate-200/80 bg-slate-100/40 p-4 shadow-xs dark:border-dark-slate-800/80 dark:bg-dark-slate-900/30 sm:p-5"
+                  className="flex flex-col rounded-xl border border-slate-200/90 bg-slate-50/50 p-4 shadow-2xs dark:border-dark-slate-800 dark:bg-dark-slate-900/40 sm:p-5"
                 >
-                  <div className="mb-3.5 flex flex-col gap-1 border-b border-slate-200/60 pb-3 dark:border-dark-slate-800/60">
+                  <div className="mb-3.5 flex flex-col gap-1 border-b border-slate-200/80 pb-3 dark:border-dark-slate-800/80">
                     <h3 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-dark-slate-100">
                       {group.title}
                     </h3>
