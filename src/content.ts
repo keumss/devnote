@@ -192,22 +192,37 @@ function getSectionIdFromMetaPath(filePath: string) {
 }
 
 function getRootSectionOrder() {
-  const rootMeta = metaFiles['/content/meta.json'];
-  if (!Array.isArray(rootMeta?.pages)) {
-    throw new Error('content/meta.json must define the section order in "pages".');
+  const rootMeta = rawMetaFiles['/content/meta.json'];
+  let sectionIds: string[] = [];
+
+  if (Array.isArray(rootMeta?.pages) && rootMeta.pages.length > 0) {
+    sectionIds = rootMeta.pages;
+  } else if (Array.isArray(rootMeta?.groups) && rootMeta.groups.length > 0) {
+    const seen = new Set<string>();
+    for (const group of rootMeta.groups) {
+      if (Array.isArray(group.pages)) {
+        for (const pageId of group.pages) {
+          if (isNonEmptyString(pageId) && !seen.has(pageId)) {
+            seen.add(pageId);
+            sectionIds.push(pageId);
+          }
+        }
+      }
+    }
+  } else {
+    throw new Error('content/meta.json must define the section order in "groups" or "pages".');
   }
 
-  const sectionIds = rootMeta.pages;
   if (sectionIds.length === 0) {
-    throw new Error('content/meta.json "pages" must contain at least one section.');
+    throw new Error('content/meta.json must contain at least one section.');
   }
   if (sectionIds.some((sectionId) => !isNonEmptyString(sectionId) || sectionId.includes('/'))) {
-    throw new Error('content/meta.json "pages" must contain non-empty section folder names.');
+    throw new Error('content/meta.json section order must contain non-empty section folder names.');
   }
 
   const uniqueSectionIds = new Set(sectionIds);
   if (uniqueSectionIds.size !== sectionIds.length) {
-    throw new Error('content/meta.json "pages" must not contain duplicate sections.');
+    throw new Error('content/meta.json section order must not contain duplicate sections.');
   }
 
   return sectionIds;

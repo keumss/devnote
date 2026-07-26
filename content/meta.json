@@ -36,26 +36,5 @@
       "description": "타입 시스템, 표준 라이브러리 및 핵심 데이터 구조·유틸리티 활용",
       "pages": ["typing", "dataclass", "pathlib", "re", "chainmap", "itertools"]
     }
-  ],
-  "pages": [
-    "sql",
-    "sqlalchemy",
-    "alembic",
-    "sqlmodel",
-    "fastapi",
-    "auth",
-    "jinja2",
-    "httpx",
-    "pytest",
-    "logging",
-    "argparse",
-    "pydantic",
-    "asyncio",
-    "typing",
-    "dataclass",
-    "pathlib",
-    "re",
-    "chainmap",
-    "itertools"
   ]
 }

@@ -33,7 +33,7 @@ DevNote는 Vite 기반 React 19·TypeScript 정적 앱이다.
 ```
 
 - 섹션은 기술별 폴더, 노트는 MDX 파일, 토픽은 노트의 `##` 제목이다. 연관된 섹션 묶음은 섹션그룹으로 부른다.
-- `content/meta.json`의 `pages`는 전체 섹션 순서, `groups`는 학습 목적에 맞춘 섹션그룹 정의다. 문서에서는 이를 섹션 순서 및 섹션그룹으로 부르고, 화면·라우트 외에는 “page”라는 표현을 쓰지 않는다.
+- `content/meta.json`의 `groups`는 섹션그룹 및 전체 섹션 순서의 단일 진실 원천(Single Source of Truth)이다. 문서에서는 이를 섹션 순서 및 섹션그룹으로 부르고, 화면·라우트 외에는 “page”라는 표현을 쓰지 않는다.
 - 테스트는 구현 파일 옆이나 `src/` 아래에 `*.test.ts`·`*.test.tsx` 형식으로 둔다.
 - `.source/`, `build/`, `dist/`, `coverage/`, `node_modules/`는 생성 또는 설치 산출물이므로 커밋하지 않는다.
 
@@ -50,7 +50,8 @@ DevNote는 Vite 기반 React 19·TypeScript 정적 앱이다.
 
 - 콘텐츠는 `content/<section>/<note>.mdx`에 쓴다. 기본 변경 범위는 `content/`다. 다른 파일이 필요하면 이유와 대상을 먼저 알린다.
 - 사용자가 지정한 기술만 다룬다. Python은 3.12를 기준으로 한다.
-- frontmatter에는 노트 메타데이터만 둔다. 섹션 이름은 `content/<section>/meta.json`, 섹션 순서는 `content/meta.json`에서 관리한다.
+- frontmatter에는 노트 메타데이터만 둔다. 섹션 이름은 `content/<section>/meta.json`, 섹션 순서 및 그룹은 `content/meta.json`의 `groups`에서 관리한다.
+- 전체 섹션 순서 및 이전·다음 노트 탐색 순서는 `groups`에 정의된 `pages` 순서로부터 자동 파생된다.
 - 노트 순서와 탐색·검색 데이터는 자동 생성된다. 별도 인덱스는 만들지 않는다.
 
 ### 노트 작성
@@ -87,7 +88,7 @@ DevNote는 Vite 기반 React 19·TypeScript 정적 앱이다.
 
 1. 기존 섹션의 파일명·제목·코드 형식을 확인하고, 핵심 작업을 기초→중급→고급→실전으로 나눈다.
 2. `<section>-part1.mdx` 형식의 연속된 노트를 최소 4개 만든다. 제목은 `Part N. ...`으로 쓰고, 위 구성 규칙을 따른다.
-3. `content/<section>/meta.json`에는 표시 이름만, `content/meta.json`에는 `pages`의 섹션 순서와 `groups`의 알맞은 섹션그룹을 기록한다. 순서가 애매하면 마지막에 둔다.
+3. `content/<section>/meta.json`에는 표시 이름만, `content/meta.json`의 `groups`에는 알맞은 섹션그룹과 `pages` 순서를 기록한다. 순서가 애매하면 마지막에 둔다.
 
 ### 완료 점검
 
