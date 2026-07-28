@@ -1,0 +1,150 @@
+---
+title: "Part 1. 기초: 엔진·모델·세션 시작하기"
+---
+
+이 노트의 Python 블록은 REPL·노트북·하나의 임시 스크립트에서 위에서 아래 순서로 실행합니다. 모델과 엔진은 한 번만 준비하고, 뒤 토픽에서는 새로 배우는 세션·쿼리 코드만 추가합니다.
+
+## sqlalchemy 설치하고 가상 환경 준비하기
+
+SQLAlchemy는 Python에서 가장 널리 쓰이는 데이터베이스 도구 키트로, SQL 표현식과 ORM을 모두 제공합니다. SQLModel 등 여러 라이브러리의 기반이며, ORM 동작을 직접 제어해야 할 때 SQLAlchemy API를 사용합니다. SQLite는 Python에 포함되어 별도 서버가 필요하지 않습니다.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install sqlalchemy
+python -c "import sqlalchemy; print(sqlalchemy.__version__)"
+```
+
+```text
+2.0.31
+```
+
+## DeclarativeBase와 Mapped로 Hero·Team 테이블 선언하기
+
+SQLAlchemy 2.0 스타일에서는 `DeclarativeBase`를 상속하여 베이스 클래스를 만들고, `Mapped[type]`으로 타입 힌트를 지정하며 `mapped_column()`으로 제약 조건을 설정합니다. `Mapped[int]`는 `NOT NULL`을 의미하고, `Mapped[int | None]`은 nullable을 의미합니다. `__tablename__`은 테이블 이름을 지정하고, `mapped_column(primary_key=True)`는 ID를 자동 생성합니다. (관계 설정은 Part 2에서 다룹니다)
+
+```python
+from sqlalchemy import String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Team(Base):
+    __tablename__ = 'team'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), index=True)
+    headquarters: Mapped[str] = mapped_column(String(200))
+
+
+class Hero(Base):
+    __tablename__ = 'hero'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), index=True)
+    secret_name: Mapped[str] = mapped_column(String(100))
+    age: Mapped[int | None] = mapped_column(default=None, index=True)
+```
+
+## create_engine과 create_all로 SQLite 테이블 만들기
+
+메모리 내 SQLite 데이터베이스를 위해 `create_engine('sqlite://')`을 사용합니다. `create_engine` 자체는 테이블을 만들지 않으며, 등록된 모델의 테이블을 생성하려면 `Base.metadata.create_all(engine)`을 호출해야 합니다. 실제 프로덕션 환경에서는 마이그레이션 도구를 사용합니다.
+
+```python
+from sqlalchemy import create_engine
+
+engine = create_engine('sqlite://')
+Base.metadata.create_all(engine)
+print('tables ready')
+```
+
+```text
+tables ready
+```
+
+## Session.add와 commit으로 Hero·Team 저장하기
+
+`sqlalchemy.orm`의 `Session`을 사용하여 데이터베이스와 통신합니다. `add_all()`로 객체를 세션에 등록하고, `commit()`으로 트랜잭션을 확정합니다. 데이터베이스에서 할당된 값(예: 자동 생성된 ID)을 다시 불러오려면 `refresh()`를 사용합니다.
+
+```python
+from sqlalchemy.orm import Session
+
+with Session(engine) as session:
+    deadpond = Hero(name='Deadpond', secret_name='Dive Wilson')
+    session.add_all([
+        Team(name='Preventers', headquarters='Sharp Tower'),
+        Team(name='Z-Force', headquarters="Sister Margaret's Bar"),
+        deadpond,
+        Hero(name='Rusty-Man', secret_name='Tommy Sharp', age=48),
+        Hero(name='Spider-Boy', secret_name='Pedro Parqueador', age=16),
+    ])
+    session.commit()
+    session.refresh(deadpond)
+
+print(deadpond.id)
+```
+
+```text
+1
+```
+
+## select와 scalars로 Hero 목록 읽기
+
+SQLAlchemy의 `select()`를 사용하고, 모델 객체를 직접 얻기 위해 `session.scalars()`를 호출합니다. SQLModel과 달리 `session.exec()` 대신 `session.scalars()`를 사용하며, 이는 단일 열 결과(모델 객체)를 반환합니다. 다중 열 쿼리의 경우 `Row` 튜플을 반환하는 `session.execute()`를 사용합니다. 항상 일관된 순서를 위해 `order_by`를 지정합니다.
+
+```python
+from sqlalchemy import select
+
+with Session(engine) as session:
+    heroes = session.scalars(select(Hero).order_by(Hero.name)).all()
+
+print([hero.name for hero in heroes])
+```
+
+```text
+['Deadpond', 'Rusty-Man', 'Spider-Boy']
+```
+
+## where와 Session.get으로 필요한 Hero 찾기
+
+조건을 추가하려면 `where()`를 사용하고, 기본 키로 특정 항목을 찾으려면 `session.get()`을 사용합니다. `get()`은 결과를 찾지 못하면 `None`을 반환하므로 항상 확인해야 합니다. SQL 인젝션을 방지하기 위해 문자열 연결을 절대 사용하지 말고, 항상 표현식 객체(`Hero.age >= 18`)를 사용해야 합니다.
+
+```python
+with Session(engine) as session:
+    adults = session.scalars(select(Hero).where(Hero.age >= 18)).all()
+    spider_boy = session.get(Hero, 3)
+
+print([hero.name for hero in adults])
+print(spider_boy.name if spider_boy else None)
+```
+
+```text
+['Rusty-Man']
+Spider-Boy
+```
+
+## Session.delete와 commit으로 Hero 삭제하기
+
+삭제할 객체를 먼저 가져온 다음, `delete()`를 호출하여 삭제를 예약하고 `commit()`으로 트랜잭션을 확정합니다. 입력이 이미 삭제된 행을 참조할 수 있으므로, 객체가 존재하는지(`None`이 아닌지) 항상 확인해야 합니다.
+
+```python
+with Session(engine) as session:
+    hero = session.get(Hero, 3)
+    if hero is not None:
+        session.delete(hero)
+        session.commit()
+
+with Session(engine) as session:
+    names = session.scalars(select(Hero.name).order_by(Hero.id)).all()
+
+print(names)
+```
+
+```text
+['Deadpond', 'Rusty-Man']
+```
+
+공식 SQLAlchemy [설치 안내](https://docs.sqlalchemy.org/en/20/intro.html), [ORM 모델 선언](https://docs.sqlalchemy.org/en/20/orm/quickstart.html), [세션 기본 사용법](https://docs.sqlalchemy.org/en/20/orm/session_basics.html)을 기준으로 Python 3.12 예제를 구성했습니다.

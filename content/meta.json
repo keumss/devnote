@@ -4,7 +4,7 @@
       "id": "database-orm",
       "title": "데이터베이스 & ORM",
       "description": "관계형 데이터베이스 구조 설계부터 ORM 기반 데이터 모델링 및 마이그레이션",
-      "pages": ["sql", "alembic", "sqlmodel"]
+      "pages": ["sql", "sqlalchemy", "alembic", "sqlmodel"]
     },
     {
       "id": "fastapi-backend",

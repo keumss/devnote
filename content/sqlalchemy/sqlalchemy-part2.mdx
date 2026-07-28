@@ -1,0 +1,170 @@
+---
+title: "Part 2. 중급: 관계와 조인으로 Hero·Team 연결하기"
+---
+
+이 노트는 관계가 있는 별도 SQLite 메모리 데이터베이스를 사용합니다. 첫 토픽의 모델·엔진을 한 번 실행한 뒤, 아래 토픽의 세션 코드와 쿼리를 순서대로 추가합니다.
+
+## ForeignKey와 relationship으로 Hero와 Team 연결하기
+
+한 Team에 여러 Hero가 소속되는 구조를 표현할 때 `mapped_column` 안에서 `ForeignKey('team.id')`를 사용해 `Hero.team_id`를 선언하고, 양쪽 모델에 `relationship(back_populates=...)`을 추가합니다.
+
+```python
+from sqlalchemy import ForeignKey, String, create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Team(Base):
+    __tablename__ = 'team'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), index=True)
+    headquarters: Mapped[str] = mapped_column(String(200))
+    heroes: Mapped[list['Hero']] = relationship(back_populates='team')
+
+
+class Hero(Base):
+    __tablename__ = 'hero'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), index=True)
+    secret_name: Mapped[str] = mapped_column(String(100))
+    age: Mapped[int | None] = mapped_column(default=None, index=True)
+    team_id: Mapped[int | None] = mapped_column(ForeignKey('team.id'), default=None)
+    team: Mapped['Team | None'] = relationship(back_populates='heroes')
+
+
+engine = create_engine('sqlite://')
+Base.metadata.create_all(engine)
+```
+
+`team_id`는 데이터베이스의 외래 키(DB column)이고, `team`과 `heroes`는 Python에서 관계를 탐색하는 속성입니다. `list['Hero']`는 아직 선언되지 않은 클래스를 가리키는 전방 참조입니다. `team_id`가 `None`일 수 있으므로 `team`도 `Team | None`입니다.
+
+## 관계 속성으로 Team과 Hero 시작 데이터 연결하기
+
+Team에 여러 Hero를 묶어 생성하거나, 개별 Hero에 Team을 지정할 때 관계 속성을 사용합니다. `Team(heroes=[...])`와 `Hero(team=...)` 모두 같은 외래 키 연결을 생성합니다. 
+
+```python
+from sqlalchemy.orm import Session
+
+with Session(engine) as session:
+    preventers = Team(
+        name='Preventers',
+        headquarters='Sharp Tower',
+        heroes=[Hero(name='Rusty-Man', secret_name='Tommy Sharp', age=48)],
+    )
+    z_force = Team(name='Z-Force', headquarters="Sister Margaret's Bar")
+    deadpond = Hero(name='Deadpond', secret_name='Dive Wilson', team=z_force)
+    spider_boy = Hero(name='Spider-Boy', secret_name='Pedro Parqueador', age=16)
+
+    session.add_all([preventers, deadpond, spider_boy])
+    session.commit()
+```
+
+이후 토픽들은 이 시작 데이터를 사용합니다. Spider-Boy는 아직 팀에 배정되지 않았습니다.
+
+## hero.team과 team.heroes로 연결된 데이터 읽기
+
+세션이 열려 있는 동안 관계 속성에 접근하여 연결된 데이터를 읽을 수 있습니다. 지연 로딩(Lazy loading) 특성상, 첫 접근 시에만 데이터베이스에 추가 쿼리가 실행됩니다.
+
+```python
+from sqlalchemy import select
+
+with Session(engine) as session:
+    hero = session.scalars(select(Hero).where(Hero.name == 'Deadpond')).one()
+    team = hero.team
+    print(team.name if team else None)
+    print([member.name for member in team.heroes] if team else [])
+```
+
+```text
+Z-Force
+['Deadpond']
+```
+
+`one()`은 결과가 정확히 하나여야 할 때 사용합니다. 결과가 없거나 여럿일 수 있다면 상황에 맞게 `one_or_none()`이나 `first()`를 고릅니다.
+
+## select.join으로 Team 이름으로 Hero 찾기
+
+특정 팀 이름을 가진 Hero를 찾으려면 `select(Hero).join(Hero.team).where(Team.name == 'Preventers')`를 사용합니다. `join`은 기본적으로 내부 조인(INNER JOIN)이 적용됩니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero).join(Hero.team).where(Team.name == 'Preventers')
+    heroes = session.scalars(statement).all()
+
+print([hero.name for hero in heroes])
+```
+
+```text
+['Rusty-Man']
+```
+
+팀이 없는 Spider-Boy는 내부 조인 조건에 맞지 않아 결과에서 제외됩니다. 미배정 데이터도 포함하려면 외부 조인이 필요합니다.
+
+## outerjoin으로 미배정 Hero 포함하기
+
+모든 Hero 명단을 조회하면서 팀이 있다면 팀 정보도 함께 가져오려면 `select(Hero, Team).outerjoin(Hero.team)`을 사용해 왼쪽 외부 조인(LEFT OUTER JOIN)을 만듭니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero, Team).outerjoin(Hero.team).order_by(Hero.name)
+    rows = session.execute(statement).all()
+
+print([(hero.name, team.name if team else None) for hero, team in rows])
+```
+
+```text
+[('Deadpond', 'Z-Force'), ('Rusty-Man', 'Preventers'), ('Spider-Boy', None)]
+```
+
+`outerjoin`은 왼쪽 모델(Hero)의 모든 행을 유지합니다. 여러 엔티티(Hero, Team)를 한 번에 조회할 때는 결과가 튜플 형태의 Row로 반환되므로 `scalars()`가 아닌 `execute()`를 사용합니다.
+
+## 모델 속성을 바꾸고 commit으로 Hero 갱신하기
+
+기존 Hero 정보를 변경하거나 새 팀으로 옮길 때, 객체를 조회하고 속성을 바꾼 뒤 커밋합니다. 세션은 자동으로 변경된 객체(dirty tracking)를 감지합니다.
+
+```python
+with Session(engine) as session:
+    hero = session.scalars(select(Hero).where(Hero.name == 'Spider-Boy')).one()
+    team = session.scalars(select(Team).where(Team.name == 'Preventers')).one()
+    hero.age = 17
+    hero.team = team
+    session.commit()
+    session.refresh(hero)
+
+print(hero.age, hero.team_id)
+```
+
+```text
+17 1
+```
+
+객체 속성을 변경하고 `commit()`을 호출하면 자동으로 `UPDATE` 구문이 실행됩니다.
+
+## team을 None으로 바꿔 Hero를 팀에서 제외하기
+
+기존 팀과의 연결을 끊으려면 관계 속성에 `None`을 대입합니다. 이 작업은 팀 관계가 선택 사항(`Optional`)일 때 가능합니다.
+
+```python
+with Session(engine) as session:
+    hero = session.scalars(select(Hero).where(Hero.name == 'Spider-Boy')).one()
+    print(hero.team_id)
+
+    hero.team = None
+    session.commit()
+    session.refresh(hero)
+    print(hero.team_id)
+```
+
+```text
+1
+None
+```
+
+팀 소속이 반드시 필요한 도메인이라면 `team_id: Mapped[int]`와 `team: Mapped[Team]`처럼 필수 값으로 선언해 `None` 대입을 원천 차단합니다.
+
+공식 SQLAlchemy [관계 설정](https://docs.sqlalchemy.org/en/20/orm/relationships.html), [조인 쿼리](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html), [세션 상태 관리](https://docs.sqlalchemy.org/en/20/orm/session_state_management.html)를 기준으로 Python 3.12 예제를 구성했습니다.
