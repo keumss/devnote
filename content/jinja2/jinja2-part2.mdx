@@ -104,6 +104,40 @@ templates/
 
 include는 기본적으로 현재 context의 `post`, `posts`, `url_for`에 접근합니다. 독립적인 조각이어야 한다면 `without context`를 붙이고 필요한 데이터를 다른 방식으로 명시합니다.
 
+## url_for로 쿼리 매개변수를 전달해 목록 페이지 이동하기
+
+목록 화면에서 페이지 번호나 검색어처럼 쿼리 스트링(Query String)이 필요한 링크를 만들 때 `url_for`에 키워드 인자를 추가합니다. 라우트의 경로 매개변수로 정의되지 않은 키워드 인자는 `?page=2` 형태의 쿼리 매개변수로 자동 생성됩니다.
+
+```python
+@app.get('/posts', response_class=HTMLResponse)
+def post_list(request: Request, page: int = 1):
+    posts = [...]  # 해당 페이지 포스트 목록
+    return templates.TemplateResponse(
+        request=request,
+        name='pages/post-list.html',
+        context={
+            'posts': posts,
+            'page': page,
+            'has_next': True,
+        },
+    )
+```
+
+```html
+<!-- templates/pages/post-list.html 중 페이지네이션 영역 -->
+<nav aria-label="페이지 이동">
+  {% if page > 1 %}
+    <a href="{{ url_for('post_list', page=page - 1) }}">이전</a>
+  {% endif %}
+  <span>{{ page }} 페이지</span>
+  {% if has_next %}
+    <a href="{{ url_for('post_list', page=page + 1) }}">다음</a>
+  {% endif %}
+</nav>
+```
+
+`url_for('post_list', page=2)`를 호출하면 `/posts?page=2` URL이 완성됩니다. 템플릿의 `{% if %}` 조건문과 결합하면 첫 페이지에서 '이전' 링크를 숨기거나 비활성화하는 페이지네이션 내비게이션을 손쉽게 구성할 수 있습니다.
+
 ## macro로 폼 필드와 오류 표시 재사용하기
 
 인수에 따라 조금씩 달라지는 HTML을 반복할 때 macro를 템플릿 함수처럼 정의합니다. 작성과 수정 화면이 같은 입력 필드와 오류 모양을 공유하기에 적합합니다.

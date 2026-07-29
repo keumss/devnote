@@ -144,16 +144,27 @@ macro에 전달되는 제목·본문·오류도 Jinja2가 자동 이스케이프
 
 ## GET `/posts`로 저장된 포스트 목록 읽기
 
-목록 화면을 열 때 세션 안에서 필요한 포스트를 모두 읽고 최신 ID부터 정렬한 뒤 템플릿에 전달합니다. 템플릿에서는 쿼리를 실행하지 않습니다.
+목록 화면을 열 때 `page` 쿼리 매개변수로 지정된 위치부터 정해진 개수의 포스트를 읽어 정렬한 뒤 템플릿에 전달합니다. 템플릿은 `url_for('post_list', page=...)`로 이전/다음 페이지 이동 링크를 출력합니다.
 
 ```python
 @app.get('/posts', name='post_list', response_class=HTMLResponse)
-def post_list(request: Request, session: SessionDep):
-    posts = session.exec(select(BlogPost).order_by(BlogPost.id.desc())).all()
+def post_list(request: Request, session: SessionDep, page: int = 1):
+    limit = 5
+    offset = max(0, page - 1) * limit
+    posts = session.exec(
+        select(BlogPost).order_by(BlogPost.id.desc()).offset(offset).limit(limit + 1)
+    ).all()
+    has_next = len(posts) > limit
+    display_posts = posts[:limit]
+
     return templates.TemplateResponse(
         request=request,
         name='pages/post-list.html',
-        context={'posts': posts},
+        context={
+            'posts': display_posts,
+            'page': page,
+            'has_next': has_next,
+        },
     )
 ```
 
@@ -168,6 +179,16 @@ def post_list(request: Request, session: SessionDep):
   {% else %}
     <p>아직 작성된 포스트가 없습니다.</p>
   {% endfor %}
+
+  <nav class="pagination" aria-label="페이지 이동">
+    {% if page > 1 %}
+      <a href="{{ url_for('post_list', page=page - 1) }}">이전</a>
+    {% endif %}
+    <span>{{ page }} 페이지</span>
+    {% if has_next %}
+      <a href="{{ url_for('post_list', page=page + 1) }}">다음</a>
+    {% endif %}
+  </nav>
 {% endblock %}
 ```
 
@@ -368,6 +389,17 @@ def post_update(
         url=request.url_for('post_detail', post_id=post_id),
         status_code=303,
     )
+
+
+@app.post('/posts/{post_id}/delete', name='post_delete')
+def post_delete(request: Request, post_id: int, session: SessionDep):
+    post = get_post(post_id, session)
+    session.delete(post)
+    session.commit()
+    return RedirectResponse(
+        url=request.url_for('post_list'),
+        status_code=303,
+    )
 ```
 
 ```html
@@ -382,6 +414,9 @@ def post_update(
     <h1>{{ post.title }}</h1>
     <div class="post-content">{{ post.content }}</div>
     <a href="{{ url_for('post_edit_form', post_id=post.id) }}">수정</a>
+    <form action="{{ url_for('post_delete', post_id=post.id) }}" method="post" style="display:inline;">
+      <button type="submit" onclick="return confirm('정말 삭제하시겠습니까?');">삭제</button>
+    </form>
   </article>
 {% endblock %}
 ```
@@ -500,6 +535,18 @@ def test_edit_and_missing_post(client: TestClient) -> None:
     missing = client.get('/posts/999/edit')
     assert missing.status_code == 404
     assert missing.template.name == 'pages/error.html'
+
+
+def test_delete_post_redirects_to_list(client: TestClient) -> None:
+    client.post(
+        '/posts/new',
+        data={'title': '삭제 대상', 'content': '곧 삭제될 데이터입니다.'},
+    )
+    deleted = client.post('/posts/1/delete', follow_redirects=False)
+
+    assert deleted.status_code == 303
+    assert deleted.headers['location'].endswith('/posts')
+    assert client.get('/posts/1').status_code == 404
 ```
 
 ```bash
@@ -507,7 +554,7 @@ pytest -q
 ```
 
 ```text
-3 passed
+4 passed
 ```
 
 템플릿 단위만 검사하지 않고 폼 요청, 데이터베이스 저장, 리다이렉트, 다시 조회한 HTML까지 연결해 사용자가 실제로 거치는 경계를 검증합니다.

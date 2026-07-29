@@ -175,6 +175,34 @@ GET /posts/1  → 200 OK
 
 리다이렉트 URL은 저장된 ID가 확정된 뒤 만듭니다. 검증 실패에는 리다이렉트를 사용하지 않아 입력값과 오류를 현재 응답에서 바로 보여 줍니다.
 
+## HTML 폼 기반 POST 요청으로 데이터 삭제 처리하기
+
+HTML 표준 폼은 `GET`과 `POST` 메서드만 지원하므로, 삭제(Delete) 처리도 `<form method="post">`를 이용해 작성합니다. 링크(`<a>`)를 통한 GET 요청으로 데이터를 삭제하면 검색 엔진 크롤러나 사전 로딩에 의해 의도치 않은 삭제가 일어날 수 있으므로 반드시 POST 폼과 303 리다이렉트를 사용합니다.
+
+```python
+@app.post('/posts/{post_id}/delete', name='post_delete')
+def post_delete(request: Request, post_id: int):
+    # DB 포스트 삭제 처리
+    return RedirectResponse(
+        url=request.url_for('post_list'),
+        status_code=303,
+    )
+```
+
+```html
+<!-- templates/pages/post-detail.html -->
+<form action="{{ url_for('post_delete', post_id=post.id) }}" method="post" onsubmit="return confirm('정말 삭제하시겠습니까?');">
+  <button type="submit" class="btn-danger">포스트 삭제</button>
+</form>
+```
+
+```text
+POST /posts/1/delete → 303 See Other
+GET /posts          → 200 OK
+```
+
+삭제 처리 후에도 작성·수정과 동일하게 `303 See Other`를 반환해 브라우저가 포스트 목록(`post_list`)으로 이동하게 만듭니다. GET 요청이 아닌 POST 폼을 사용해야 안전한 상태 변경 인터페이스가 유지됩니다.
+
 ## StrictUndefined로 누락된 context 발견하기
 
 템플릿 변수 이름을 잘못 썼을 때 빈 문자열로 조용히 표시되지 않게 하려면 `StrictUndefined`를 설정합니다. 이 설정은 첫 템플릿을 불러오기 전에 적용합니다.
