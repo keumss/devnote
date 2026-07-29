@@ -2,7 +2,7 @@
 title: "Part 3. 고급: 미들웨어, 비동기, 에러 처리"
 ---
 
-블로그 API가 커지면 수정·삭제 권한, 요청 전후 처리, 비동기 엔드포인트 선택, 테스트 격리가 중요해집니다. 이 노트에서는 부분 수정, `BackgroundTasks`, 미들웨어, `async def`와 `def` 차이, 소유자 확인 의존성, 트랜잭션 관리, `TestClient`를 다룹니다.
+블로그 API가 커지면 수정·삭제 권한, 요청 전후 처리, 비동기 엔드포인트 선택, 에러 응답 일관성, 테스트 격리가 중요해집니다. 이 노트에서는 부분 수정, `BackgroundTasks`, 비동기 선택, 소유자 확인 의존성, 트랜잭션 관리, 미들웨어, CORS, 글로벌 예외 핸들러, `TestClient`를 다룹니다.
 
 ## exclude_unset으로 보낸 필드만 수정하기
 
@@ -64,39 +64,6 @@ async def upload_image(file: UploadFile, background_tasks: BackgroundTasks) -> d
 ```
 
 `add_task()`에 함수와 인수를 전달하면 응답 전송 뒤 같은 프로세스에서 실행됩니다. 후처리가 실패해도 이미 반환된 응답에는 영향이 없습니다. 실패 처리가 중요하거나 작업 시간이 길면 Celery 같은 작업 큐를 검토합니다.
-
-## 미들웨어로 요청 처리 시간 기록하기
-
-모든 요청의 응답 시간을 측정해 헤더에 넣을 때 미들웨어를 사용합니다. 미들웨어는 모든 요청이 엔드포인트에 도달하기 전과 응답이 반환된 후에 실행됩니다.
-
-```python
-import time
-
-from starlette.requests import Request
-from starlette.responses import Response
-
-
-@app.middleware('http')
-async def add_process_time_header(request: Request, call_next) -> Response:
-    start = time.perf_counter()
-    response = await call_next(request)
-    elapsed = time.perf_counter() - start
-    response.headers['X-Process-Time'] = f'{elapsed:.4f}'
-    return response
-```
-
-```text
-GET /posts → 200, X-Process-Time: 0.0023
-```
-
-미들웨어는 **모든 요청**에 적용됩니다. 특정 경로에만 필요한 로직은 `Depends`로 의존성을 만드는 것이 적합합니다.
-
-| 구분 | 미들웨어 | 의존성(Depends) |
-|------|---------|----------------|
-| 적용 범위 | 모든 요청 | 선언한 엔드포인트만 |
-| 응답 접근 | 가능 (response 가로채기) | 불가 |
-| 요청 데이터 접근 | Request 객체 | 경로·쿼리·본문 매개변수 |
-| 활용 예 | 로깅, CORS, 타이밍 | 인증, DB 세션, 페이지네이션 |
 
 ## async def와 def 엔드포인트 차이 이해하기
 
@@ -191,6 +158,126 @@ def replace_images(post_id: int, new_images: list[PostImageCreate], session: Ses
 
 `begin()` 블록 안에서는 `commit()`을 직접 호출하지 않습니다. 블록이 정상 종료되면 커밋되고, 예외가 전파되면 롤백됩니다. 조회도 블록 안에서 시작해 이미 열린 트랜잭션과 충돌하지 않게 합니다.
 
+## 미들웨어로 요청 처리 시간 기록하기
+
+모든 요청의 응답 시간을 측정해 헤더에 넣을 때 미들웨어를 사용합니다. 미들웨어는 모든 요청이 엔드포인트에 도달하기 전과 응답이 반환된 후에 실행됩니다.
+
+```python
+import time
+
+from starlette.requests import Request
+from starlette.responses import Response
+
+
+@app.middleware('http')
+async def add_process_time_header(request: Request, call_next) -> Response:
+    start = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - start
+    response.headers['X-Process-Time'] = f'{elapsed:.4f}'
+    return response
+```
+
+```text
+GET /posts → 200, X-Process-Time: 0.0023
+```
+
+미들웨어는 **모든 요청**에 적용됩니다. 특정 경로에만 필요한 로직은 `Depends`로 의존성을 만드는 것이 적합합니다.
+
+| 구분 | 미들웨어 | 의존성(Depends) |
+|------|---------|----------------|
+| 적용 범위 | 모든 요청 | 선언한 엔드포인트만 |
+| 응답 접근 | 가능 (response 가로채기) | 불가 |
+| 요청 데이터 접근 | Request 객체 | 경로·쿼리·본문 매개변수 |
+| 활용 예 | 로깅, CORS, 타이밍 | 인증, DB 세션, 페이지네이션 |
+
+## CORSMiddleware로 프론트엔드 접근 허용하기
+
+블로그 프론트엔드(`http://localhost:3000`)가 API(`http://localhost:8000`)에 요청하면 브라우저가 출처가 다르다며 차단합니다. `CORSMiddleware`로 허용할 출처·메서드·헤더를 설정합니다.
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=['http://localhost:3000'],
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*'],
+)
+```
+
+```text
+프론트엔드 http://localhost:3000 → OPTIONS /posts → 200 (preflight 허용)
+프론트엔드 http://localhost:3000 → GET /posts     → 200 (본 요청 허용)
+```
+
+`allow_origins`에 허용할 출처를 명시합니다. `'*'`는 모든 출처를 허용하므로 개발 단계에서만 사용하고, 운영 환경에서는 실제 도메인만 등록합니다. CORS 미들웨어는 다른 미들웨어보다 먼저 등록해야 preflight OPTIONS 요청이 올바르게 처리됩니다.
+
+## 글로벌 예외 핸들러로 에러 응답 통일하기
+
+`HTTPException`만으로는 API 전체의 에러 응답 형식을 통일하기 어렵습니다. 비즈니스 예외 클래스를 정의하고 `@app.exception_handler`로 일관된 에러 응답을 만듭니다.
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+
+app = FastAPI()
+
+
+class BlogError(Exception):
+    def __init__(self, code: str, detail: str, status_code: int = 400):
+        self.code = code
+        self.detail = detail
+        self.status_code = status_code
+
+
+class PostNotFoundError(BlogError):
+    def __init__(self, post_id: int):
+        super().__init__(
+            code='post_not_found',
+            detail=f'포스트 {post_id}를 찾을 수 없습니다.',
+            status_code=404,
+        )
+
+
+class NotPostOwnerError(BlogError):
+    def __init__(self):
+        super().__init__(
+            code='not_post_owner',
+            detail='수정 권한이 없습니다.',
+            status_code=403,
+        )
+
+
+@app.exception_handler(BlogError)
+async def blog_error_handler(request: Request, exc: BlogError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={'error': exc.code, 'detail': exc.detail},
+    )
+```
+
+```python
+@app.get('/posts/{post_id}')
+def get_post(post_id: int, session: SessionDep) -> BlogPost:
+    post = session.get(BlogPost, post_id)
+    if post is None:
+        raise PostNotFoundError(post_id)
+    return post
+```
+
+```text
+GET /posts/999
+404 {"error":"post_not_found","detail":"포스트 999를 찾을 수 없습니다."}
+```
+
+비즈니스 예외를 정의하면 엔드포인트 코드는 비즈니스 로직에만 집중하고, 에러 응답 형식은 핸들러 한 곳에서 관리합니다. `HTTPException`은 단순 에러에, 커스텀 예외는 도메인별 에러 코드가 필요할 때 사용합니다.
+
 ## dependency_overrides와 TestClient로 API 테스트하기
 
 API 테스트가 개발용 데이터베이스를 건드리지 않게 `get_session` 의존성을 테스트 전용 메모리 데이터베이스로 교체합니다.
@@ -239,4 +326,4 @@ def test_update_rejects_another_authors_post() -> None:
 
 권한 실패를 테스트하면 모델 갱신 코드가 소유권 규칙을 우회하지 않는지 확인할 수 있습니다. 테스트가 끝나면 `app.dependency_overrides.clear()`로 교체를 해제합니다.
 
-공식 FastAPI [BackgroundTasks](https://fastapi.tiangolo.com/tutorial/background-tasks/), [미들웨어](https://fastapi.tiangolo.com/tutorial/middleware/), [async/await](https://fastapi.tiangolo.com/async/), [테스트](https://fastapi.tiangolo.com/tutorial/testing/), SQLModel [부분 수정](https://sqlmodel.tiangolo.com/tutorial/fastapi/update/)을 기준으로 Python 3.12 예제를 구성했습니다.
+공식 FastAPI [BackgroundTasks](https://fastapi.tiangolo.com/tutorial/background-tasks/), [미들웨어](https://fastapi.tiangolo.com/tutorial/middleware/), [CORS](https://fastapi.tiangolo.com/tutorial/cors/), [예외 처리](https://fastapi.tiangolo.com/tutorial/handling-errors/), [async/await](https://fastapi.tiangolo.com/async/), [테스트](https://fastapi.tiangolo.com/tutorial/testing/), SQLModel [부분 수정](https://sqlmodel.tiangolo.com/tutorial/fastapi/update/)을 기준으로 Python 3.12 예제를 구성했습니다.
