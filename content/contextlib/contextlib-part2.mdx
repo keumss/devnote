@@ -1,0 +1,233 @@
+---
+title: "Part 2. 중급: 실용 패턴과 데코레이터 활용"
+---
+
+## `contextmanager`로 실행 시간을 측정하는 타이머 만들기
+
+코드 블록의 실행 시간을 측정하고 결과를 참조해야 할 때 사용합니다.
+
+```python
+import time
+from contextlib import contextmanager
+
+@contextmanager
+def timer():
+    t = {"elapsed": 0.0}
+    start = time.perf_counter()
+    yield t
+    end = time.perf_counter()
+    t["elapsed"] = end - start
+
+with timer() as t:
+    time.sleep(0.1)
+
+print(f"실행 시간: {t['elapsed']:.4f}초")
+```
+
+```text
+실행 시간: 0.1011초
+```
+
+* `time.perf_counter()`를 사용하여 정확한 시간을 측정합니다.
+* 블록 내에서 갱신될 수 있도록 딕셔너리나 객체 같은 mutable 타입을 `yield` 합니다.
+* `yield` 이후의 코드는 `with` 블록 종료 시점에 실행됩니다.
+
+## `contextmanager`로 임시 환경변수 설정·복원하기
+
+테스트나 특정 스크립트 실행 중 일시적으로 환경변수를 변경해야 할 때 사용합니다.
+
+```python
+import os
+from contextlib import contextmanager
+
+@contextmanager
+def temp_env(key, value):
+    original = os.environ.get(key)
+    os.environ[key] = value
+    try:
+        yield
+    finally:
+        if original is None:
+            del os.environ[key]
+        else:
+            os.environ[key] = original
+
+with temp_env("MY_VAR", "temp_value"):
+    print("블록 내부:", os.environ.get("MY_VAR"))
+
+print("블록 외부:", os.environ.get("MY_VAR"))
+```
+
+```text
+블록 내부: temp_value
+블록 외부: None
+```
+
+* 예외가 발생하더라도 원래 상태로 복구되도록 반드시 `try...finally` 블록으로 복원 코드를 감싸야 합니다.
+* 기존 환경변수가 존재하지 않았던 경우 삭제(`del`) 처리해야 완전한 복원이 이루어집니다.
+
+## `ContextDecorator`로 with와 데코레이터 겸용 만들기
+
+하나의 클래스를 `with` 문과 함수 데코레이터(`@`) 모두에 사용할 수 있도록 만들고 싶을 때 사용합니다.
+
+```python
+from contextlib import ContextDecorator
+
+class log_tracker(ContextDecorator):
+    def __init__(self, name):
+        self.name = name
+
+    def __enter__(self):
+        print(f"[{self.name}] 진입")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        print(f"[{self.name}] 종료")
+        return False
+
+# with 문으로 사용
+with log_tracker("블록 테스트"):
+    print("블록 실행 중...")
+
+print("---")
+
+# 데코레이터로 사용
+@log_tracker("함수 테스트")
+def my_func():
+    print("함수 실행 중...")
+
+my_func()
+```
+
+```text
+[블록 테스트] 진입
+블록 실행 중...
+[블록 테스트] 종료
+---
+[함수 테스트] 진입
+함수 실행 중...
+[함수 테스트] 종료
+```
+
+* `ContextDecorator`를 상속받아 `__enter__`와 `__exit__`를 구현합니다.
+* 데코레이터로 사용할 때는 `as` 키워드를 통한 바인딩을 할 수 없습니다. `__enter__`의 반환값에 접근할 수 없습니다.
+
+## `@contextmanager`가 자동으로 데코레이터도 되는 이유
+
+`@contextmanager`는 내부적으로 `ContextDecorator`를 사용하기 때문에 선언된 함수 역시 데코레이터로 바로 사용할 수 있습니다. `with`와 데코레이터를 모두 지원해야 하는 간단한 로직에 사용합니다.
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def log_block(name):
+    print(f"[{name}] 시작")
+    yield
+    print(f"[{name}] 끝")
+
+# 데코레이터로 사용
+@log_block("함수 래퍼")
+def process():
+    print("처리 중...")
+
+process()
+```
+
+```text
+[함수 래퍼] 시작
+처리 중...
+[함수 래퍼] 끝
+```
+
+* 데코레이터로 호출될 때마다 매번 새로운 제너레이터 인스턴스가 생성되므로 상태 간섭이 발생하지 않습니다.
+* 클래스 기반의 `ContextDecorator`와 마찬가지로 데코레이터로 사용할 때는 `yield` 된 값을 함수 내에서 직접 참조할 수 없습니다.
+
+## `redirect_stdout()`으로 출력을 캡처하기
+
+함수 내의 `print()`나 표준 출력(stdout)을 터미널 대신 문자열이나 파일로 캡처해야 할 때 사용합니다.
+
+```python
+import io
+import sys
+from contextlib import redirect_stdout
+
+# 문자열로 캡처
+f = io.StringIO()
+with redirect_stdout(f):
+    print("이 메시지는 캡처됩니다.")
+    print("화면에 출력되지 않습니다.")
+
+output = f.getvalue()
+print(f"캡처 결과: {output!r}")
+
+# 파일로 리다이렉트
+with open("output.txt", "w") as file:
+    with redirect_stdout(file):
+        print("파일에 작성됩니다.")
+```
+
+```text
+캡처 결과: '이 메시지는 캡처됩니다.\n화면에 출력되지 않습니다.\n'
+```
+
+* `sys.stdout`을 전역적으로 변경하므로 사이드 이펙트가 발생합니다.
+* 스레드 세이프(thread-safe)하지 않으므로 멀티스레드 환경이나 라이브러리 내부 코드에서는 사용을 권장하지 않습니다.
+* 재진입이 가능(reentrant)하므로 중첩해서 호출할 수 있습니다.
+
+## `redirect_stderr()`로 경고 출력 리다이렉트하기
+
+`redirect_stdout()`과 동일한 방식으로 표준 에러(stderr) 출력을 가로채어 문자열이나 파일로 처리하고 싶을 때 사용합니다.
+
+```python
+import io
+import sys
+import warnings
+from contextlib import redirect_stderr
+
+f = io.StringIO()
+with redirect_stderr(f):
+    # sys.stderr로 바로 출력
+    sys.stderr.write("에러 발생!\n")
+    # warnings도 기본적으로 stderr를 사용
+    warnings.warn("경고 메시지")
+
+print("캡처된 에러:")
+print(f.getvalue())
+```
+
+```text
+캡처된 에러:
+에러 발생!
+UserWarning: 경고 메시지
+```
+
+* `redirect_stdout()`과 특성이 동일합니다 (전역 상태 변경, 스레드 세이프 아님).
+
+## `chdir()`로 작업 디렉토리를 일시적으로 변경하기
+
+특정 스크립트 블록 안에서만 임시로 현재 작업 디렉토리(Current Working Directory)를 변경하고 원래대로 되돌려야 할 때 사용합니다. Python 3.11부터 추가된 기능입니다.
+
+```python
+import os
+from contextlib import chdir
+
+# 테스트용 디렉토리 생성
+os.makedirs("test_dir", exist_ok=True)
+print("변경 전:", os.getcwd())
+
+with chdir("test_dir"):
+    print("블록 내부:", os.getcwd())
+
+print("변경 후:", os.getcwd())
+```
+
+```text
+변경 전: /path/to/original
+블록 내부: /path/to/original/test_dir
+변경 후: /path/to/original
+```
+
+* `os.chdir()`을 사용한 수동 복원에 비해 블록을 벗어날 때 자동으로 원래 디렉토리로 돌아오므로 훨씬 안전합니다.
+* 디렉토리 변경은 현재 프로세스 전체에 영향을 주므로 스레드 세이프하지 않습니다. 비동기(async) 환경에서도 동시 실행되는 다른 작업에 영향을 미칩니다.
+
+공식 Python [contextlib 문서](https://docs.python.org/3.12/library/contextlib.html)의 `ContextDecorator`, `redirect_stdout`, `redirect_stderr`, `chdir` 동작을 기준으로 Python 3.12 예제를 구성했습니다.

@@ -1,0 +1,182 @@
+---
+title: "Part 1. 기초: 컨텍스트 매니저를 간결하게 만들기"
+---
+
+## `contextlib`으로 with 문 도구를 쓰는 이유
+
+`with` 문으로 리소스를 관리할 때, `__enter__`와 `__exit__` 메서드를 가진 클래스를 일일이 작성하는 대신 간결하게 컨텍스트 매니저를 생성할 때 사용합니다. 
+
+```python
+from contextlib import contextmanager
+import time
+
+@contextmanager
+def timer(label):
+    start = time.time()
+    yield
+    end = time.time()
+    print(f"[{label}] 경과 시간: {end - start:.4f}초")
+
+with timer("작업 A"):
+    time.sleep(0.1)
+```
+
+```text
+[작업 A] 경과 시간: 0.1001초
+```
+
+- **핵심 규칙**: 클래스 기반 컨텍스트 매니저보다 코드를 훨씬 짧게 유지할 수 있으며, 이 문서의 모든 예제는 Python 3.12 기준으로 작성되었습니다.
+
+## `contextmanager`로 제너레이터 기반 컨텍스트 매니저 만들기
+
+클래스를 작성하지 않고 함수형으로 자원을 획득하고 해제해야 할 때 사용합니다.
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def managed_resource(name):
+    print(f"{name} 자원 획득")
+    try:
+        yield name
+    finally:
+        print(f"{name} 자원 해제")
+
+with managed_resource("데이터베이스 접속") as resource:
+    print(f"{resource} 사용 중...")
+```
+
+```text
+데이터베이스 접속 자원 획득
+데이터베이스 접속 사용 중...
+데이터베이스 접속 자원 해제
+```
+
+- **핵심 규칙**: `yield`를 기준으로 위쪽은 설정(setup), 아래쪽은 정리(cleanup) 로직을 작성합니다. `finally` 블록을 사용해야 `with` 블록 내에서 예외가 발생하더라도 자원이 확실하게 해제됩니다.
+
+## `contextmanager`에서 예외를 다루는 흐름
+
+`with` 블록 내에서 발생한 예외를 확인하고 로깅하거나 적절히 처리해야 할 때 사용합니다.
+
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def exception_logger():
+    try:
+        yield
+    except Exception as e:
+        print(f"예외 발생 로깅: {e}")
+        raise  # 예외를 다시 발생시켜야 함
+    finally:
+        print("정리 작업 완료")
+
+try:
+    with exception_logger():
+        print("작업 실행")
+        raise ValueError("잘못된 값")
+except ValueError:
+    print("메인 로직에서 예외 처리 완료")
+```
+
+```text
+작업 실행
+예외 발생 로깅: 잘못된 값
+정리 작업 완료
+메인 로직에서 예외 처리 완료
+```
+
+- **핵심 규칙**: 예외를 잡아서(catch) 기록만 할 경우 반드시 `raise`를 호출하여 예외를 다시 던져야(re-raise) 합니다. 다시 던지지 않으면 컨텍스트 매니저가 예외를 삼켜버려 정상 종료된 것으로 간주됩니다.
+
+## `closing()`으로 close 메서드 호출 보장하기
+
+`with` 문을 직접 지원하지 않지만 `.close()` 메서드를 제공하는 외부 라이브러리나 레거시 객체를 다룰 때 사용합니다.
+
+```python
+from contextlib import closing
+
+class LegacyConnection:
+    def __init__(self):
+        print("연결 생성됨")
+        
+    def do_work(self):
+        print("작업 수행 중")
+        
+    def close(self):
+        print("연결 닫힘")
+
+with closing(LegacyConnection()) as conn:
+    conn.do_work()
+```
+
+```text
+연결 생성됨
+작업 수행 중
+연결 닫힘
+```
+
+- **핵심 규칙**: 내부적으로 `finally`에서 `close()` 호출을 보장합니다. 다만 최근의 파이썬 내장 객체들은 대부분 컨텍스트 매니저 프로토콜을 직접 지원하므로, 주로 호환성이 필요한 서드파티 타입에 사용합니다.
+
+## `suppress()`로 특정 예외 무시하기
+
+`try/except: pass` 패턴 대신, 특정 예외를 의도적으로 무시하고 실행을 계속할 때 사용합니다.
+
+```python
+from contextlib import suppress
+import os
+
+# 파일이 없어도 FileNotFoundError 예외를 무시함
+with suppress(FileNotFoundError):
+    os.remove("non_existent_file.tmp")
+    
+print("프로그램 계속 실행됨")
+```
+
+```text
+프로그램 계속 실행됨
+```
+
+- **핵심 규칙**: 무시해도 안전하다는 것이 확실한 아주 구체적인 예외 타입에만 사용해야 합니다. 여러 예외 타입을 튜플로 지정할 수도 있으며, `suppress`는 재진입이 가능(reentrant)합니다.
+
+## `nullcontext()`로 선택적 컨텍스트 매니저 구현하기
+
+조건에 따라 컨텍스트 매니저를 사용할 수도 있고 안 할 수도 있는 함수에서 대체(fallback) 수단이 필요할 때 사용합니다.
+
+```python
+from contextlib import nullcontext
+from contextlib import contextmanager
+
+@contextmanager
+def dummy_lock():
+    print("락 획득")
+    yield
+    print("락 해제")
+
+def process_data(use_lock=False):
+    # 조건에 따라 실제 CM 또는 아무 동작도 안하는 CM 선택
+    cm = dummy_lock() if use_lock else nullcontext()
+    
+    with cm:
+        print("데이터 처리 중")
+
+print("--- 락 미사용 ---")
+process_data(use_lock=False)
+
+print("\n--- 락 사용 ---")
+process_data(use_lock=True)
+```
+
+```text
+--- 락 미사용 ---
+데이터 처리 중
+
+--- 락 사용 ---
+락 획득
+데이터 처리 중
+락 해제
+```
+
+- **핵심 규칙**: `nullcontext(value)` 형태로 값을 전달하면 `__enter__`에서 그 값을 그대로 반환합니다. 조건 분기로 인해 `with` 문 안팎의 코드 흐름이 복잡해지는 것을 막아줍니다.
+
+
+공식 Python [contextlib 문서](https://docs.python.org/3.12/library/contextlib.html)의 `contextmanager`, `closing`, `suppress`, `nullcontext` 동작을 기준으로 Python 3.12 예제를 구성했습니다.
