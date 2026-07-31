@@ -126,6 +126,24 @@ print(spider_boy.name if spider_boy else None)
 Spider-Boy
 ```
 
+## offset과 limit으로 Hero 목록 범위 나누기
+
+목록 화면에서 한 번에 모든 Hero를 보내지 않고 일부만 읽을 때 `offset()`과 `limit()`을 함께 사용합니다. `offset`은 건너뛸 행 수이고, 일정한 결과를 얻으려면 먼저 `order_by()`로 순서를 고정합니다.
+
+```python
+with Session(engine) as session:
+    statement = select(Hero).order_by(Hero.id).offset(1).limit(2)
+    heroes = session.scalars(statement).all()
+
+print([hero.name for hero in heroes])
+```
+
+```text
+['Rusty-Man', 'Spider-Boy']
+```
+
+이 예제에서 첫 번째 Hero를 건너뛰고 다음 두 행을 읽습니다. 페이지 번호와 크기가 입력값이라면 음수·과도한 크기를 호출 전에 제한하고, 데이터가 매우 큰 목록은 키셋 페이지네이션도 검토합니다.
+
 ## Session.delete와 commit으로 Hero 삭제하기
 
 삭제할 객체를 먼저 가져온 다음, `delete()`를 호출하여 삭제를 예약하고 `commit()`으로 트랜잭션을 확정합니다. 입력이 이미 삭제된 행을 참조할 수 있으므로, 객체가 존재하는지(`None`이 아닌지) 항상 확인해야 합니다.
@@ -147,4 +165,4 @@ print(names)
 ['Deadpond', 'Rusty-Man']
 ```
 
-공식 SQLAlchemy [설치 안내](https://docs.sqlalchemy.org/en/20/intro.html), [ORM 모델 선언](https://docs.sqlalchemy.org/en/20/orm/quickstart.html), [세션 기본 사용법](https://docs.sqlalchemy.org/en/20/orm/session_basics.html)을 기준으로 Python 3.12 예제를 구성했습니다.
+공식 SQLAlchemy [설치 안내](https://docs.sqlalchemy.org/en/20/intro.html), [ORM 모델 선언](https://docs.sqlalchemy.org/en/20/orm/quickstart.html), [범위 조회 가이드](https://docs.sqlalchemy.org/en/20/orm/queryguide/select.html#limiting-and-offsetting), [세션 기본 사용법](https://docs.sqlalchemy.org/en/20/orm/session_basics.html)을 기준으로 Python 3.12 예제를 구성했습니다.
