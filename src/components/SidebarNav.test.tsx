@@ -36,7 +36,7 @@ describe('SidebarNav', () => {
     expect(activeLink).toHaveAttribute('href', getNotePath(section.id, activeNote.id));
     expect(activeLink).toHaveAttribute('aria-current', 'page');
     expect(activeLink).toHaveClass('transition-[color]', 'dark:text-dark-indigo-300');
-    expect(inactiveLink).toHaveClass('transition-[color]', 'dark:hover:bg-dark-slate-800/30');
+    expect(inactiveLink).toHaveClass('transition-[color]', 'dark:hover:bg-dark-slate-800/50');
     expect(activeLink).not.toHaveClass('transition-colors');
     expect(inactiveLink).not.toHaveClass('transition-colors');
   });

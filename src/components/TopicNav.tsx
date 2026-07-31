@@ -52,7 +52,7 @@ export default function TopicNav({
                   className={`group flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs leading-normal outline-none transition-[color] duration-150 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500 ${
                     isActive
                       ? 'bg-indigo-50/80 font-normal text-indigo-600 dark:bg-dark-indigo-500/10 dark:text-dark-indigo-300'
-                      : 'text-slate-600 font-normal hover:bg-slate-100/60 hover:text-slate-900 dark:text-dark-slate-400 dark:hover:bg-dark-slate-800/70 dark:hover:text-dark-slate-200'
+                      : 'text-slate-600 font-normal hover:bg-slate-100 hover:text-slate-900 dark:text-dark-slate-400 dark:hover:bg-dark-slate-800/50 dark:hover:text-dark-slate-200'
                   }`}
                 >
                   <span className={`mt-0.5 shrink-0 text-[10px] font-bold ${

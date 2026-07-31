@@ -26,7 +26,7 @@ describe('TopicNav', () => {
       'location',
     );
     expect(activeTopic).toHaveClass('transition-[color]', 'dark:bg-dark-indigo-500/10');
-    expect(inactiveTopic).toHaveClass('transition-[color]', 'dark:hover:bg-dark-slate-800/70');
+    expect(inactiveTopic).toHaveClass('transition-[color]', 'dark:hover:bg-dark-slate-800/50');
     expect(activeTopic).not.toHaveClass('transition-colors');
     expect(inactiveTopic).not.toHaveClass('transition-colors');
 

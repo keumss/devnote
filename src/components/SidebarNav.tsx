@@ -32,7 +32,7 @@ function NavNoteItem({
         className={`w-full flex items-start justify-between px-2.5 py-1.5 rounded-md text-left transition-[color] duration-150 ${
           isActive
             ? 'bg-indigo-50/80 dark:bg-dark-indigo-500/15 text-indigo-600 dark:text-dark-indigo-300 font-normal'
-            : 'text-slate-600 dark:text-dark-slate-400 hover:text-slate-900 dark:hover:text-dark-slate-200 hover:bg-slate-100/60 dark:hover:bg-dark-slate-800/30 font-normal'
+            : 'text-slate-600 dark:text-dark-slate-400 hover:text-slate-900 dark:hover:text-dark-slate-200 hover:bg-slate-100 dark:hover:bg-dark-slate-800/50 font-normal'
         }`}
       >
         <span className="min-w-0">
@@ -74,7 +74,7 @@ function NavSectionItem({
         className={`w-full flex items-center justify-between text-left text-[13px] font-semibold px-2.5 py-1.5 rounded-md transition-colors ${
           isSectionActive
             ? 'text-indigo-600 dark:text-dark-indigo-400'
-            : 'text-slate-700 dark:text-dark-slate-300 hover:text-slate-900 dark:hover:text-dark-slate-100 hover:bg-slate-100/60 dark:hover:bg-dark-slate-800/40'
+            : 'text-slate-700 dark:text-dark-slate-300 hover:text-slate-900 dark:hover:text-dark-slate-100 hover:bg-slate-100 dark:hover:bg-dark-slate-800/50'
         }`}
       >
         <span className="truncate">{section.title}</span>
