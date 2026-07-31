@@ -123,28 +123,29 @@ def get_post(post_id: int) -> dict:
 
 응답 JSON에는 `internal_flag`가 포함되지 않습니다. 요청 모델(`BlogPostCreate`)과 응답 모델(`BlogPostPublic`)을 분리하면 API의 입출력 경계가 분명해집니다.
 
-## HTTPException으로 없는 포스트를 404로 응답하기
+## HTTPException으로 오류 응답 보내기
 
-존재하지 않는 포스트 ID를 요청했을 때 빈 성공 응답 대신 404를 돌려줍니다. `Session.get()`은 기본 키로 한 행을 찾고, 없으면 `None`을 반환합니다.
+존재하지 않는 포스트 ID를 요청했을 때 빈 성공 응답 대신 적절한 상태 코드와 메시지를 돌려줍니다. `raise HTTPException()`은 즉시 응답을 반환하고 함수 실행을 중단합니다.
 
 ```python
 from fastapi import HTTPException
 
+posts = {1: {'id': 1, 'title': '첫 포스트', 'content': '블로그를 시작합니다.'}}
 
-@app.get('/posts/{post_id}', response_model=BlogPostPublic)
-def get_post(post_id: int, session: SessionDep) -> BlogPost:
-    post = session.get(BlogPost, post_id)
-    if post is None:
+
+@app.get('/posts/{post_id}')
+def get_post(post_id: int) -> dict:
+    if post_id not in posts:
         raise HTTPException(status_code=404, detail='포스트를 찾을 수 없습니다.')
-    return post
+    return posts[post_id]
 ```
 
 ```text
-GET /posts/999
-404 {"detail":"포스트를 찾을 수 없습니다."}
+GET /posts/1    → 200 {"id":1,"title":"첫 포스트","content":"블로그를 시작합니다."}
+GET /posts/999  → 404 {"detail":"포스트를 찾을 수 없습니다."}
 ```
 
-라우트 함수의 반환 타입은 성공 시의 `BlogPost`이고, 실패 흐름은 `HTTPException`으로 분리됩니다. 상태 코드별로 의미가 다르므로 적절한 코드를 선택합니다.
+성공 흐름은 `return`으로, 실패 흐름은 `HTTPException`으로 분리합니다. 이후 CRUD 토픽에서 데이터베이스 세션과 함께 사용하는 패턴을 확인합니다.
 
 ## Depends와 Session으로 요청마다 DB 세션 만들기
 
