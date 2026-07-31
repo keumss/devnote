@@ -1,6 +1,7 @@
 import { Suspense, useEffect, useRef } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import NavigationButton from './NavigationButton';
+import TopNoteNavigation from './TopNoteNavigation';
 import SidebarNav from './SidebarNav';
 import TopicNav from './TopicNav';
 import Layout from './Layout';
@@ -129,9 +130,12 @@ export default function NotePage() {
               className="max-w-3xl mx-auto"
             >
               <div className="mb-10 block">
-                <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-dark-slate-800/80 text-slate-600 dark:text-dark-slate-300 text-xs font-semibold uppercase tracking-widest mb-4 border border-slate-200 dark:border-dark-slate-700/50 shadow-xs">
-                  {activeSection.title}
-                </span>
+                <div className="flex items-center justify-between gap-2 mb-4">
+                  <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-dark-slate-800/80 text-slate-600 dark:text-dark-slate-300 text-xs font-semibold uppercase tracking-widest border border-slate-200 dark:border-dark-slate-700/50 shadow-xs">
+                    {activeSection.title}
+                  </span>
+                  <TopNoteNavigation prevNoteInfo={prevNoteInfo} nextNoteInfo={nextNoteInfo} />
+                </div>
                 <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-dark-slate-200 tracking-tight leading-tight">
                   {activeNote.title}
                 </h2>

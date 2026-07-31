@@ -39,6 +39,11 @@ describe('NotePage note navigation', () => {
     expect(within(previousLink).getByText(previousNote.section.title)).toBeInTheDocument();
     expect(within(nextLink).getByText(nextNote.section.title)).toBeInTheDocument();
 
+    const topPreviousLink = await findByRole('link', { name: `이전 노트: ${previousNote.note.title}` });
+    const topNextLink = await findByRole('link', { name: `다음 노트: ${nextNote.note.title}` });
+    expect(topPreviousLink).toBeInTheDocument();
+    expect(topNextLink).toBeInTheDocument();
+
     fireEvent.click(nextLink);
 
     await waitFor(() => {
