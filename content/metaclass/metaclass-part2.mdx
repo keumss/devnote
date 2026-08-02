@@ -1,0 +1,218 @@
+---
+title: "Part 2. 중급: 클래스 선언을 수집하고 생성 흐름 제어하기"
+---
+
+기초에서 클래스 생성 시점의 검사와 등록을 익혔다면, 이제 요구 범위에 맞는 훅을 선택하고 클래스 본문 실행 전후의 데이터를 다룹니다. 등록, 중복 선언 검사, 디스크립터 연결, 클래스 키워드, 인스턴스 캐시를 각각 가장 좁은 도구로 구현합니다.
+
+## __init_subclass__()로 하위 클래스만 가볍게 검사하기
+
+기반 클래스를 상속하는 모든 구현이 메서드 하나를 제공해야 한다면 `__init_subclass__()`에서 생성된 하위 클래스를 확인할 수 있습니다. 클래스 네임스페이스 준비나 인스턴스 생성 제어가 필요하지 않으므로 별도 메타클래스를 만들 이유가 없습니다.
+
+```python
+class Exporter:
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if 'export' not in cls.__dict__:
+            raise TypeError(f'{cls.__name__}에 export()가 필요합니다.')
+
+
+class JsonExporter(Exporter):
+    def export(self, value: object) -> str:
+        return f'json:{value}'
+
+
+print(JsonExporter().export(3))
+```
+
+```text
+json:3
+```
+
+`cls.__dict__`를 확인하므로 각 하위 클래스가 `export()`를 직접 구현해야 합니다. 상속된 구현도 허용하려면 `callable(getattr(cls, 'export', None))`처럼 생성된 클래스 전체를 확인합니다.
+
+## 클래스 데코레이터로 한 클래스만 변환하기
+
+특정 클래스 하나에 속성을 더할 때는 클래스 데코레이터가 적용 범위를 가장 분명하게 보여 줍니다. 데코레이터는 생성된 클래스 객체를 받아 수정한 뒤 돌려줍니다.
+
+```python
+def add_resource(cls: type) -> type:
+    cls.resource = cls.__name__.removesuffix('Controller').lower()
+    return cls
+
+
+@add_resource
+class OrderController:
+    pass
+
+
+class SpecialOrderController(OrderController):
+    pass
+
+
+print(OrderController.resource)
+print(SpecialOrderController.resource)
+```
+
+```text
+order
+order
+```
+
+데코레이터는 `OrderController`에 한 번만 실행되므로 하위 클래스는 값을 상속할 뿐 이름에 맞춰 다시 계산하지 않습니다. 모든 하위 클래스에 반복 적용해야 한다면 `__init_subclass__()`나 메타클래스가 맞습니다.
+
+## __prepare__()로 클래스 본문의 중복 선언 막기
+
+클래스 본문이 실행되는 동안 같은 이름을 두 번 선언하는 실수를 찾아야 한다면 `__prepare__()`에서 검사 가능한 매핑을 제공합니다. 이 훅은 클래스 네임스페이스가 채워지기 전에 호출됩니다.
+
+```python
+class UniqueNamespace(dict):
+    def __setitem__(self, key, value):
+        if key in self and not key.startswith('__'):
+            raise TypeError(f'이름 중복: {key}')
+        super().__setitem__(key, value)
+
+
+class UniqueMeta(type):
+    @classmethod
+    def __prepare__(mcls, name, bases):
+        return UniqueNamespace()
+
+
+try:
+    class Report(metaclass=UniqueMeta):
+        title = '월간 보고서'
+        title = '주간 보고서'
+except TypeError as error:
+    print(error)
+```
+
+```text
+이름 중복: title
+```
+
+기본 네임스페이스도 선언 순서를 보존하므로 순서만 필요하다면 `__prepare__()`를 재정의할 필요가 없습니다. 쓰기 자체를 관찰하거나 제한할 때만 사용자 정의 매핑을 사용합니다.
+
+## __set_name__()으로 디스크립터의 필드 이름 받기
+
+클래스 속성에 놓인 객체가 자신이 배정된 이름만 알아야 한다면 메타클래스 대신 디스크립터의 `__set_name__()`을 사용합니다. `type.__new__()`가 클래스를 만들면서 이 훅을 자동으로 호출합니다.
+
+```python
+class Field:
+    def __set_name__(self, owner, name):
+        self.storage_name = f'_{name}'
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        return getattr(instance, self.storage_name)
+
+    def __set__(self, instance, value):
+        setattr(instance, self.storage_name, value)
+
+
+class Product:
+    price = Field()
+
+
+product = Product()
+product.price = 59_000
+print(product.price)
+print(Product.price.storage_name)
+```
+
+```text
+59000
+_price
+```
+
+필드별 저장 이름처럼 속성 하나의 책임은 디스크립터에 둡니다. 메타클래스는 여러 속성을 함께 수집하거나 클래스 전체 계약을 검사할 때 사용합니다.
+
+## 클래스 키워드로 생성 정책에 값 전달하기
+
+클래스마다 버전이나 등록 키를 선언부에서 명시하려면 기반 클래스 목록 뒤에 키워드를 적습니다. 메타클래스 훅은 `metaclass`를 제외한 키워드를 받아 클래스 속성으로 반영할 수 있습니다.
+
+```python
+class VersionedMeta(type):
+    def __new__(mcls, name, bases, namespace, *, version, **kwargs):
+        cls = super().__new__(mcls, name, bases, namespace, **kwargs)
+        cls.version = version
+        return cls
+
+
+class PublicApi(metaclass=VersionedMeta, version=2):
+    pass
+
+
+print(PublicApi.version)
+```
+
+```text
+2
+```
+
+알 수 없는 키워드를 다음 훅이 처리할 수 있도록 `**kwargs`로 받고 `super()`에 전달합니다. 현재 메타클래스가 소비한 `version`은 다시 넘기지 않습니다.
+
+## __call__()로 클래스 호출 결과 캐시하기
+
+같은 클래스와 키가 항상 같은 인스턴스를 뜻해야 하는 제한된 경우에는 메타클래스의 `__call__()`에서 생성 결과를 캐시할 수 있습니다. 클래스 호출은 이 훅을 거친 뒤 일반적인 인스턴스 `__new__()`와 `__init__()`로 이어집니다.
+
+```python
+class KeyedCacheMeta(type):
+    _instances: dict[tuple[type, str], object] = {}
+
+    def __call__(cls, key: str):
+        cache_key = (cls, key)
+        if cache_key not in cls._instances:
+            cls._instances[cache_key] = super().__call__(key)
+        return cls._instances[cache_key]
+
+
+class Region(metaclass=KeyedCacheMeta):
+    def __init__(self, code: str):
+        self.code = code
+
+
+first = Region('kr')
+second = Region('kr')
+print(first is second)
+print(first.code)
+```
+
+```text
+True
+kr
+```
+
+캐시된 호출에서는 `__init__()`이 다시 실행되지 않습니다. 객체 동일성이 업무 규칙이고 생성자 인수가 작고 안정적일 때만 사용하며, 일반 객체에 숨은 전역 상태를 만들지 않습니다.
+
+## 클래스 생성 오류로 잘못된 선언 일찍 차단하기
+
+메타클래스 검사는 인스턴스 사용 시점이 아니라 클래스 정의 시점에 실행됩니다. 잘못된 선언을 즉시 `TypeError`로 바꾸면 애플리케이션 시작이나 테스트 수집 단계에서 원인을 찾을 수 있습니다.
+
+```python
+class RouteMeta(type):
+    def __new__(mcls, name, bases, namespace):
+        path = namespace.get('path')
+        if bases and (not isinstance(path, str) or not path.startswith('/')):
+            raise TypeError(f'{name}.path는 /로 시작해야 합니다.')
+        return super().__new__(mcls, name, bases, namespace)
+
+
+class Route(metaclass=RouteMeta):
+    pass
+
+
+try:
+    class UserRoute(Route):
+        path = 'users'
+except TypeError as error:
+    print(error)
+```
+
+```text
+UserRoute.path는 /로 시작해야 합니다.
+```
+
+가져오는 것만으로 외부 I/O까지 실행하면 테스트와 시작 순서가 불안정해집니다. 클래스 생성 단계에서는 선언 검증과 메모리 내 메타데이터 구성처럼 빠르고 결정적인 작업만 수행합니다.
+
+공식 Python 3.12 데이터 모델의 [`__init_subclass__()`](https://docs.python.org/3.12/reference/datamodel.html#object.__init_subclass__), [`__set_name__()`](https://docs.python.org/3.12/reference/datamodel.html#object.__set_name__), [클래스 네임스페이스 준비](https://docs.python.org/3.12/reference/datamodel.html#preparing-the-class-namespace)를 기준으로 구성했습니다.

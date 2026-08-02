@@ -34,7 +34,7 @@
       "id": "python-core",
       "title": "파이썬 코어 유틸리티",
       "description": "타입 시스템, 표준 라이브러리 및 핵심 데이터 구조·유틸리티 활용",
-      "pages": ["typing", "dataclass", "pathlib", "re", "chainmap", "itertools", "contextlib"]
+      "pages": ["typing", "dataclass", "pathlib", "re", "chainmap", "itertools", "contextlib", "metaclass"]
     }
   ]
 }

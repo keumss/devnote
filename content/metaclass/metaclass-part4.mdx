@@ -1,0 +1,165 @@
+---
+title: "Part 4. 실전: 자동 등록 명령 디스패처 만들기"
+---
+
+이번에는 `command_runner.py` 하나로 텍스트 명령을 읽어 알맞은 처리 클래스를 찾아 실행하는 도구를 만듭니다. 목표는 구체 명령 클래스가 정의될 때 이름을 검증해 자동 등록하고, 추상 클래스는 제외하며, 중복 명령과 잘못된 사용자 입력을 분명한 오류로 처리하는 것입니다. 아래 코드 블록을 순서대로 같은 파일에 추가합니다.
+
+## ABCMeta와 abstractmethod로 명령 계약 준비하기
+
+먼저 추상 계약과 자동 등록을 함께 처리할 `CommandMeta`를 만듭니다. 구체 클래스는 `command=` 클래스 키워드로 명령 이름을 전달하고, 메타클래스는 빈 이름과 중복 이름을 클래스 정의 시점에 거부합니다.
+
+```python
+# command_runner.py
+from __future__ import annotations
+
+import sys
+from abc import ABCMeta, abstractmethod
+from collections.abc import Iterable
+
+
+class CommandError(Exception):
+    pass
+
+
+class CommandMeta(ABCMeta):
+    registry: dict[str, type] = {}
+
+    def __new__(
+        mcls,
+        name,
+        bases,
+        namespace,
+        *,
+        command: str | None = None,
+        **kwargs,
+    ):
+        cls = super().__new__(mcls, name, bases, namespace, **kwargs)
+
+        if cls.__abstractmethods__:
+            return cls
+        if not isinstance(command, str) or not command.strip():
+            raise TypeError(f'{name}에 비어 있지 않은 command가 필요합니다.')
+
+        normalized = command.strip().lower()
+        if normalized in mcls.registry:
+            raise TypeError(f'중복 명령: {normalized}')
+
+        cls.command = normalized
+        mcls.registry[normalized] = cls
+        return cls
+
+
+class Command(metaclass=CommandMeta):
+    @abstractmethod
+    def run(self, args: list[str]) -> str:
+        raise NotImplementedError
+```
+
+`Command`에는 추상 메서드가 남아 있으므로 등록하지 않습니다. 메타클래스가 `command`를 소비하고 `ABCMeta`에는 나머지 키워드만 전달해 추상 클래스 생성 규칙을 유지합니다.
+
+## command=로 인사와 합계 명령 자동 등록하기
+
+이제 두 구체 클래스를 선언합니다. 클래스 정의가 끝나는 즉시 `CommandMeta`가 `hello`와 `sum`을 키로 등록하므로 별도의 등록 함수 호출이 필요하지 않습니다.
+
+```python
+class HelloCommand(Command, command='hello'):
+    def run(self, args: list[str]) -> str:
+        if len(args) != 1:
+            raise CommandError('hello는 이름 하나가 필요합니다.')
+        return f'안녕하세요, {args[0]}!'
+
+
+class SumCommand(Command, command='sum'):
+    def run(self, args: list[str]) -> str:
+        if not args:
+            raise CommandError('sum은 정수가 하나 이상 필요합니다.')
+        try:
+            numbers = [int(value) for value in args]
+        except ValueError as error:
+            raise CommandError('sum 인수는 모두 정수여야 합니다.') from error
+        return str(sum(numbers))
+```
+
+새 명령을 추가할 때는 `Command`를 상속하고 `run()`과 고유한 `command=`만 선언하면 됩니다. 두 클래스 정의가 끝나면 레지스트리 키는 `hello`, `sum`이 됩니다. 같은 이름은 클래스 생성 단계에서 거부되고, 추상 메서드를 구현하지 않은 클래스는 추상 클래스로 남아 등록에서 제외됩니다.
+
+## resolve_command()로 등록된 클래스 인스턴스 만들기
+
+사용자가 입력한 명령 이름을 실행 객체로 바꾸는 조회 경계를 만듭니다. 사전에 없는 이름은 내부의 `KeyError`를 노출하지 않고 사용자가 이해할 수 있는 `CommandError`로 바꿉니다.
+
+```python
+def resolve_command(name: str) -> Command:
+    command_class = CommandMeta.registry.get(name.lower())
+    if command_class is None:
+        raise CommandError(f'지원하지 않는 명령: {name}')
+    return command_class()
+```
+
+명령 이름은 소문자로 정규화하므로 `resolve_command('HELLO')`도 `HelloCommand` 인스턴스를 돌려줍니다. 레지스트리에는 클래스 객체를 저장하고 요청마다 인스턴스를 만듭니다. 명령 객체에 요청별 상태가 생겨도 다른 실행과 섞이지 않으며, 생성자 의존성이 필요해지면 `resolve_command()`가 주입 지점이 됩니다.
+
+## execute_line()으로 명령 이름과 인수 분리하기
+
+입력 한 줄은 첫 단어를 명령 이름으로, 나머지를 인수로 해석합니다. 빈 줄은 명령으로 실행하지 않고 명시적인 오류로 처리합니다.
+
+```python
+def execute_line(line: str) -> str:
+    parts = line.split()
+    if not parts:
+        raise CommandError('빈 명령입니다.')
+
+    name, *args = parts
+    command = resolve_command(name)
+    return command.run(args)
+```
+
+`execute_line('sum 3 4 5')`의 결과는 문자열 `'12'`입니다. 파싱은 명령 선택까지만 담당하고 인수 개수와 값 검증은 각 명령 클래스가 맡습니다. 명령마다 다른 입력 규칙이 한 함수의 긴 조건문으로 모이지 않습니다.
+
+## process_lines()와 main()으로 실패 위치와 종료 상태 표시하기
+
+마지막으로 표준 입력을 순서대로 처리하고 실패한 줄 번호를 표준 오류에 씁니다. 한 줄이 실패해도 나머지 명령은 처리하되, 하나라도 실패했다면 종료 상태 1을 반환합니다.
+
+```python
+def process_lines(lines: Iterable[str]) -> int:
+    status = 0
+
+    for position, raw in enumerate(lines, start=1):
+        if not raw.strip():
+            continue
+        try:
+            print(execute_line(raw))
+        except CommandError as error:
+            print(f'{position}번째 줄: {error}', file=sys.stderr)
+            status = 1
+
+    return status
+
+
+def main() -> int:
+    return process_lines(sys.stdin)
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
+```
+
+앞선 코드를 `command_runner.py`로 합친 뒤 정상 명령과 두 가지 실패를 함께 확인합니다. `-u`는 표준 출력과 표준 오류가 입력 순서대로 보이도록 버퍼링을 끕니다.
+
+```bash
+printf '%s\n' \
+  'hello Mira' \
+  'sum 3 4 5' \
+  'sum 3 two' \
+  'remove old-data' \
+  | python -u command_runner.py 2>&1; echo $?
+```
+
+```text
+안녕하세요, Mira!
+12
+3번째 줄: sum 인수는 모두 정수여야 합니다.
+4번째 줄: 지원하지 않는 명령: remove
+1
+```
+
+새 명령 클래스의 선언 자체가 검증과 등록을 완료하고, 실행 단계는 레지스트리 조회와 사용자 입력 오류만 다룹니다. 클래스 생성 정책과 요청 처리 경계를 분리하면 명령 수가 늘어도 디스패처를 수정하지 않고 확장할 수 있습니다.
+
+공식 Python 3.12 [`ABCMeta` 문서](https://docs.python.org/3.12/library/abc.html#abc.ABCMeta)와 [메타클래스를 통한 클래스 생성 과정](https://docs.python.org/3.12/reference/datamodel.html#creating-the-class-object)을 기준으로 구성했습니다.
