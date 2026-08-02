@@ -5,6 +5,7 @@ interface HeaderProps {
   isDark: boolean;
   toggleDark: () => void;
   onOpenSearch: () => void;
+  onPrepareSearch: () => void;
   onOpenMobileNav?: () => void;
   isMobileNavOpen?: boolean;
 }
@@ -13,6 +14,7 @@ export default function Header({
   isDark,
   toggleDark,
   onOpenSearch,
+  onPrepareSearch,
   onOpenMobileNav,
   isMobileNavOpen = false,
 }: HeaderProps) {
@@ -54,7 +56,12 @@ export default function Header({
         <div className="flex-1 relative max-w-lg flex justify-end px-4 sm:px-8">
            <button
              type="button"
-             onClick={onOpenSearch}
+             onClick={() => {
+               void onPrepareSearch();
+               onOpenSearch();
+             }}
+             onMouseEnter={() => void onPrepareSearch()}
+             onFocus={() => void onPrepareSearch()}
              className="w-full sm:max-w-xs xl:max-w-sm flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-full border border-slate-200 dark:border-dark-slate-800 bg-slate-100/50 dark:bg-dark-slate-900/50 hover:bg-white dark:hover:bg-surface-raised text-sm text-slate-500 dark:text-dark-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-[color]"
              aria-label="Open search dialog"
              aria-haspopup="dialog"

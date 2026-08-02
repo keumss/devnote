@@ -8,7 +8,8 @@ import Layout from './Layout';
 import { navData } from '../content';
 import { mdxComponents } from './MdxContent';
 import { BookOpen, ListTree } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
+import * as m from 'motion/react-m';
 import { getNotePath, getHashTarget, getTopicHash, resolveNote } from '../navigation';
 import { saveContinueLearningItem } from '../hooks/useContinueLearning';
 import { useReadingTopic } from '../hooks/useReadingTopic';
@@ -90,6 +91,22 @@ export default function NotePage() {
     return () => window.clearTimeout(timeoutId);
   }, [activeNoteId, activeSectionId, isExact, readingTopicId]);
 
+  useEffect(() => {
+    const preloadNextNote = nextNoteInfo?.note.preload;
+    if (!preloadNextNote) return;
+
+    const preload = () => {
+      void preloadNextNote();
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(preload, { timeout: 2000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+
+    const timeoutId = window.setTimeout(preload, 1500);
+    return () => window.clearTimeout(timeoutId);
+  }, [nextNoteInfo?.note.preload]);
+
   if (!isExact) {
     return (
       <Navigate
@@ -121,7 +138,7 @@ export default function NotePage() {
         {/* Main note content */}
         <main ref={contentRootRef} className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
           <AnimatePresence mode="wait">
-            <motion.div 
+            <m.div
               key={activeNote.id}
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
@@ -185,7 +202,7 @@ export default function NotePage() {
                   />
                 ) : null}
               </div>
-            </motion.div>
+            </m.div>
           </AnimatePresence>
         </main>
 

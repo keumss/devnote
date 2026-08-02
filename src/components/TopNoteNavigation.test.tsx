@@ -1,19 +1,33 @@
-import { cleanup, render, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, within } from '@testing-library/react';
 import { HashRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import TopNoteNavigation from './TopNoteNavigation';
-import type { Note } from '../content';
+import { navData } from '../content';
+
+const baseNote = navData[0].notes[0];
 
 const mockPrevNote = {
   sectionId: 'python',
   sectionTitle: 'Python',
-  note: { id: 'python-part1', title: 'Python 기초' } as Note,
+  note: {
+    ...baseNote,
+    id: 'python-part1',
+    title: 'Python 기초',
+    displayTitle: 'Python 기초',
+    preload: vi.fn(),
+  },
 };
 
 const mockNextNote = {
   sectionId: 'python',
   sectionTitle: 'Python',
-  note: { id: 'python-part3', title: 'Python 고급' } as Note,
+  note: {
+    ...baseNote,
+    id: 'python-part3',
+    title: 'Python 고급',
+    displayTitle: 'Python 고급',
+    preload: vi.fn(),
+  },
 };
 
 describe('TopNoteNavigation', () => {
@@ -39,6 +53,11 @@ describe('TopNoteNavigation', () => {
     expect(navigation).toHaveClass('h-11', 'w-32', 'grid-cols-2', 'divide-x', 'shrink-0');
     expect(prevLink).toHaveClass('h-11', 'w-16');
     expect(nextLink).toHaveClass('h-11', 'w-16');
+
+    fireEvent.mouseEnter(prevLink);
+    fireEvent.focus(nextLink);
+    expect(mockPrevNote.note.preload).toHaveBeenCalledOnce();
+    expect(mockNextNote.note.preload).toHaveBeenCalledOnce();
   });
 
   it('disables previous button when prevNoteInfo is null', () => {

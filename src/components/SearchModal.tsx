@@ -1,6 +1,8 @@
 import { Search, X } from 'lucide-react';
-import type { SearchResult } from '../search';
-import { motion, AnimatePresence } from 'motion/react';
+import type { SearchResult } from '../content';
+import type { SearchLoadStatus } from '../hooks/useSearch';
+import { AnimatePresence } from 'motion/react';
+import * as m from 'motion/react-m';
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 import SearchResultItem from './SearchResultItem';
@@ -11,6 +13,8 @@ interface SearchModalProps {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   searchResults: SearchResult[];
+  searchStatus: SearchLoadStatus;
+  onRetry: () => void;
   onSelectResult: (result: SearchResult) => void;
 }
 
@@ -20,6 +24,8 @@ export default function SearchModal({
   searchQuery,
   setSearchQuery,
   searchResults,
+  searchStatus,
+  onRetry,
   onSelectResult
 }: SearchModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -80,7 +86,7 @@ export default function SearchModal({
       {isOpen && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 sm:pt-24 px-4">
           {/* Click outside to close */}
-          <motion.div 
+          <m.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -89,7 +95,7 @@ export default function SearchModal({
             aria-hidden="true" 
           />
           
-          <motion.div 
+          <m.div
             ref={dialogRef}
             initial={{ opacity: 0, scale: 0.95, y: -10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -143,7 +149,23 @@ export default function SearchModal({
               <p id="search-keyboard-hint" className="sr-only">
                 화살표 키로 검색 결과를 고르고 Enter 키로 엽니다.
               </p>
-              {searchQuery.trim() === '' ? (
+              {searchStatus === 'loading' || searchStatus === 'idle' ? (
+                <div className="py-12 px-6 text-center text-slate-500 dark:text-dark-slate-400" role="status">
+                  <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600 dark:border-dark-slate-700 dark:border-t-dark-indigo-400" />
+                  <p>검색을 준비하고 있습니다.</p>
+                </div>
+              ) : searchStatus === 'error' ? (
+                <div className="py-12 px-6 text-center text-slate-500 dark:text-dark-slate-400" role="alert">
+                  <p className="font-medium text-slate-900 dark:text-dark-slate-100 mb-1">검색을 불러오지 못했습니다.</p>
+                  <button
+                    type="button"
+                    onClick={() => void onRetry()}
+                    className="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 dark:bg-dark-indigo-500 dark:hover:bg-dark-indigo-600"
+                  >
+                    다시 시도
+                  </button>
+                </div>
+              ) : searchQuery.trim() === '' ? (
                 <div className="py-12 px-6 text-center text-slate-500 dark:text-dark-slate-400">
                   <Search size={32} className="mx-auto mb-3 opacity-20" />
                   <p>검색어를 입력하시면 관련 노트와 주제를 찾아드립니다.</p>
@@ -173,7 +195,7 @@ export default function SearchModal({
                 </div>
               )}
             </div>
-          </motion.div>
+          </m.div>
         </div>
       )}
     </AnimatePresence>

@@ -1,39 +1,38 @@
-import { memo, useEffect, useState, type CSSProperties } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism-light';
-import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
-import docker from 'react-syntax-highlighter/dist/esm/languages/prism/docker';
-import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
-import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
-import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
-import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
-import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { useDarkMode } from '../hooks/useDarkMode';
+import type { HighlightedCodeProps } from './HighlightedCode';
+import {
+  loadHighlightedCode,
+  type HighlightedCodeComponent,
+} from './highlightedCodeLoader';
 
-SyntaxHighlighter.registerLanguage('bash', bash);
-SyntaxHighlighter.registerLanguage('dockerfile', docker);
-SyntaxHighlighter.registerLanguage('html', markup);
-SyntaxHighlighter.registerLanguage('python', python);
-SyntaxHighlighter.registerLanguage('sql', sql);
-SyntaxHighlighter.registerLanguage('yaml', yaml);
+function PlainCode({ code }: Pick<HighlightedCodeProps, 'code'>) {
+  return (
+    <pre className="m-0 p-4 text-xs leading-relaxed">
+      <code>{code}</code>
+    </pre>
+  );
+}
 
-const sharedCodeStyle: CSSProperties = {
-  background: 'transparent',
-  textShadow: 'none',
-  fontFamily: 'inherit',
-  fontSize: '12px',
-  lineHeight: '1.625'
-};
+function DeferredHighlightedCode(props: HighlightedCodeProps) {
+  const [HighlightedCode, setHighlightedCode] = useState<HighlightedCodeComponent | null>(null);
 
-const highlighterStyle: CSSProperties = {
-  ...sharedCodeStyle,
-  margin: 0,
-  padding: '1rem'
-};
+  useEffect(() => {
+    let isCurrent = true;
+    void loadHighlightedCode()
+      .then(Component => {
+        if (isCurrent) setHighlightedCode(() => Component);
+      })
+      .catch(() => {
+        // Plain code remains readable when the optional highlighter chunk fails.
+      });
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
 
-const codeTagProps = {
-  style: sharedCodeStyle
-};
+  return HighlightedCode ? <HighlightedCode {...props} /> : <PlainCode code={props.code} />;
+}
 
 interface CodeBlockProps {
   code: string;
@@ -42,7 +41,6 @@ interface CodeBlockProps {
 
 export default memo(function CodeBlock({ code, language = 'sql' }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
-  const { isDark } = useDarkMode();
 
   useEffect(() => {
     if (!copied) return;
@@ -78,14 +76,7 @@ export default memo(function CodeBlock({ code, language = 'sql' }: CodeBlockProp
         </button>
       </div>
       <div className="custom-scrollbar relative leading-relaxed overflow-x-auto syntax-highlighter-container">
-        <SyntaxHighlighter
-          language={language}
-          style={isDark ? oneDark : oneLight}
-          customStyle={highlighterStyle}
-          codeTagProps={codeTagProps}
-        >
-          {code}
-        </SyntaxHighlighter>
+        <DeferredHighlightedCode code={code} language={language} />
       </div>
     </div>
   );

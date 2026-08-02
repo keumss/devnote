@@ -1,5 +1,5 @@
-import { cleanup, render, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { navData } from '../content';
 import { getNotePath } from '../navigation';
@@ -49,5 +49,23 @@ describe('NavigationButton', () => {
     );
 
     expect(getByRole('link', { name: `다음 노트로 이동: ${note.title}` })).toHaveClass('col-start-2');
+  });
+
+  it('preloads the target note on hover and focus', () => {
+    const preload = vi.spyOn(note, 'preload').mockResolvedValue();
+    const { getByRole } = render(
+      <MemoryRouter>
+        <NavigationButton
+          direction="next"
+          info={{ sectionId: section.id, sectionTitle: section.title, note }}
+        />
+      </MemoryRouter>,
+    );
+
+    const link = getByRole('link', { name: `다음 노트로 이동: ${note.title}` });
+    fireEvent.mouseEnter(link);
+    fireEvent.focus(link);
+    expect(preload).toHaveBeenCalledTimes(2);
+    preload.mockRestore();
   });
 });

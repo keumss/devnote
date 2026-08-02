@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { navGroupData, type Note, type Section } from '../content';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
+import * as m from 'motion/react-m';
 import { getNotePath } from '../navigation';
 
 interface SidebarNavProps {
@@ -87,7 +88,7 @@ function NavSectionItem({
       </button>
       <AnimatePresence initial={false}>
         {isExpanded && (
-          <motion.div
+          <m.div
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -107,7 +108,7 @@ function NavSectionItem({
                 ))}
               </ul>
             </div>
-          </motion.div>
+          </m.div>
         )}
       </AnimatePresence>
     </div>
@@ -154,4 +155,3 @@ export default function SidebarNav({ activeSectionId, activeNoteId, onNavigate }
     </nav>
   );
 }
-

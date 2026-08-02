@@ -1,16 +1,19 @@
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import { HashRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import Header from './Header';
 
 describe('Header', () => {
   it('shows the home-link focus ring only for keyboard navigation', () => {
+    const onOpenSearch = vi.fn();
+    const onPrepareSearch = vi.fn();
     const { getByLabelText } = render(
       <HashRouter>
         <Header
           isDark={false}
           toggleDark={vi.fn()}
-          onOpenSearch={vi.fn()}
+          onOpenSearch={onOpenSearch}
+          onPrepareSearch={onPrepareSearch}
           onOpenMobileNav={vi.fn()}
         />
       </HashRouter>,
@@ -29,5 +32,9 @@ describe('Header', () => {
       expect(interactive).toHaveClass('transition-[color]');
       expect(interactive).not.toHaveClass('transition-colors');
     }
+
+    fireEvent.click(getByLabelText('Open search dialog'));
+    expect(onPrepareSearch).toHaveBeenCalledOnce();
+    expect(onOpenSearch).toHaveBeenCalledOnce();
   });
 });

@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { BookOpen, X } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { AnimatePresence } from 'motion/react';
+import * as m from 'motion/react-m';
 import SidebarNav from './SidebarNav';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 
@@ -26,7 +27,7 @@ export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, acti
     <AnimatePresence>
       {isOpen && (
         <>
-          <motion.div
+          <m.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -35,7 +36,7 @@ export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, acti
             className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm lg:hidden"
             aria-hidden="true"
           />
-          <motion.aside
+          <m.aside
             ref={drawerRef}
             id="mobile-navigation"
             initial={{ x: '-100%' }}
@@ -69,7 +70,7 @@ export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, acti
                 onNavigate={onClose}
               />
             </div>
-          </motion.aside>
+          </m.aside>
         </>
       )}
     </AnimatePresence>

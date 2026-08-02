@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { motion } from 'motion/react';
+import * as m from 'motion/react-m';
 import { Link } from 'react-router-dom';
 import type { Note } from '../content';
 import { getNotePath } from '../navigation';
@@ -15,7 +15,7 @@ interface TopNoteNavigationProps {
   nextNoteInfo: NoteInfo | null;
 }
 
-const MotionLink = motion.create(Link);
+const MotionLink = m.create(Link);
 
 export default function TopNoteNavigation({ prevNoteInfo, nextNoteInfo }: TopNoteNavigationProps) {
   return (
@@ -26,6 +26,8 @@ export default function TopNoteNavigation({ prevNoteInfo, nextNoteInfo }: TopNot
       {prevNoteInfo ? (
         <MotionLink
           to={getNotePath(prevNoteInfo.sectionId, prevNoteInfo.note.id)}
+          onMouseEnter={() => void prevNoteInfo.note.preload()}
+          onFocus={() => void prevNoteInfo.note.preload()}
           aria-label={`이전 노트: ${prevNoteInfo.note.title}`}
           title={`이전: ${prevNoteInfo.note.title}`}
           whileTap={{ scale: 0.97 }}
@@ -51,6 +53,8 @@ export default function TopNoteNavigation({ prevNoteInfo, nextNoteInfo }: TopNot
       {nextNoteInfo ? (
         <MotionLink
           to={getNotePath(nextNoteInfo.sectionId, nextNoteInfo.note.id)}
+          onMouseEnter={() => void nextNoteInfo.note.preload()}
+          onFocus={() => void nextNoteInfo.note.preload()}
           aria-label={`다음 노트: ${nextNoteInfo.note.title}`}
           title={`다음: ${nextNoteInfo.note.title}`}
           whileTap={{ scale: 0.97 }}

@@ -373,7 +373,12 @@ export function searchFuzzyTopicDocuments<T extends FuzzySearchDocument>(
   return findFuzzyDocuments(createFuzzySearchIndexes(documents), rawQuery);
 }
 
-const fuzzySearchIndexes = createFuzzySearchIndexes(topicDocuments);
+let fuzzySearchIndexes: FuzzySearchIndexes<TopicDocument> | null = null;
+
+function getFuzzySearchIndexes() {
+  fuzzySearchIndexes ??= createFuzzySearchIndexes(topicDocuments);
+  return fuzzySearchIndexes;
+}
 
 export function searchContent(rawQuery: string): SearchResult[] {
   const query = normalize(rawQuery);
@@ -429,6 +434,6 @@ export function searchContent(rawQuery: string): SearchResult[] {
   const directResults = rankSearchCandidates(candidates);
   if (directResults.length > 0) return directResults.slice(0, RESULT_LIMIT);
 
-  return findFuzzyDocuments(fuzzySearchIndexes, query)
+  return findFuzzyDocuments(getFuzzySearchIndexes(), query)
     .map(document => createTopicResult(document, 'fuzzy', query));
 }

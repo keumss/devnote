@@ -52,10 +52,15 @@ describe('NotePage note navigation', () => {
     await waitFor(() => {
       expect(window.location.hash).toBe(`#${getNotePath(nextNote.section.id, nextNote.note.id)}`);
     });
-  });
+    await findByRole(
+      'heading',
+      { name: nextNote.note.topics[0].title },
+      { timeout: 8000 },
+    );
+  }, 10_000);
 
-  it('opens the inline topic navigation by default', () => {
-    const { container } = render(
+  it('opens the inline topic navigation by default', async () => {
+    const { container, findByRole } = render(
       <StrictMode>
         <HashRouter>
           <Routes>
@@ -68,5 +73,10 @@ describe('NotePage note navigation', () => {
     const topicNavigation = container.querySelector('details');
 
     expect(topicNavigation).toHaveAttribute('open');
-  });
+    await findByRole(
+      'heading',
+      { name: currentNote.note.topics[0].title },
+      { timeout: 8000 },
+    );
+  }, 10_000);
 });

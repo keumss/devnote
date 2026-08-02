@@ -1,5 +1,5 @@
-import { lazy } from 'react';
-import type { ComponentType, LazyExoticComponent } from 'react';
+import { isValidElement, lazy } from 'react';
+import type { ComponentType, LazyExoticComponent, ReactNode } from 'react';
 import type { MDXProps } from 'mdx/types';
 
 export interface NoteFrontmatter {
@@ -30,13 +30,13 @@ export interface StructuredData {
   }>;
 }
 
-interface NoteModule {
-  default: ComponentType<MDXProps>;
-  frontmatter: NoteFrontmatter;
-  structuredData: StructuredData;
+interface NoteTocItem {
+  depth: number;
+  url: string;
+  title: ReactNode;
 }
 
-type NoteLoader = () => Promise<NoteModule>;
+type NoteLoader = () => Promise<ComponentType<MDXProps>>;
 
 export type NoteContentComponent = LazyExoticComponent<ComponentType<MDXProps>>;
 
@@ -59,6 +59,7 @@ export interface Note {
   displayTitle: string;
   topics: NoteTopic[];
   Component: NoteContentComponent;
+  preload: () => Promise<void>;
 }
 
 export interface Section {
@@ -111,9 +112,10 @@ export type SearchResult = TopicSearchResult | NoteSearchResult | SectionSearchR
 
 // Use a distinct module query for metadata so Rollup can tree-shake the MDX
 // renderer from the eager imports while retaining separate lazy render chunks.
-const noteLoaders = import.meta.glob<NoteModule>(
+const noteLoaders = import.meta.glob<ComponentType<MDXProps>>(
   '/content/**/*.{md,mdx}',
   {
+    import: 'default',
     query: { collection: 'docs' },
   },
 );
@@ -123,16 +125,16 @@ const noteFrontmatters = import.meta.glob<NoteFrontmatter>(
   {
     eager: true,
     import: 'frontmatter',
-    query: { collection: 'docs', purpose: 'metadata' },
+    query: { collection: 'docs', only: 'frontmatter' },
   },
 );
 
-const noteStructuredData = import.meta.glob<StructuredData>(
+const noteTocs = import.meta.glob<NoteTocItem[]>(
   '/content/**/*.{md,mdx}',
   {
     eager: true,
-    import: 'structuredData',
-    query: { collection: 'docs', purpose: 'search' },
+    import: 'toc',
+    query: { collection: 'docs', purpose: 'navigation' },
   },
 );
 
@@ -319,30 +321,50 @@ export function formatTopicTitle(title: string) {
   return formattedTitle;
 }
 
-function createLazyNoteContent(loadNote: NoteLoader): NoteContentComponent {
-  return lazy(async () => {
-    const noteModule = await loadNote();
-    return { default: noteModule.default };
-  });
+function createLazyNoteContent(loadNote: NoteLoader) {
+  let notePromise: ReturnType<NoteLoader> | null = null;
+  const load = () => {
+    notePromise ??= loadNote();
+    return notePromise;
+  };
+
+  return {
+    Component: lazy(async () => ({ default: await load() })),
+    preload: async () => {
+      await load();
+    },
+  };
+}
+
+function getTocTitleText(value: ReactNode): string {
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return value.map(getTocTitleText).join('');
+  if (isValidElement<{ children?: ReactNode }>(value)) {
+    return getTocTitleText(value.props.children);
+  }
+  return '';
 }
 
 function getNoteTopics(filePath: string) {
-  const structuredData = noteStructuredData[filePath];
-  if (!Array.isArray(structuredData?.headings)) {
+  const toc = noteTocs[filePath];
+  if (!Array.isArray(toc)) {
     throw new Error(`Structured topic data is invalid for ${filePath}.`);
   }
 
   const topicIds = new Set<string>();
-  return structuredData.headings.flatMap((heading): NoteTopic[] => {
-    const title = formatTopicTitle(heading.content);
-    if (!isNonEmptyString(heading.id) || !isNonEmptyString(title)) {
+  return toc.flatMap((item): NoteTopic[] => {
+    if (!item.url.startsWith('#')) return [];
+
+    const id = decodeURIComponent(item.url.slice(1));
+    const title = formatTopicTitle(getTocTitleText(item.title));
+    if (!isNonEmptyString(id) || !isNonEmptyString(title)) {
       return [];
     }
-    if (topicIds.has(heading.id)) {
-      throw new Error(`Duplicate topic id "${heading.id}" in ${filePath}.`);
+    if (topicIds.has(id)) {
+      throw new Error(`Duplicate topic id "${id}" in ${filePath}.`);
     }
-    topicIds.add(heading.id);
-    return [{ id: heading.id, title }];
+    topicIds.add(id);
+    return [{ id, title }];
   });
 }
 
@@ -364,13 +386,14 @@ for (const [filePath, loadNote] of Object.entries(noteLoaders)) {
   };
   const title = frontmatter.title.trim();
   const navigationTitle = parseNoteNavigationTitle(title);
+  const noteContent = createLazyNoteContent(loadNote);
 
   section.notes.push({
     id: noteId,
     title,
     ...navigationTitle,
     topics: getNoteTopics(filePath),
-    Component: createLazyNoteContent(loadNote),
+    ...noteContent,
   });
   sectionMap.set(section.id, section);
 }

@@ -30,13 +30,17 @@ describe('note search navigation', () => {
 
     fireEvent.click(await findByLabelText('Open search dialog', {}, { timeout: 8000 }));
     fireEvent.change(getByLabelText('Search query'), { target: { value: searchableTopic.topic.title } });
-    fireEvent.click(await findByRole('button', {
-      name: name => (
-        name.includes(searchableTopic.section.title)
-        && name.includes(searchableTopic.note.displayTitle)
-        && name.includes(searchableTopic.topic.title)
-      ),
-    }));
+    fireEvent.click(await findByRole(
+      'button',
+      {
+        name: name => (
+          name.includes(searchableTopic.section.title)
+          && name.includes(searchableTopic.note.displayTitle)
+          && name.includes(searchableTopic.topic.title)
+        ),
+      },
+      { timeout: 8000 },
+    ));
 
     await waitFor(() => {
       expect(window.location.hash).toBe(

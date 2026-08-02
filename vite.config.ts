@@ -6,4 +6,7 @@ import {defineConfig} from 'vite';
 export default defineConfig({
   base: './',
   plugins: [mdx(), react(), tailwindcss()],
+  build: {
+    manifest: true,
+  },
 });

@@ -41,13 +41,17 @@ describe('Layout search flow', () => {
     fireEvent.click(getByLabelText('Open search dialog'));
     fireEvent.change(getByLabelText('Search query'), { target: { value: target.topic.title } });
 
-    const result = await findByRole('button', {
-      name: name => (
-        name.includes(target.section.title)
-        && name.includes(target.note.displayTitle)
-        && name.includes(target.topic.title)
-      ),
-    });
+    const result = await findByRole(
+      'button',
+      {
+        name: name => (
+          name.includes(target.section.title)
+          && name.includes(target.note.displayTitle)
+          && name.includes(target.topic.title)
+        ),
+      },
+      { timeout: 8000 },
+    );
     fireEvent.click(result);
 
     await waitFor(() => {
@@ -58,7 +62,7 @@ describe('Layout search flow', () => {
         `#${getNotePath(target.section.id, target.note.id)}${getTopicHash(target.topic.id)}`,
       );
     });
-  });
+  }, 10_000);
 
   it('opens a section result at its first note without adding a topic hash', async () => {
     const section = navData[0];
@@ -77,15 +81,17 @@ describe('Layout search flow', () => {
 
     fireEvent.click(getByLabelText('Open search dialog'));
     fireEvent.change(getByLabelText('Search query'), { target: { value: section.title } });
-    fireEvent.click(await findByRole('button', {
-      name: name => name.includes(section.title) && name.includes('섹션'),
-    }));
+    fireEvent.click(await findByRole(
+      'button',
+      { name: name => name.includes(section.title) && name.includes('섹션') },
+      { timeout: 8000 },
+    ));
 
     await waitFor(() => {
       expect(getByLabelText('current location').textContent).toBe(getNotePath(section.id, note.id));
       expect(window.location.hash).toBe(`#${getNotePath(section.id, note.id)}`);
     });
-  });
+  }, 10_000);
 
   it('keeps only one overlay open and restores body scrolling after close', async () => {
     const { getByLabelText, getByRole, queryByRole } = render(

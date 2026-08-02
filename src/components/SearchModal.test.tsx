@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SearchModal from './SearchModal';
-import type { SearchResult } from '../search';
+import type { SearchResult } from '../content';
 
 const searchResults: SearchResult[] = [{
   sectionId: 'section-a',
@@ -55,6 +55,8 @@ describe('SearchModal', () => {
       searchQuery: '',
       setSearchQuery: vi.fn(),
       searchResults,
+      searchStatus: 'ready' as const,
+      onRetry: vi.fn(),
       onSelectResult: vi.fn(),
     };
     const { getByLabelText, rerender } = render(
@@ -79,6 +81,8 @@ describe('SearchModal', () => {
         searchQuery="topic"
         setSearchQuery={vi.fn()}
         searchResults={searchResults}
+        searchStatus="ready"
+        onRetry={vi.fn()}
         onSelectResult={vi.fn()}
       />,
     );
@@ -104,6 +108,8 @@ describe('SearchModal', () => {
         searchQuery="topic"
         setSearchQuery={vi.fn()}
         searchResults={searchResults}
+        searchStatus="ready"
+        onRetry={vi.fn()}
         onSelectResult={vi.fn()}
       />,
     );
@@ -139,6 +145,8 @@ describe('SearchModal', () => {
         searchQuery="joinedload"
         setSearchQuery={vi.fn()}
         searchResults={[longResult]}
+        searchStatus="ready"
+        onRetry={vi.fn()}
         onSelectResult={vi.fn()}
       />,
     );
@@ -158,6 +166,8 @@ describe('SearchModal', () => {
         searchQuery="query"
         setSearchQuery={vi.fn()}
         searchResults={multipleSearchResults}
+        searchStatus="ready"
+        onRetry={vi.fn()}
         onSelectResult={onSelectResult}
       />,
     );
@@ -172,5 +182,28 @@ describe('SearchModal', () => {
     fireEvent.keyDown(input, { key: 'Enter' });
 
     expect(onSelectResult).toHaveBeenCalledWith(multipleSearchResults[1]);
+  });
+
+  it('shows loading and retry states without reporting an empty result', () => {
+    const onRetry = vi.fn();
+    const commonProps = {
+      isOpen: true,
+      onClose: vi.fn(),
+      searchQuery: 'topic',
+      setSearchQuery: vi.fn(),
+      searchResults: [],
+      onRetry,
+      onSelectResult: vi.fn(),
+    };
+    const { rerender } = render(
+      <SearchModal {...commonProps} searchStatus="loading" />,
+    );
+
+    expect(screen.getByRole('status')).toHaveTextContent('검색을 준비하고 있습니다.');
+    expect(screen.queryByText('검색 결과가 없습니다.')).not.toBeInTheDocument();
+
+    rerender(<SearchModal {...commonProps} searchStatus="error" />);
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 });

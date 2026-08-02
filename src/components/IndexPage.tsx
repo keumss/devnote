@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { navData, navGroupData } from '../content';
 import { Link } from 'react-router-dom';
 import { BookOpen, Clock3, FileText, FolderKanban, Layers, Play } from 'lucide-react';
-import { motion } from 'motion/react';
+import * as m from 'motion/react-m';
 import Layout from './Layout';
 import { getNotePath, getTopicHash } from '../navigation';
 import { getContinueLearningItem } from '../hooks/useContinueLearning';
@@ -36,7 +36,7 @@ export default function IndexPage() {
     <Layout>
       <main className="flex-1 bg-slate-50 px-3 py-3.5 dark:bg-surface-canvas sm:px-6 sm:py-8 lg:px-8">
         <div className="mx-auto max-w-7xl">
-          <motion.section
+          <m.section
             initial={{ opacity: 0, y: -16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
@@ -85,10 +85,10 @@ export default function IndexPage() {
                 </div>
               </div>
             </dl>
-          </motion.section>
+          </m.section>
 
           {continueLearning && (
-            <motion.section
+            <m.section
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.05 }}
@@ -125,11 +125,11 @@ export default function IndexPage() {
                 이어서 읽기
                 <Play className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" fill="currentColor" />
               </Link>
-            </motion.section>
+            </m.section>
           )}
 
           <section aria-labelledby="section-list-title">
-            <motion.div
+            <m.div
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.1 }}
@@ -147,11 +147,11 @@ export default function IndexPage() {
               <p className="hidden text-sm text-slate-500 dark:text-dark-slate-400 sm:block">
                 {navGroupData.length}개 그룹 · {totalNotes}개의 노트
               </p>
-            </motion.div>
+            </m.div>
 
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3 sm:gap-6">
               {navGroupData.map((group, groupIdx) => (
-                <motion.div
+                <m.div
                   key={group.id}
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -179,7 +179,7 @@ export default function IndexPage() {
                       />
                     ))}
                   </div>
-                </motion.div>
+                </m.div>
               ))}
             </div>
           </section>
