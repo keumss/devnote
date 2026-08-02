@@ -144,7 +144,7 @@ export default function NotePage() {
                 </h2>
               </div>
 
-              <details className="mb-8 rounded-xl border border-slate-200/90 bg-slate-50/80 px-4 py-3 shadow-xs dark:border-dark-slate-800/90 dark:bg-dark-slate-900/50 xl:hidden">
+              <details open className="mb-8 rounded-xl border border-slate-200/90 bg-slate-50/80 px-4 py-3 shadow-xs dark:border-dark-slate-800/90 dark:bg-dark-slate-900/50 xl:hidden">
                 <summary className="flex cursor-pointer items-center justify-between text-sm font-semibold text-slate-700 dark:text-dark-slate-200">
                   <div className="flex items-center gap-2 min-w-0">
                     <ListTree size={15} className="text-indigo-500 shrink-0" />

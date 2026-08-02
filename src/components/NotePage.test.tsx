@@ -53,4 +53,20 @@ describe('NotePage note navigation', () => {
       expect(window.location.hash).toBe(`#${getNotePath(nextNote.section.id, nextNote.note.id)}`);
     });
   });
+
+  it('opens the inline topic navigation by default', () => {
+    const { container } = render(
+      <StrictMode>
+        <HashRouter>
+          <Routes>
+            <Route path="/:sectionId/:noteId" element={<NotePage />} />
+          </Routes>
+        </HashRouter>
+      </StrictMode>,
+    );
+
+    const topicNavigation = container.querySelector('details');
+
+    expect(topicNavigation).toHaveAttribute('open');
+  });
 });
