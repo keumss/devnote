@@ -146,6 +146,7 @@ describe('Layout search flow', () => {
 
     fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     expect(getByRole('dialog', { name: '노트 검색' })).toBeInTheDocument();
+    expect(getByLabelText('Search query')).toHaveFocus();
     expect(document.body.style.overflow).toBe('hidden');
     await waitFor(() => {
       expect(queryByRole('dialog', { name: '학습 노트' })).not.toBeInTheDocument();

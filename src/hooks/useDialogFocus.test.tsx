@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { useRef } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useDialogFocus } from './useDialogFocus';
@@ -23,14 +23,14 @@ describe('useDialogFocus', () => {
     cleanup();
   });
 
-  it('focuses the initial control, closes with Escape, and restores focus', async () => {
+  it('focuses the initial control immediately, closes with Escape, and restores focus', () => {
     const trigger = document.createElement('button');
     document.body.append(trigger);
     trigger.focus();
     const onClose = vi.fn();
     const { getByRole, rerender } = render(<DialogProbe isOpen onClose={onClose} />);
 
-    await waitFor(() => expect(getByRole('button', { name: '첫 번째' })).toHaveFocus());
+    expect(getByRole('button', { name: '첫 번째' })).toHaveFocus();
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
 
@@ -39,12 +39,12 @@ describe('useDialogFocus', () => {
     trigger.remove();
   });
 
-  it('keeps Tab navigation inside the dialog', async () => {
+  it('keeps Tab navigation inside the dialog', () => {
     const { getByRole } = render(<DialogProbe isOpen onClose={vi.fn()} />);
     const first = getByRole('button', { name: '첫 번째' });
     const last = getByRole('button', { name: '마지막' });
 
-    await waitFor(() => expect(first).toHaveFocus());
+    expect(first).toHaveFocus();
     last.focus();
     fireEvent.keyDown(document, { key: 'Tab' });
     expect(first).toHaveFocus();

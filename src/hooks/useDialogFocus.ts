@@ -31,9 +31,7 @@ export function useDialogFocus<
     previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-    const focusFrame = window.requestAnimationFrame(() => {
-      initialFocusRef.current?.focus();
-    });
+    initialFocusRef.current?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -61,7 +59,6 @@ export function useDialogFocus<
 
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocusedRef.current?.focus();
     };

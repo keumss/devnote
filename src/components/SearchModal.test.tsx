@@ -44,7 +44,7 @@ describe('SearchModal', () => {
     cleanup();
   });
 
-  it('focuses the query, closes with Escape, and restores focus', async () => {
+  it('focuses the visible query immediately, closes with Escape, and restores focus', () => {
     const trigger = document.createElement('button');
     document.body.append(trigger);
     trigger.focus();
@@ -59,17 +59,26 @@ describe('SearchModal', () => {
       onRetry: vi.fn(),
       onSelectResult: vi.fn(),
     };
-    const { getByLabelText, rerender } = render(
+    const { getByLabelText, getByRole, rerender } = render(
       <SearchModal {...props} isOpen />,
     );
+    const overlay = getByRole('dialog', { name: '노트 검색' }).parentElement;
 
-    await waitFor(() => expect(getByLabelText('Search query')).toHaveFocus());
+    expect(getByLabelText('Search query')).toHaveFocus();
+    expect(overlay).toHaveClass('visible');
+    expect(overlay).not.toHaveClass('transition-[visibility]');
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledOnce();
 
     rerender(<SearchModal {...props} isOpen={false} />);
     expect(trigger).toHaveFocus();
+    expect(overlay).toHaveClass(
+      'invisible',
+      'pointer-events-none',
+      'transition-[visibility]',
+      'delay-200',
+    );
     trigger.remove();
   });
 

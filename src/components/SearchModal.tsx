@@ -83,8 +83,10 @@ export default function SearchModal({
 
   return (
     <div
-      className={`fixed inset-0 z-[100] flex items-start justify-center px-4 pt-16 transition-[visibility] duration-200 sm:pt-24 ${
-        isOpen ? 'visible' : 'invisible pointer-events-none delay-200'
+      className={`fixed inset-0 z-[100] flex items-start justify-center px-4 pt-16 sm:pt-24 ${
+        isOpen
+          ? 'visible'
+          : 'invisible pointer-events-none transition-[visibility] duration-200 delay-200'
       }`}
       aria-hidden={isOpen ? undefined : true}
       inert={isOpen ? undefined : true}
