@@ -34,4 +34,29 @@ describe('LearningSectionCard', () => {
     );
     expect(getByText('학습 중')).toBeInTheDocument();
   });
+
+  it('changes card surfaces immediately while keeping text transitions', () => {
+    const section = navData[0];
+    const { container } = render(
+      <MemoryRouter>
+        <LearningSectionCard section={section} index={0} isCurrentSection />
+      </MemoryRouter>,
+    );
+    const card = within(container).getByRole('article');
+    const sectionLink = within(card).getByRole('link', {
+      name: (name) => name.includes(section.title),
+    });
+    const sectionNumber = within(sectionLink).getByText('01');
+    const sectionTitle = within(sectionLink).getByRole('heading', {
+      name: section.title,
+    });
+
+    expect(sectionLink).toHaveClass('transition-[color]', 'ring-1');
+    expect(sectionLink).not.toHaveClass('transition-all');
+    expect(sectionLink).not.toHaveClass('transition-colors');
+    expect(sectionNumber).toHaveClass('transition-[color]');
+    expect(sectionNumber).not.toHaveClass('transition-colors');
+    expect(sectionTitle).toHaveClass('transition-[color]');
+    expect(sectionTitle).not.toHaveClass('transition-colors');
+  });
 });
