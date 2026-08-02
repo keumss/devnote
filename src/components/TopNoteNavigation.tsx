@@ -17,7 +17,7 @@ interface TopNoteNavigationProps {
 export default function TopNoteNavigation({ prevNoteInfo, nextNoteInfo }: TopNoteNavigationProps) {
   return (
     <nav
-      className="grid h-11 w-32 shrink-0 grid-cols-2 divide-x divide-slate-200/90 overflow-hidden rounded-lg border border-slate-200/90 bg-slate-50/80 shadow-xs dark:divide-dark-slate-800 dark:border-dark-slate-800 dark:bg-dark-slate-900/40 lg:hidden"
+      className="grid h-11 w-32 shrink-0 grid-cols-2 divide-x divide-slate-200/90 overflow-hidden rounded-lg border border-slate-200/90 bg-slate-50/80 shadow-xs dark:divide-dark-slate-800 dark:border-dark-slate-800 dark:bg-dark-slate-900/40"
       aria-label="노트 상단 빠른 이동"
     >
       {prevNoteInfo ? (

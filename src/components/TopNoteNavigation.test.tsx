@@ -51,6 +51,7 @@ describe('TopNoteNavigation', () => {
     expect(within(prevLink).getByText('이전')).toBeInTheDocument();
     expect(within(nextLink).getByText('다음')).toBeInTheDocument();
     expect(navigation).toHaveClass('h-11', 'w-32', 'grid-cols-2', 'divide-x', 'shrink-0');
+    expect(navigation).not.toHaveClass('lg:hidden');
     expect(prevLink).toHaveClass('h-11', 'w-16');
     expect(nextLink).toHaveClass('h-11', 'w-16');
 
