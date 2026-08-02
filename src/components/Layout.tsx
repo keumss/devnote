@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LazyMotion, MotionConfig } from 'motion/react';
 import Header from './Header';
 import Footer from './Footer';
 import MobileNavDrawer from './MobileNavDrawer';
@@ -11,8 +10,6 @@ import type { SearchResult } from '../content';
 import { getNotePath, getTopicHash } from '../navigation';
 
 type ActiveOverlay = 'search' | 'mobile-nav' | null;
-
-const loadMotionFeatures = () => import('../motionFeatures').then(module => module.default);
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -41,6 +38,7 @@ export default function Layout({ children, activeSectionId, activeNoteId }: Layo
 
   const {
     searchQuery,
+    searchResultQuery,
     setSearchQuery,
     searchResults,
     searchStatus,
@@ -72,43 +70,40 @@ export default function Layout({ children, activeSectionId, activeNoteId }: Layo
   }, []);
 
   return (
-    <MotionConfig reducedMotion="user">
-      <LazyMotion features={loadMotionFeatures} strict>
-        <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-dark-slate-950">
-          <Header
-            isDark={isDark}
-            toggleDark={toggle}
-            onOpenSearch={openSearch}
-            onPrepareSearch={prepareSearch}
-            onOpenMobileNav={openMobileNav}
-            isMobileNavOpen={isMobileNavOpen}
-          />
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-dark-slate-950">
+      <Header
+        isDark={isDark}
+        toggleDark={toggle}
+        onOpenSearch={openSearch}
+        onPrepareSearch={prepareSearch}
+        onOpenMobileNav={openMobileNav}
+        isMobileNavOpen={isMobileNavOpen}
+      />
 
-          <MobileNavDrawer
-            isOpen={isMobileNavOpen}
-            onClose={closeMobileNav}
-            activeSectionId={activeSectionId}
-            activeNoteId={activeNoteId}
-          />
+      <MobileNavDrawer
+        isOpen={isMobileNavOpen}
+        onClose={closeMobileNav}
+        activeSectionId={activeSectionId}
+        activeNoteId={activeNoteId}
+      />
 
-          <div className="flex-1 flex flex-col">
-            {children}
-          </div>
+      <div className="flex-1 flex flex-col">
+        {children}
+      </div>
 
-          <Footer />
+      <Footer />
 
-          <SearchModal
-            isOpen={isSearchModalOpen}
-            onClose={closeSearch}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            searchResults={searchResults}
-            searchStatus={searchStatus}
-            onRetry={retrySearch}
-            onSelectResult={handleSelectSearchResult}
-          />
-        </div>
-      </LazyMotion>
-    </MotionConfig>
+      <SearchModal
+        isOpen={isSearchModalOpen}
+        onClose={closeSearch}
+        searchQuery={searchQuery}
+        resultQuery={searchResultQuery}
+        setSearchQuery={setSearchQuery}
+        searchResults={searchResults}
+        searchStatus={searchStatus}
+        onRetry={retrySearch}
+        onSelectResult={handleSelectSearchResult}
+      />
+    </div>
   );
 }

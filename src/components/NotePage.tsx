@@ -1,20 +1,37 @@
-import { Suspense, useEffect, useRef } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import NavigationButton from './NavigationButton';
 import TopNoteNavigation from './TopNoteNavigation';
 import SidebarNav from './SidebarNav';
 import TopicNav from './TopicNav';
 import Layout from './Layout';
-import { navData } from '../content';
+import { navData, type Note, type NoteTopic } from '../content';
 import { mdxComponents } from './MdxContent';
 import { BookOpen, ListTree } from 'lucide-react';
-import { AnimatePresence } from 'motion/react';
-import * as m from 'motion/react-m';
 import { getNotePath, getHashTarget, getTopicHash, resolveNote } from '../navigation';
 import { saveContinueLearningItem } from '../hooks/useContinueLearning';
 import { useReadingTopic } from '../hooks/useReadingTopic';
 
 const READING_SAVE_DELAY = 800;
+
+function useNoteTopics(note: Note) {
+  const [topics, setTopics] = useState<NoteTopic[]>([]);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setTopics([]);
+    void note.loadTopics().then(loadedTopics => {
+      if (isCurrent) setTopics(loadedTopics);
+    }).catch(() => {
+      if (isCurrent) setTopics([]);
+    });
+    return () => {
+      isCurrent = false;
+    };
+  }, [note]);
+
+  return topics;
+}
 
 function ScrollToTopic({ hash, navigationKey }: { hash: string; navigationKey: string }) {
   useEffect(() => {
@@ -68,6 +85,7 @@ export default function NotePage() {
 
   const activeSectionId = activeSection.id;
   const activeNoteId = activeNote.id;
+  const activeTopics = useNoteTopics(activeNote);
 
   const currentNoteIndex = allNotes.findIndex(noteInfo => (
     noteInfo.sectionId === activeSectionId && noteInfo.note.id === activeNoteId
@@ -75,7 +93,7 @@ export default function NotePage() {
   const prevNoteInfo = currentNoteIndex > 0 ? allNotes[currentNoteIndex - 1] : null;
   const nextNoteInfo = currentNoteIndex < allNotes.length - 1 ? allNotes[currentNoteIndex + 1] : null;
   const selectedTopicId = getHashTarget(location.hash) ?? undefined;
-  const readingTopicId = useReadingTopic(activeNote.topics, contentRootRef, selectedTopicId);
+  const readingTopicId = useReadingTopic(activeTopics, contentRootRef, selectedTopicId);
 
   useEffect(() => {
     if (!isExact) return;
@@ -85,11 +103,12 @@ export default function NotePage() {
         sectionId: activeSectionId,
         noteId: activeNoteId,
         topicId: readingTopicId,
+        topicTitle: activeTopics.find(topic => topic.id === readingTopicId)?.title,
       });
     }, READING_SAVE_DELAY);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeNoteId, activeSectionId, isExact, readingTopicId]);
+  }, [activeNoteId, activeSectionId, activeTopics, isExact, readingTopicId]);
 
   useEffect(() => {
     const preloadNextNote = nextNoteInfo?.note.preload;
@@ -137,15 +156,10 @@ export default function NotePage() {
 
         {/* Main note content */}
         <main ref={contentRootRef} className="flex-1 px-4 py-8 md:px-8 lg:px-12 lg:py-12 min-h-[calc(100vh-4rem)] overflow-hidden">
-          <AnimatePresence mode="wait">
-            <m.div
-              key={activeNote.id}
-              initial={{ opacity: 0, y: 15 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.1, ease: 'easeOut' }}
-              className="max-w-3xl mx-auto"
-            >
+          <div
+            key={activeNote.id}
+            className="animate-note-enter max-w-3xl mx-auto"
+          >
               <div className="mb-10 block">
                 <div className="flex min-w-0 items-center justify-between gap-2 mb-4">
                   <span
@@ -166,12 +180,12 @@ export default function NotePage() {
                   <div className="flex items-center gap-2 min-w-0">
                     <ListTree size={15} className="text-indigo-500 shrink-0" />
                     <span>이 노트의 목차</span>
-                    <span className="text-xs font-normal text-slate-400 dark:text-dark-slate-500">· {activeNote.topics.length}개 토픽</span>
+                    <span className="text-xs font-normal text-slate-400 dark:text-dark-slate-500">· {activeTopics.length}개 토픽</span>
                   </div>
                 </summary>
                 <div className="mt-3 border-t border-slate-200/80 pt-3 dark:border-dark-slate-800/80">
                   <TopicNav
-                    topics={activeNote.topics}
+                    topics={activeTopics}
                     onSelectTopic={handleSelectTopic}
                     activeTopicId={readingTopicId}
                     compact
@@ -202,8 +216,7 @@ export default function NotePage() {
                   />
                 ) : null}
               </div>
-            </m.div>
-          </AnimatePresence>
+          </div>
         </main>
 
         <aside className="hidden xl:block w-64 shrink-0 border-l border-slate-200 bg-white/50 dark:border-dark-slate-800 dark:bg-dark-slate-950/50">
@@ -212,11 +225,11 @@ export default function NotePage() {
               <ListTree size={14} className="text-indigo-500/80 dark:text-dark-indigo-400/80 shrink-0" />
               <span>목차</span>
               <span className="ml-auto text-[10px] font-medium text-slate-400 dark:text-dark-slate-500">
-                {activeNote.topics.length}개
+                {activeTopics.length}개
               </span>
             </div>
             <TopicNav
-              topics={activeNote.topics}
+              topics={activeTopics}
               onSelectTopic={handleSelectTopic}
               activeTopicId={readingTopicId}
             />

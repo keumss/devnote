@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react';
 import type { SearchResult } from '../content';
 import { loadSearchContent, type SearchContent } from '../searchLoader';
 
@@ -12,6 +12,7 @@ export function useSearch(
   const [searchQuery, setSearchQuery] = useState('');
   const [searchContent, setSearchContent] = useState<SearchContent | null>(null);
   const [searchStatus, setSearchStatus] = useState<SearchLoadStatus>('idle');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const prepareSearch = useCallback(async () => {
     if (searchContent) return;
@@ -43,10 +44,10 @@ export function useSearch(
   }, [onOpen, prepareSearch]);
 
   const searchResults = useMemo(() => {
-    const normalizedQuery = searchQuery.trim();
+    const normalizedQuery = deferredSearchQuery.trim();
     if (!normalizedQuery || !searchContent) return [];
     return searchContent(normalizedQuery);
-  }, [searchContent, searchQuery]);
+  }, [deferredSearchQuery, searchContent]);
 
   const handleSelectSearchResult = useCallback((result: SearchResult) => {
     onSelectResult(result);
@@ -55,6 +56,7 @@ export function useSearch(
 
   return {
     searchQuery,
+    searchResultQuery: deferredSearchQuery,
     setSearchQuery,
     searchResults,
     searchStatus,

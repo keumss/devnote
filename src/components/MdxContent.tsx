@@ -3,6 +3,15 @@ import type { ComponentProps, ReactNode } from 'react';
 import type { MDXComponents } from 'mdx/types';
 import CodeBlock from './CodeBlock';
 
+function getNodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(getNodeText).join('');
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return getNodeText(node.props.children);
+  }
+  return '';
+}
+
 function Heading({ children, className, ...props }: ComponentProps<'h2'>) {
   return (
     <h2
@@ -14,15 +23,19 @@ function Heading({ children, className, ...props }: ComponentProps<'h2'>) {
   );
 }
 
-function Pre({ children }: ComponentProps<'pre'>) {
+function Pre({ children, ...props }: ComponentProps<'pre'> & { icon?: string }) {
   const child = Children.only(children);
   if (!isValidElement<ComponentProps<'code'>>(child)) {
-    return <pre>{children}</pre>;
+    return <pre {...props}>{children}</pre>;
   }
 
   const language = child.props.className?.replace('language-', '') ?? 'text';
-  const code = String(child.props.children).replace(/\n$/, '');
-  return <CodeBlock code={code} language={language} />;
+  const code = getNodeText(child.props.children).replace(/\n$/, '');
+  return (
+    <CodeBlock code={code} language={language} preProps={props}>
+      {child}
+    </CodeBlock>
+  );
 }
 
 function InlineCode({ children, className, ...props }: ComponentProps<'code'>) {

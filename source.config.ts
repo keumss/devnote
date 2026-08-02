@@ -6,7 +6,14 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
-    rehypeCodeOptions: false,
+    rehypeCodeOptions: {
+      themes: {
+        light: 'one-light',
+        dark: 'one-dark-pro',
+      },
+      addLanguageClass: true,
+      icon: false,
+    },
     remarkStructureOptions: {
       types: ['heading', 'paragraph', 'blockquote', 'tableCell', 'code'],
     },

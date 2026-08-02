@@ -282,17 +282,15 @@ export function rankSearchCandidates(candidates: SearchRankingCandidate[]) {
 }
 
 interface FuzzySearchDocument {
-  topic: Pick<Topic, 'title' | 'description' | 'content'>;
+  topic: Pick<Topic, 'title' | 'description'>;
 }
 
 interface IndexedFuzzyDocument<T extends FuzzySearchDocument> {
   document: T;
   title: string;
   description: string;
-  content: string;
   titleInitials: string;
   descriptionInitials: string;
-  contentInitials: string;
 }
 
 interface FuzzySearchIndexes<T extends FuzzySearchDocument> {
@@ -305,10 +303,8 @@ function createFuzzySearchIndexes<T extends FuzzySearchDocument>(documents: read
     document,
     title: decomposeHangulText(normalize(document.topic.title)),
     description: decomposeHangulText(normalize(document.topic.description)),
-    content: decomposeHangulText(normalize(document.topic.content)),
     titleInitials: getHangulInitials(normalize(document.topic.title)),
     descriptionInitials: getHangulInitials(normalize(document.topic.description)),
-    contentInitials: getHangulInitials(normalize(document.topic.content)),
   }));
   const options = {
     includeScore: true,
@@ -323,16 +319,14 @@ function createFuzzySearchIndexes<T extends FuzzySearchDocument>(documents: read
       ...options,
       keys: [
         { name: 'title', weight: 0.7 },
-        { name: 'description', weight: 0.2 },
-        { name: 'content', weight: 0.1 },
+        { name: 'description', weight: 0.3 },
       ],
     }),
     initials: new Fuse(indexedDocuments, {
       ...options,
       keys: [
         { name: 'titleInitials', weight: 0.7 },
-        { name: 'descriptionInitials', weight: 0.2 },
-        { name: 'contentInitials', weight: 0.1 },
+        { name: 'descriptionInitials', weight: 0.3 },
       ],
     }),
   };

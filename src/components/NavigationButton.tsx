@@ -1,5 +1,4 @@
 import { ChevronRight, ChevronLeft } from 'lucide-react';
-import * as m from 'motion/react-m';
 import { Link } from 'react-router-dom';
 import type { Note } from '../content';
 import { getNotePath } from '../navigation';
@@ -15,21 +14,16 @@ interface NavigationButtonProps {
   info: NoteInfo;
 }
 
-const MotionLink = m.create(Link);
-
 export default function NavigationButton({ direction, info }: NavigationButtonProps) {
   const isPrev = direction === 'prev';
 
   return (
-    <MotionLink
+    <Link
       to={getNotePath(info.sectionId, info.note.id)}
       onMouseEnter={() => void info.note.preload()}
       onFocus={() => void info.note.preload()}
       aria-label={`${isPrev ? '이전' : '다음'} 노트로 이동: ${info.note.title}`}
-      whileHover={{ y: -2 }}
-      whileTap={{ scale: 0.99 }}
-      transition={{ type: 'spring', stiffness: 400, damping: 26 }}
-      className={`group flex min-h-28 sm:min-h-32 w-full flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 sm:p-4 outline-none transition-[border-color,box-shadow,color] duration-200 hover:border-indigo-300 hover:bg-indigo-50/50 hover:shadow-xs focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-indigo-500/50 dark:border-dark-slate-800 dark:bg-dark-slate-900/40 dark:hover:border-dark-indigo-500/50 dark:hover:bg-dark-indigo-500/10 dark:hover:shadow-dark-indigo-950/20 dark:focus-visible:border-dark-indigo-400 dark:focus-visible:ring-dark-indigo-400/50 [backface-visibility:hidden] [transform-style:preserve-3d] ${
+      className={`group flex min-h-28 sm:min-h-32 w-full flex-col justify-between rounded-xl border border-slate-200/90 bg-slate-50/50 p-3.5 sm:p-4 outline-none transition-[border-color,box-shadow,color,transform] duration-200 hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50/50 hover:shadow-xs active:scale-[0.99] focus-visible:border-indigo-500 focus-visible:ring-2 focus-visible:ring-indigo-500/50 dark:border-dark-slate-800 dark:bg-dark-slate-900/40 dark:hover:border-dark-indigo-500/50 dark:hover:bg-dark-indigo-500/10 dark:hover:shadow-dark-indigo-950/20 dark:focus-visible:border-dark-indigo-400 dark:focus-visible:ring-dark-indigo-400/50 [backface-visibility:hidden] [transform-style:preserve-3d] ${
         isPrev
           ? 'items-start text-left sm:justify-self-start'
           : 'items-end text-right col-start-2 sm:justify-self-end'
@@ -46,6 +40,6 @@ export default function NavigationButton({ direction, info }: NavigationButtonPr
           {info.note.title}
         </span>
       </div>
-    </MotionLink>
+    </Link>
   );
 }

@@ -10,14 +10,14 @@ import {
   type SearchRankingCandidate,
 } from './search';
 
-const searchableTopics = navData.flatMap(section => (
-  section.notes.flatMap(note => note.topics.map(topic => ({ section, note, topic })))
-));
-
-function getSearchableTopic() {
-  const topic = searchableTopics.find(item => item.topic.title.length >= 2);
-  if (!topic) throw new Error('Search tests require a topic title with at least two characters.');
-  return topic;
+async function getSearchableTopic() {
+  for (const section of navData) {
+    for (const note of section.notes) {
+      const topic = (await note.loadTopics()).find(item => item.title.length >= 2);
+      if (topic) return { section, note, topic };
+    }
+  }
+  throw new Error('Search tests require a topic title with at least two characters.');
 }
 
 function createTopicResult(id: string, matchKind: 'topic-title' | 'description' | 'content') {
@@ -39,8 +39,8 @@ function createTopicResult(id: string, matchKind: 'topic-title' | 'description' 
 }
 
 describe('searchContent', () => {
-  it('indexes headings and their structured content', () => {
-    const target = getSearchableTopic();
+  it('indexes headings and their structured content', async () => {
+    const target = await getSearchableTopic();
     const result = searchContent(target.topic.title).find(item => (
       item.kind === 'topic'
       && item.sectionId === target.section.id
@@ -55,8 +55,8 @@ describe('searchContent', () => {
     });
   });
 
-  it('uses title matching instead of fuzzy matching for short queries', () => {
-    const target = getSearchableTopic();
+  it('uses title matching instead of fuzzy matching for short queries', async () => {
+    const target = await getSearchableTopic();
     const shortQueryResults = searchContent(target.topic.title.slice(0, 3));
 
     expect(shortQueryResults.length).toBeGreaterThan(0);

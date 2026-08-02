@@ -32,7 +32,9 @@ describe('NavigationButton', () => {
     expect(within(link).getByText(section.title)).toBeInTheDocument();
     expect(within(link).getByText(note.title)).toBeInTheDocument();
     expect(link).toHaveClass(
-      'transition-[border-color,box-shadow,color]',
+      'transition-[border-color,box-shadow,color,transform]',
+      'hover:-translate-y-0.5',
+      'active:scale-[0.99]',
       'dark:hover:bg-dark-indigo-500/10',
     );
     expect(link).not.toHaveClass('transition-[border-color,background-color,box-shadow,color]');

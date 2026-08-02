@@ -1,5 +1,4 @@
 import { ArrowRight, FileText, Sparkles } from 'lucide-react';
-import * as m from 'motion/react-m';
 import { Link } from 'react-router-dom';
 import type { Section } from '../content';
 import { getNotePath } from '../navigation';
@@ -19,10 +18,9 @@ export default function LearningSectionCard({
   const firstNotePath = firstNote ? getNotePath(section.id, firstNote.id) : '#';
 
   return (
-    <m.article
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay: index * 0.03 }}
+    <article
+      className="animate-page-enter"
+      style={{ animationDelay: `${index * 0.03}s` }}
     >
       <Link
         to={firstNotePath}
@@ -68,6 +66,6 @@ export default function LearningSectionCard({
           <ArrowRight className="h-4 w-4 text-slate-400 transition-transform group-hover:translate-x-0.5 group-hover:text-indigo-600 dark:text-dark-slate-500 dark:group-hover:text-dark-indigo-300" />
         </div>
       </Link>
-    </m.article>
+    </article>
   );
 }

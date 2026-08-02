@@ -1,8 +1,6 @@
 import { Search, X } from 'lucide-react';
 import type { SearchResult } from '../content';
 import type { SearchLoadStatus } from '../hooks/useSearch';
-import { AnimatePresence } from 'motion/react';
-import * as m from 'motion/react-m';
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 import SearchResultItem from './SearchResultItem';
@@ -11,6 +9,7 @@ interface SearchModalProps {
   isOpen: boolean;
   onClose: () => void;
   searchQuery: string;
+  resultQuery?: string;
   setSearchQuery: (query: string) => void;
   searchResults: SearchResult[];
   searchStatus: SearchLoadStatus;
@@ -22,11 +21,12 @@ export default function SearchModal({
   isOpen,
   onClose,
   searchQuery,
+  resultQuery = searchQuery,
   setSearchQuery,
   searchResults,
   searchStatus,
   onRetry,
-  onSelectResult
+  onSelectResult,
 }: SearchModalProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -82,32 +82,32 @@ export default function SearchModal({
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-start justify-center pt-16 sm:pt-24 px-4">
-          {/* Click outside to close */}
-          <m.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" 
-            onClick={onClose} 
-            aria-hidden="true" 
-          />
-          
-          <m.div
-            ref={dialogRef}
-            initial={{ opacity: 0, scale: 0.95, y: -10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: -10 }}
-            transition={{ duration: 0.2 }}
-            className="relative w-full max-w-2xl bg-white dark:bg-surface-raised rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-dark-slate-800 flex flex-col max-h-[80vh]"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="search-dialog-title"
-          >
-            <h2 id="search-dialog-title" className="sr-only">노트 검색</h2>
-            <div className="flex items-center px-4 border-b border-slate-200 dark:border-dark-slate-800">
+    <div
+      className={`fixed inset-0 z-[100] flex items-start justify-center px-4 pt-16 transition-[visibility] duration-200 sm:pt-24 ${
+        isOpen ? 'visible' : 'invisible pointer-events-none delay-200'
+      }`}
+      aria-hidden={isOpen ? undefined : true}
+      inert={isOpen ? undefined : true}
+    >
+      <div
+        className={`absolute inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity duration-200 ${
+          isOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      <div
+        ref={dialogRef}
+        className={`relative flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl transition-[opacity,transform] duration-200 dark:border-dark-slate-800 dark:bg-surface-raised ${
+          isOpen ? 'translate-y-0 scale-100 opacity-100' : '-translate-y-2.5 scale-95 opacity-0'
+        }`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="search-dialog-title"
+      >
+        <h2 id="search-dialog-title" className="sr-only">노트 검색</h2>
+        <div className="flex items-center px-4 border-b border-slate-200 dark:border-dark-slate-800">
               <Search size={20} className="text-slate-400 shrink-0" />
               <input
                 ref={inputRef}
@@ -183,7 +183,7 @@ export default function SearchModal({
                         ? `${result.sectionId}-${result.noteId}-${result.topic.id}`
                         : `${result.kind}-${result.sectionId}-${result.noteId}`}
                       result={result}
-                      query={searchQuery}
+                      query={resultQuery}
                       isActive={activeResultIndex === index}
                       buttonRef={(element) => {
                         resultRefs.current[index] = element;
@@ -194,10 +194,8 @@ export default function SearchModal({
                   ))}
                 </div>
               )}
-            </div>
-          </m.div>
         </div>
-      )}
-    </AnimatePresence>
+      </div>
+    </div>
   );
 }

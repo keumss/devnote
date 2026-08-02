@@ -21,6 +21,7 @@ describe('NotePage note navigation', () => {
   });
 
   it('shows adjacent notes and navigates to the selected note', async () => {
+    const nextTopics = await nextNote.note.loadTopics();
     const { findByRole, findByTitle } = render(
       <StrictMode>
         <HashRouter>
@@ -54,12 +55,13 @@ describe('NotePage note navigation', () => {
     });
     await findByRole(
       'heading',
-      { name: nextNote.note.topics[0].title },
+      { name: nextTopics[0].title },
       { timeout: 8000 },
     );
   }, 10_000);
 
   it('opens the inline topic navigation by default', async () => {
+    const currentTopics = await currentNote.note.loadTopics();
     const { container, findByRole } = render(
       <StrictMode>
         <HashRouter>
@@ -75,7 +77,7 @@ describe('NotePage note navigation', () => {
     expect(topicNavigation).toHaveAttribute('open');
     await findByRole(
       'heading',
-      { name: currentNote.note.topics[0].title },
+      { name: currentTopics[0].title },
       { timeout: 8000 },
     );
   }, 10_000);

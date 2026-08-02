@@ -27,6 +27,10 @@ const legacyStructuredData = import.meta.glob<StructuredData>(
 );
 
 describe('content navigation data consistency', () => {
+  const allNotes = navData.flatMap(section => (
+    section.notes.map(note => ({ section, note }))
+  ));
+
   it('derives navData section order strictly from navGroupData (groups pages)', () => {
     // Collect section IDs in order from navGroupData
     const groupSectionIds = navGroupData.flatMap((group) => group.sections.map((section) => section.id));
@@ -38,18 +42,18 @@ describe('content navigation data consistency', () => {
     expect(navDataSectionIds).toEqual(groupSectionIds);
   });
 
-  it('provides lightweight topics and a preload function for every note', () => {
-    for (const section of navData) {
-      for (const note of section.notes) {
-        expect(note.topics.length).toBeGreaterThan(0);
-        expect(note.topics.every(topic => topic.id && topic.title)).toBe(true);
-        expect(note.preload).toBeTypeOf('function');
-      }
-    }
-  });
+  it('provides lazy topics and a preload function for every note', async () => {
+    await Promise.all(allNotes.map(async ({ note }) => {
+      const topics = await note.loadTopics();
+      expect(topics.length).toBeGreaterThan(0);
+      expect(topics.every(topic => topic.id && topic.title)).toBe(true);
+      expect(note.loadTopics()).toBe(note.loadTopics());
+      expect(note.preload).toBeTypeOf('function');
+    }));
+  }, 20_000);
 
-  it('keeps every frontmatter title and topic consistent with the previous exports', () => {
-    for (const [filePath, structuredData] of Object.entries(legacyStructuredData)) {
+  it('keeps every frontmatter title and topic consistent with the previous exports', async () => {
+    await Promise.all(Object.entries(legacyStructuredData).map(async ([filePath, structuredData]) => {
       const { sectionId, noteId } = getNoteLocation(filePath);
       const note = navData
         .find(section => section.id === sectionId)
@@ -62,7 +66,7 @@ describe('content navigation data consistency', () => {
         .filter(topic => topic.id && topic.title);
 
       expect(note?.title, filePath).toBe(legacyFrontmatters[filePath]?.title.trim());
-      expect(note?.topics, filePath).toEqual(expectedTopics);
-    }
-  });
+      expect(await note?.loadTopics(), filePath).toEqual(expectedTopics);
+    }));
+  }, 20_000);
 });

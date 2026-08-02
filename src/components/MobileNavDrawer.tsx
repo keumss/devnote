@@ -1,7 +1,5 @@
 import { useRef } from 'react';
 import { BookOpen, X } from 'lucide-react';
-import { AnimatePresence } from 'motion/react';
-import * as m from 'motion/react-m';
 import SidebarNav from './SidebarNav';
 import { useDialogFocus } from '../hooks/useDialogFocus';
 
@@ -24,31 +22,31 @@ export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, acti
   });
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          <m.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={onClose}
-            className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm lg:hidden"
-            aria-hidden="true"
-          />
-          <m.aside
-            ref={drawerRef}
-            id="mobile-navigation"
-            initial={{ x: '-100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '-100%' }}
-            transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-            className="fixed inset-y-0 left-0 z-50 w-72 bg-white dark:bg-dark-slate-950 shadow-2xl lg:hidden flex flex-col"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="mobile-navigation-title"
-          >
-            <div className="flex-1 overflow-y-auto pt-6 px-6 pb-12 custom-scrollbar">
+    <div
+      className={`fixed inset-0 z-40 transition-[visibility] duration-200 lg:hidden ${
+        isOpen ? 'visible' : 'invisible pointer-events-none delay-200'
+      }`}
+      aria-hidden={isOpen ? undefined : true}
+      inert={isOpen ? undefined : true}
+    >
+      <div
+        onClick={onClose}
+        className={`absolute inset-0 bg-slate-900/50 backdrop-blur-sm transition-opacity duration-200 ${
+          isOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+        aria-hidden="true"
+      />
+      <aside
+        ref={drawerRef}
+        id="mobile-navigation"
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-white shadow-2xl transition-transform duration-200 ease-out dark:bg-dark-slate-950 ${
+          isOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mobile-navigation-title"
+      >
+        <div className="flex-1 overflow-y-auto pt-6 px-6 pb-12 custom-scrollbar">
               <div className="flex items-center justify-between gap-2 mb-6 px-1">
                 <div className="flex items-center gap-2 text-slate-800 dark:text-dark-slate-200 font-semibold text-sm uppercase tracking-wider">
                   <BookOpen size={16} />
@@ -69,10 +67,8 @@ export default function MobileNavDrawer({ isOpen, onClose, activeSectionId, acti
                 activeNoteId={activeNoteId}
                 onNavigate={onClose}
               />
-            </div>
-          </m.aside>
-        </>
-      )}
-    </AnimatePresence>
+        </div>
+      </aside>
+    </div>
   );
 }

@@ -19,12 +19,14 @@ describe('continue learning storage', () => {
       sectionId: 'section-a',
       noteId: 'note-1',
       topicId: 'topic-a',
+      topicTitle: 'Topic A',
     });
 
     expect(getContinueLearningItem()).toEqual({
       sectionId: 'section-a',
       noteId: 'note-1',
       topicId: 'topic-a',
+      topicTitle: 'Topic A',
     });
 
     clearContinueLearningItem();
@@ -35,5 +37,19 @@ describe('continue learning storage', () => {
     window.localStorage.setItem('devnote-continue-learning', '{not json');
 
     expect(getContinueLearningItem()).toBeNull();
+  });
+
+  it('keeps stored values without a topic title compatible', () => {
+    window.localStorage.setItem('devnote-continue-learning', JSON.stringify({
+      sectionId: 'section-a',
+      noteId: 'note-1',
+      topicId: 'topic-a',
+    }));
+
+    expect(getContinueLearningItem()).toEqual({
+      sectionId: 'section-a',
+      noteId: 'note-1',
+      topicId: 'topic-a',
+    });
   });
 });

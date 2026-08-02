@@ -2,6 +2,7 @@ export interface ContinueLearningItem {
   sectionId: string;
   noteId: string;
   topicId?: string;
+  topicTitle?: string;
 }
 
 const STORAGE_KEY = 'devnote-continue-learning';
@@ -14,7 +15,8 @@ function isContinueLearningItem(value: unknown): value is ContinueLearningItem {
     && item.sectionId.length > 0
     && typeof item.noteId === 'string'
     && item.noteId.length > 0
-    && (item.topicId === undefined || typeof item.topicId === 'string');
+    && (item.topicId === undefined || typeof item.topicId === 'string')
+    && (item.topicTitle === undefined || typeof item.topicTitle === 'string');
 }
 
 export function getContinueLearningItem(): ContinueLearningItem | null {

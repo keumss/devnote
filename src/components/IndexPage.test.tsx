@@ -76,14 +76,16 @@ describe('IndexPage', () => {
     );
   });
 
-  it('shows a link to continue from the last opened topic', () => {
+  it('shows a link to continue from the last opened topic', async () => {
     const section = navData[0];
     const note = section.notes[0];
-    const topic = note.topics[0];
+    const topic = (await note.loadTopics())[0];
+    if (!topic) throw new Error('Index page tests require a topic.');
     saveContinueLearningItem({
       sectionId: section.id,
       noteId: note.id,
       topicId: topic.id,
+      topicTitle: topic.title,
     });
 
     const { getByRole } = render(
@@ -100,5 +102,6 @@ describe('IndexPage', () => {
     );
     expect(continueLink).toHaveClass('transition-[color]', 'dark:hover:bg-dark-indigo-500/25');
     expect(continueLink).not.toHaveClass('transition-colors');
+    expect(getByRole('main')).toHaveTextContent(topic.title);
   });
 });

@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { navGroupData, type Note, type Section } from '../content';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { AnimatePresence } from 'motion/react';
-import * as m from 'motion/react-m';
+import { ChevronDown } from 'lucide-react';
 import { getNotePath } from '../navigation';
 
 interface SidebarNavProps {
@@ -86,16 +84,15 @@ function NavSectionItem({
           <ChevronDown size={14} className={`transform transition-transform duration-200 text-slate-400 dark:text-dark-slate-500 ${isExpanded ? 'rotate-180' : ''}`} />
         </div>
       </button>
-      <AnimatePresence initial={false}>
-        {isExpanded && (
-          <m.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: 'easeInOut' }}
-            className="overflow-hidden"
-          >
-            <div className="ml-3 pl-2.5 my-1 border-l border-slate-200/70 dark:border-dark-slate-800/70">
+      <div
+        className={`grid transition-[grid-template-rows,opacity] duration-200 ease-in-out ${
+          isExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+        }`}
+        aria-hidden={isExpanded ? undefined : true}
+        inert={isExpanded ? undefined : true}
+      >
+        <div className="overflow-hidden">
+          <div className="ml-3 pl-2.5 my-1 border-l border-slate-200/70 dark:border-dark-slate-800/70">
               <ul className="space-y-0.5">
                 {section.notes.map((note) => (
                   <NavNoteItem
@@ -107,10 +104,9 @@ function NavSectionItem({
                   />
                 ))}
               </ul>
-            </div>
-          </m.div>
-        )}
-      </AnimatePresence>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

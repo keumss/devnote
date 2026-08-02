@@ -1,45 +1,19 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
-import type { HighlightedCodeProps } from './HighlightedCode';
-import {
-  loadHighlightedCode,
-  type HighlightedCodeComponent,
-} from './highlightedCodeLoader';
-
-function PlainCode({ code }: Pick<HighlightedCodeProps, 'code'>) {
-  return (
-    <pre className="m-0 p-4 text-xs leading-relaxed">
-      <code>{code}</code>
-    </pre>
-  );
-}
-
-function DeferredHighlightedCode(props: HighlightedCodeProps) {
-  const [HighlightedCode, setHighlightedCode] = useState<HighlightedCodeComponent | null>(null);
-
-  useEffect(() => {
-    let isCurrent = true;
-    void loadHighlightedCode()
-      .then(Component => {
-        if (isCurrent) setHighlightedCode(() => Component);
-      })
-      .catch(() => {
-        // Plain code remains readable when the optional highlighter chunk fails.
-      });
-    return () => {
-      isCurrent = false;
-    };
-  }, []);
-
-  return HighlightedCode ? <HighlightedCode {...props} /> : <PlainCode code={props.code} />;
-}
 
 interface CodeBlockProps {
   code: string;
   language?: 'sql' | 'python' | string;
+  children: ReactNode;
+  preProps?: Omit<ComponentProps<'pre'>, 'children'>;
 }
 
-export default memo(function CodeBlock({ code, language = 'sql' }: CodeBlockProps) {
+export default memo(function CodeBlock({
+  code,
+  language = 'sql',
+  children,
+  preProps,
+}: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -76,7 +50,13 @@ export default memo(function CodeBlock({ code, language = 'sql' }: CodeBlockProp
         </button>
       </div>
       <div className="custom-scrollbar relative leading-relaxed overflow-x-auto syntax-highlighter-container">
-        <DeferredHighlightedCode code={code} language={language} />
+        <pre
+          {...preProps}
+          className={`${preProps?.className ?? ''} m-0 min-w-max bg-transparent p-4 text-xs leading-relaxed`}
+          tabIndex={preProps?.tabIndex ?? 0}
+        >
+          {children}
+        </pre>
       </div>
     </div>
   );

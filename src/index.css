@@ -68,6 +68,17 @@
     transition: none !important;
   }
 
+  .shiki,
+  .shiki span {
+    color: var(--shiki-light) !important;
+    background-color: transparent !important;
+  }
+
+  html.dark .shiki,
+  html.dark .shiki span {
+    color: var(--shiki-dark) !important;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important;
@@ -80,9 +91,42 @@
 
 @layer utilities {
   html.theme-transition body,
-  html.theme-transition #root,
-  html.theme-transition #root * {
+  html.theme-transition #root {
     @apply transition-colors duration-200 ease-in-out;
+  }
+
+  @keyframes page-enter {
+    from {
+      opacity: 0;
+      transform: translateY(0.75rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes page-enter-from-top {
+    from {
+      opacity: 0;
+      transform: translateY(-1rem);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-page-enter {
+    animation: page-enter 300ms ease-out both;
+  }
+
+  .animate-page-enter-from-top {
+    animation: page-enter-from-top 400ms ease-out both;
+  }
+
+  .animate-note-enter {
+    animation: page-enter 100ms ease-out both;
   }
 
   .note-content {

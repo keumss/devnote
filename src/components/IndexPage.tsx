@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { navData, navGroupData } from '../content';
 import { Link } from 'react-router-dom';
 import { BookOpen, Clock3, FileText, FolderKanban, Layers, Play } from 'lucide-react';
-import * as m from 'motion/react-m';
 import Layout from './Layout';
 import { getNotePath, getTopicHash } from '../navigation';
 import { getContinueLearningItem } from '../hooks/useContinueLearning';
@@ -18,11 +17,12 @@ function getContinueLearning() {
   const note = section?.notes.find(candidate => candidate.id === item.noteId);
   if (!section || !note) return null;
 
-  const topic = item.topicId
-    ? note.topics.find(candidate => candidate.id === item.topicId)
-    : undefined;
-
-  return { section, note, topic };
+  return {
+    section,
+    note,
+    topicId: item.topicId,
+    topicTitle: item.topicTitle,
+  };
 }
 
 export default function IndexPage() {
@@ -36,11 +36,8 @@ export default function IndexPage() {
     <Layout>
       <main className="flex-1 bg-slate-50 px-3 py-3.5 dark:bg-surface-canvas sm:px-6 sm:py-8 lg:px-8">
         <div className="mx-auto max-w-7xl">
-          <m.section
-            initial={{ opacity: 0, y: -16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="mb-4 flex flex-col gap-3 border-b border-slate-200/80 pb-4 dark:border-dark-slate-800/80 sm:mb-6 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:pb-5"
+          <section
+            className="animate-page-enter-from-top mb-4 flex flex-col gap-3 border-b border-slate-200/80 pb-4 dark:border-dark-slate-800/80 sm:mb-6 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:pb-5"
             aria-labelledby="index-page-title"
           >
             <div className="min-w-0 flex-1">
@@ -85,14 +82,12 @@ export default function IndexPage() {
                 </div>
               </div>
             </dl>
-          </m.section>
+          </section>
 
           {continueLearning && (
-            <m.section
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.05 }}
-              className="mb-5 overflow-hidden rounded-xl border border-indigo-200/80 bg-gradient-to-r from-indigo-50/90 via-indigo-50/40 to-white p-4 shadow-xs dark:border-dark-indigo-500/20 dark:from-dark-indigo-500/15 dark:via-dark-indigo-500/5 dark:to-dark-slate-900/60 sm:mb-6 sm:flex sm:items-center sm:justify-between sm:gap-6 sm:p-5"
+            <section
+              className="animate-page-enter mb-5 overflow-hidden rounded-xl border border-indigo-200/80 bg-gradient-to-r from-indigo-50/90 via-indigo-50/40 to-white p-4 shadow-xs dark:border-dark-indigo-500/20 dark:from-dark-indigo-500/15 dark:via-dark-indigo-500/5 dark:to-dark-slate-900/60 sm:mb-6 sm:flex sm:items-center sm:justify-between sm:gap-6 sm:p-5"
+              style={{ animationDelay: '0.05s' }}
               aria-labelledby="continue-learning-title"
             >
               <div>
@@ -106,11 +101,11 @@ export default function IndexPage() {
                 <p className="mt-1 text-xs font-semibold text-slate-800 dark:text-dark-slate-200 sm:text-sm">
                   {continueLearning.section.title} · {continueLearning.note.title}
                 </p>
-                {continueLearning.topic && (
+                {continueLearning.topicTitle && (
                   <p className="mt-1 text-xs text-slate-500 dark:text-dark-slate-400 flex items-center gap-1.5">
                     <span>마지막으로 읽은 토픽:</span>
                     <span className="font-medium text-indigo-700 dark:text-dark-indigo-300 bg-indigo-100/60 dark:bg-dark-indigo-500/20 px-2 py-0.5 rounded text-[11px]">
-                      {continueLearning.topic.title}
+                      {continueLearning.topicTitle}
                     </span>
                   </p>
                 )}
@@ -118,22 +113,20 @@ export default function IndexPage() {
               <Link
                 to={{
                   pathname: getNotePath(continueLearning.section.id, continueLearning.note.id),
-                  hash: continueLearning.topic ? getTopicHash(continueLearning.topic.id) : '',
+                  hash: continueLearning.topicId ? getTopicHash(continueLearning.topicId) : '',
                 }}
                 className="group mt-3.5 inline-flex min-h-[38px] items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-xs font-bold text-indigo-700 transition-[color] hover:bg-indigo-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 dark:border-dark-indigo-400/20 dark:bg-dark-indigo-500/15 dark:text-dark-indigo-200 dark:hover:bg-dark-indigo-500/25 dark:focus-visible:ring-dark-indigo-400 dark:focus-visible:ring-offset-dark-slate-950 sm:mt-0 sm:shrink-0 sm:text-sm shadow-2xs"
               >
                 이어서 읽기
                 <Play className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" fill="currentColor" />
               </Link>
-            </m.section>
+            </section>
           )}
 
           <section aria-labelledby="section-list-title">
-            <m.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.1 }}
-              className="mb-4 flex items-end justify-between gap-4 sm:mb-6"
+            <div
+              className="animate-page-enter mb-4 flex items-end justify-between gap-4 sm:mb-6"
+              style={{ animationDelay: '0.1s' }}
             >
               <div>
                 <p className="mb-0.5 flex items-center gap-1 text-[9px] font-bold tracking-[0.16em] text-indigo-600 dark:text-dark-indigo-400 sm:mb-1 sm:gap-1.5 sm:text-[10px]">
@@ -147,16 +140,14 @@ export default function IndexPage() {
               <p className="hidden text-sm text-slate-500 dark:text-dark-slate-400 sm:block">
                 {navGroupData.length}개 그룹 · {totalNotes}개의 노트
               </p>
-            </m.div>
+            </div>
 
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3 sm:gap-6">
               {navGroupData.map((group, groupIdx) => (
-                <m.div
+                <div
                   key={group.id}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.35, delay: 0.05 * groupIdx }}
-                  className="flex flex-col rounded-xl border border-slate-200/90 bg-slate-50/50 p-4 shadow-2xs dark:border-dark-slate-800 dark:bg-dark-slate-900/40 sm:p-5"
+                  className="animate-page-enter flex flex-col rounded-xl border border-slate-200/90 bg-slate-50/50 p-4 shadow-2xs dark:border-dark-slate-800 dark:bg-dark-slate-900/40 sm:p-5"
+                  style={{ animationDelay: `${0.05 * groupIdx}s` }}
                 >
                   <div className="mb-3.5 flex flex-col gap-1 border-b border-slate-200/80 pb-3 dark:border-dark-slate-800/80">
                     <h3 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-dark-slate-100">
@@ -179,7 +170,7 @@ export default function IndexPage() {
                       />
                     ))}
                   </div>
-                </m.div>
+                </div>
               ))}
             </div>
           </section>

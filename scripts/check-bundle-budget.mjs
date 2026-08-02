@@ -8,11 +8,15 @@ const outputRoot = resolve(projectRoot, 'dist');
 const manifestPath = resolve(outputRoot, '.vite/manifest.json');
 
 const budgets = {
-  home: 200_000,
-  note: 210_000,
-  shared: 100_000,
-  search: 250_000,
+  homeCore: 130_000,
+  noteCore: 170_000,
+  shared: 50_000,
+  codeFont: 45_000,
+  search: 230_000,
 };
+
+const coreExtensions = new Set(['.js', '.css']);
+const fontExtensions = new Set(['.woff', '.woff2']);
 
 const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
 
@@ -80,6 +84,10 @@ function intersection(left, right) {
   return new Set([...left].filter((value) => right.has(value)));
 }
 
+function filterFiles(files, extensions) {
+  return new Set([...files].filter(file => extensions.has(extname(file))));
+}
+
 async function getTransferSize(file) {
   const filePath = resolve(outputRoot, file);
   const extension = extname(file);
@@ -128,12 +136,16 @@ const homeFiles = collectFiles(homeEntries);
 const sharedFiles = collectFiles(sharedEntries);
 const eagerBaseFiles = collectFiles(eagerBaseEntries);
 const searchFiles = difference(collectFiles(searchEntries), eagerBaseFiles);
+const codeFontFiles = filterFiles(homeFiles, fontExtensions);
 
 let largestNote = { key: '', files: new Set(), size: 0 };
 
 for (const noteKey of noteKeys) {
   const noteEntries = collectStaticEntries([noteKey]);
-  const files = collectFiles(union(entryEntries, notePageEntries, noteEntries));
+  const files = filterFiles(
+    collectFiles(union(entryEntries, notePageEntries, noteEntries)),
+    coreExtensions,
+  );
   const size = await getFilesSize(files);
 
   if (size > largestNote.size) {
@@ -143,23 +155,28 @@ for (const noteKey of noteKeys) {
 
 const measurements = [
   {
-    label: 'Home initial assets',
-    size: await getFilesSize(homeFiles),
-    budget: budgets.home,
+    label: 'Home core JS/CSS',
+    size: await getFilesSize(filterFiles(homeFiles, coreExtensions)),
+    budget: budgets.homeCore,
   },
   {
-    label: `Largest note initial assets (${largestNote.key.split('/').at(-1)})`,
+    label: `Largest fully rendered note JS/CSS (${largestNote.key.split('/').at(-1)})`,
     size: largestNote.size,
-    budget: budgets.note,
+    budget: budgets.noteCore,
   },
   {
-    label: 'Eager shared chunk',
-    size: await getFilesSize(sharedFiles),
+    label: 'Eager shared JS/CSS',
+    size: await getFilesSize(filterFiles(sharedFiles, coreExtensions)),
     budget: budgets.shared,
   },
   {
-    label: 'Lazy search chunk',
-    size: await getFilesSize(searchFiles),
+    label: 'Conditional code font',
+    size: await getFilesSize(codeFontFiles),
+    budget: budgets.codeFont,
+  },
+  {
+    label: 'On-demand search JS/CSS',
+    size: await getFilesSize(filterFiles(searchFiles, coreExtensions)),
     budget: budgets.search,
   },
 ];

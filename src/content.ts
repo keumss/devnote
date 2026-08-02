@@ -36,7 +36,12 @@ interface NoteTocItem {
   title: ReactNode;
 }
 
-type NoteLoader = () => Promise<ComponentType<MDXProps>>;
+interface NoteModule {
+  default: ComponentType<MDXProps>;
+  toc: NoteTocItem[];
+}
+
+type NoteLoader = () => Promise<NoteModule>;
 
 export type NoteContentComponent = LazyExoticComponent<ComponentType<MDXProps>>;
 
@@ -57,8 +62,8 @@ export interface Note {
   title: string;
   navigationLabel?: string;
   displayTitle: string;
-  topics: NoteTopic[];
   Component: NoteContentComponent;
+  loadTopics: () => Promise<NoteTopic[]>;
   preload: () => Promise<void>;
 }
 
@@ -112,10 +117,9 @@ export type SearchResult = TopicSearchResult | NoteSearchResult | SectionSearchR
 
 // Use a distinct module query for metadata so Rollup can tree-shake the MDX
 // renderer from the eager imports while retaining separate lazy render chunks.
-const noteLoaders = import.meta.glob<ComponentType<MDXProps>>(
+const noteLoaders = import.meta.glob<NoteModule>(
   '/content/**/*.{md,mdx}',
   {
-    import: 'default',
     query: { collection: 'docs' },
   },
 );
@@ -126,15 +130,6 @@ const noteFrontmatters = import.meta.glob<NoteFrontmatter>(
     eager: true,
     import: 'frontmatter',
     query: { collection: 'docs', only: 'frontmatter' },
-  },
-);
-
-const noteTocs = import.meta.glob<NoteTocItem[]>(
-  '/content/**/*.{md,mdx}',
-  {
-    eager: true,
-    import: 'toc',
-    query: { collection: 'docs', purpose: 'navigation' },
   },
 );
 
@@ -321,17 +316,26 @@ export function formatTopicTitle(title: string) {
   return formattedTitle;
 }
 
-function createLazyNoteContent(loadNote: NoteLoader) {
+function createLazyNoteContent(
+  filePath: string,
+  loadNote: NoteLoader,
+) {
   let notePromise: ReturnType<NoteLoader> | null = null;
+  let topicsPromise: Promise<NoteTopic[]> | null = null;
   const load = () => {
     notePromise ??= loadNote();
     return notePromise;
   };
+  const loadTopics = () => {
+    topicsPromise ??= load().then(noteModule => getNoteTopics(filePath, noteModule.toc));
+    return topicsPromise;
+  };
 
   return {
-    Component: lazy(async () => ({ default: await load() })),
+    Component: lazy(async () => ({ default: (await load()).default })),
+    loadTopics,
     preload: async () => {
-      await load();
+      await Promise.all([load(), loadTopics()]);
     },
   };
 }
@@ -345,8 +349,7 @@ function getTocTitleText(value: ReactNode): string {
   return '';
 }
 
-function getNoteTopics(filePath: string) {
-  const toc = noteTocs[filePath];
+function getNoteTopics(filePath: string, toc: NoteTocItem[]) {
   if (!Array.isArray(toc)) {
     throw new Error(`Structured topic data is invalid for ${filePath}.`);
   }
@@ -386,13 +389,12 @@ for (const [filePath, loadNote] of Object.entries(noteLoaders)) {
   };
   const title = frontmatter.title.trim();
   const navigationTitle = parseNoteNavigationTitle(title);
-  const noteContent = createLazyNoteContent(loadNote);
+  const noteContent = createLazyNoteContent(filePath, loadNote);
 
   section.notes.push({
     id: noteId,
     title,
     ...navigationTitle,
-    topics: getNoteTopics(filePath),
     ...noteContent,
   });
   sectionMap.set(section.id, section);

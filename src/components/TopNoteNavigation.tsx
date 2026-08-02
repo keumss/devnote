@@ -1,5 +1,4 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import * as m from 'motion/react-m';
 import { Link } from 'react-router-dom';
 import type { Note } from '../content';
 import { getNotePath } from '../navigation';
@@ -15,8 +14,6 @@ interface TopNoteNavigationProps {
   nextNoteInfo: NoteInfo | null;
 }
 
-const MotionLink = m.create(Link);
-
 export default function TopNoteNavigation({ prevNoteInfo, nextNoteInfo }: TopNoteNavigationProps) {
   return (
     <nav
@@ -24,19 +21,17 @@ export default function TopNoteNavigation({ prevNoteInfo, nextNoteInfo }: TopNot
       aria-label="노트 상단 빠른 이동"
     >
       {prevNoteInfo ? (
-        <MotionLink
+        <Link
           to={getNotePath(prevNoteInfo.sectionId, prevNoteInfo.note.id)}
           onMouseEnter={() => void prevNoteInfo.note.preload()}
           onFocus={() => void prevNoteInfo.note.preload()}
           aria-label={`이전 노트: ${prevNoteInfo.note.title}`}
           title={`이전: ${prevNoteInfo.note.title}`}
-          whileTap={{ scale: 0.97 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-          className="flex h-11 w-16 items-center justify-center gap-1 text-xs font-bold text-slate-600 outline-none transition-colors duration-200 hover:bg-indigo-50/70 hover:text-indigo-600 focus-visible:bg-indigo-50/70 focus-visible:text-indigo-600 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500/50 dark:text-dark-slate-300 dark:hover:bg-dark-indigo-500/10 dark:hover:text-dark-indigo-300 dark:focus-visible:bg-dark-indigo-500/10 dark:focus-visible:text-dark-indigo-300 dark:focus-visible:ring-dark-indigo-400/50"
+          className="flex h-11 w-16 items-center justify-center gap-1 text-xs font-bold text-slate-600 outline-none transition-[background-color,color,transform] duration-200 hover:bg-indigo-50/70 hover:text-indigo-600 active:scale-[0.97] focus-visible:bg-indigo-50/70 focus-visible:text-indigo-600 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500/50 dark:text-dark-slate-300 dark:hover:bg-dark-indigo-500/10 dark:hover:text-dark-indigo-300 dark:focus-visible:bg-dark-indigo-500/10 dark:focus-visible:text-dark-indigo-300 dark:focus-visible:ring-dark-indigo-400/50"
         >
           <ChevronLeft size={16} strokeWidth={2.2} />
           <span>이전</span>
-        </MotionLink>
+        </Link>
       ) : (
         <button
           type="button"
@@ -51,19 +46,17 @@ export default function TopNoteNavigation({ prevNoteInfo, nextNoteInfo }: TopNot
       )}
 
       {nextNoteInfo ? (
-        <MotionLink
+        <Link
           to={getNotePath(nextNoteInfo.sectionId, nextNoteInfo.note.id)}
           onMouseEnter={() => void nextNoteInfo.note.preload()}
           onFocus={() => void nextNoteInfo.note.preload()}
           aria-label={`다음 노트: ${nextNoteInfo.note.title}`}
           title={`다음: ${nextNoteInfo.note.title}`}
-          whileTap={{ scale: 0.97 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-          className="flex h-11 w-16 items-center justify-center gap-1 text-xs font-bold text-slate-600 outline-none transition-colors duration-200 hover:bg-indigo-50/70 hover:text-indigo-600 focus-visible:bg-indigo-50/70 focus-visible:text-indigo-600 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500/50 dark:text-dark-slate-300 dark:hover:bg-dark-indigo-500/10 dark:hover:text-dark-indigo-300 dark:focus-visible:bg-dark-indigo-500/10 dark:focus-visible:text-dark-indigo-300 dark:focus-visible:ring-dark-indigo-400/50"
+          className="flex h-11 w-16 items-center justify-center gap-1 text-xs font-bold text-slate-600 outline-none transition-[background-color,color,transform] duration-200 hover:bg-indigo-50/70 hover:text-indigo-600 active:scale-[0.97] focus-visible:bg-indigo-50/70 focus-visible:text-indigo-600 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500/50 dark:text-dark-slate-300 dark:hover:bg-dark-indigo-500/10 dark:hover:text-dark-indigo-300 dark:focus-visible:bg-dark-indigo-500/10 dark:focus-visible:text-dark-indigo-300 dark:focus-visible:ring-dark-indigo-400/50"
         >
           <span>다음</span>
           <ChevronRight size={16} strokeWidth={2.2} />
-        </MotionLink>
+        </Link>
       ) : (
         <button
           type="button"
