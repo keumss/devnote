@@ -21,7 +21,7 @@ describe('NotePage note navigation', () => {
   });
 
   it('shows adjacent notes and navigates to the selected note', async () => {
-    const { findByRole } = render(
+    const { findByRole, findByTitle } = render(
       <StrictMode>
         <HashRouter>
           <Routes>
@@ -43,6 +43,9 @@ describe('NotePage note navigation', () => {
     const topNextLink = await findByRole('link', { name: `다음 노트: ${nextNote.note.title}` });
     expect(topPreviousLink).toBeInTheDocument();
     expect(topNextLink).toBeInTheDocument();
+
+    const sectionBadge = await findByTitle(currentNote.section.title);
+    expect(sectionBadge).toHaveClass('min-w-0', 'truncate');
 
     fireEvent.click(nextLink);
 

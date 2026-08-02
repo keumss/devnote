@@ -130,8 +130,11 @@ export default function NotePage() {
               className="max-w-3xl mx-auto"
             >
               <div className="mb-10 block">
-                <div className="flex items-center justify-between gap-2 mb-4">
-                  <span className="inline-block py-1.5 px-3 rounded-md bg-slate-100 dark:bg-dark-slate-800/80 text-slate-600 dark:text-dark-slate-300 text-xs font-semibold uppercase tracking-widest border border-slate-200 dark:border-dark-slate-700/50 shadow-xs">
+                <div className="flex min-w-0 items-center justify-between gap-2 mb-4">
+                  <span
+                    title={activeSection.title}
+                    className="inline-block min-w-0 truncate py-1.5 px-3 rounded-md bg-slate-100 dark:bg-dark-slate-800/80 text-slate-600 dark:text-dark-slate-300 text-xs font-semibold uppercase tracking-widest border border-slate-200 dark:border-dark-slate-700/50 shadow-xs"
+                  >
                     {activeSection.title}
                   </span>
                   <TopNoteNavigation prevNoteInfo={prevNoteInfo} nextNoteInfo={nextNoteInfo} />
